@@ -20,6 +20,8 @@ var (
 
 	codexSpinnerRe  = regexp.MustCompile(`^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●·] `)
 	codexRunningRe  = regexp.MustCompile(`(?i)\b(running\.\.\.|executing command|applying patch|thinking\.\.\.)\b`)
+	// "Working (47s • esc to interrupt)" — active task indicator shown between prompts.
+	codexWorkingRe = regexp.MustCompile(`Working \(\d+s`)
 	codexApprovalRe = regexp.MustCompile(`(?i)(approval|approve|deny|allow|reject)`)
 	codexChoiceRe   = regexp.MustCompile(`^\s*❯?\s*\d+\.\s+\S+`)
 	codexFooterRe   = regexp.MustCompile(`(?i)(enter to (approve|select)|esc to (deny|cancel)|↑/↓ to navigate)`)
@@ -48,11 +50,7 @@ func DetectCodex(pane Pane, pt procTable) AgentStatus {
 func findCodexInTree(pt procTable, panePID int) (bool, string) {
 	return findProcessInTree(pt, panePID, func(p procEntry) bool {
 		return strings.Contains(p.comm, "codex")
-	}, extractCodexArgs)
-}
-
-func extractCodexArgs(fullArgs string) string {
-	return extractArgsAfterBinary(fullArgs)
+	}, extractArgsAfterBinary)
 }
 
 func parseCodexPane(content string, status *AgentStatus) {
@@ -119,6 +117,7 @@ func parseCodexPane(content string, status *AgentStatus) {
 func detectCodexActivity(lines []string) Activity {
 	hasPrompt := false
 	hasSpinner := false
+	hasWorkingIndicator := false
 	promptLine := -1
 
 	for i, line := range lines {
@@ -129,6 +128,7 @@ func detectCodexActivity(lines []string) Activity {
 		}
 	}
 
+	// Check for spinner/running text in a small window above the last prompt.
 	if promptLine > 0 {
 		start := promptLine - 3
 		if start < 0 {
@@ -143,11 +143,21 @@ func detectCodexActivity(lines []string) Activity {
 		}
 	}
 
+	// Scan the bottom half for Codex's "Working (Xs • esc to interrupt)" indicator.
+	// This appears between prompts and can be far above the last prompt line.
+	scanStart := max(0, len(lines)/2)
+	for i := scanStart; i < len(lines); i++ {
+		if codexWorkingRe.MatchString(lines[i]) {
+			hasWorkingIndicator = true
+			break
+		}
+	}
+
 	if hasPrompt && hasCodexApprovalUI(lines, promptLine) {
 		return ActivityWaitingInput
 	}
 	if hasPrompt {
-		if hasSpinner {
+		if hasSpinner || hasWorkingIndicator {
 			return ActivityWorking
 		}
 		return ActivityIdle

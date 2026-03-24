@@ -54,12 +54,7 @@ func DetectClaude(pane Pane, pt procTable) AgentStatus {
 func findClaudeInTree(pt procTable, panePID int) (bool, string) {
 	return findProcessInTree(pt, panePID, func(p procEntry) bool {
 		return strings.Contains(p.comm, "claude")
-	}, extractClaudeArgs)
-}
-
-// extractClaudeArgs strips the binary name and returns just the flags.
-func extractClaudeArgs(fullArgs string) string {
-	return extractArgsAfterBinary(fullArgs)
+	}, extractArgsAfterBinary)
 }
 
 // capturePaneBottom captures the visible content of a tmux pane.

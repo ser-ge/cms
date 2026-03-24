@@ -614,8 +614,6 @@ func showWindowHeader(cfg DashboardConfig, sessions []Session, sessionName strin
 	return true
 }
 
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
 // paneColumns holds the column values for a single pane line.
 // Columns: name, branch, command, activity, context, mode
 const numPaneCols = 6

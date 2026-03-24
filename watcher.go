@@ -37,7 +37,7 @@ type gitUpdateMsg struct {
 // and slow polls for process table and git status.
 type Watcher struct {
 	ctrl *CtrlClient
-	send func(tea.Msg) // program.Send
+	send func(tea.Msg)
 
 	// State tracking.
 	agentPanes      map[string]bool      // pane IDs known to have an agent running
@@ -198,6 +198,11 @@ func (w *Watcher) handleEvent(ev CtrlEvent) {
 	case CtrlOutput:
 		// Pane produced output — debounce then re-check agent status.
 		w.handleOutput(ev.PaneID)
+
+	case CtrlClientDetached:
+		// Control client was kicked — nil out so poll fallback takes over.
+		debugf("watcher: control client detached, falling back to polling")
+		w.ctrl = nil
 	}
 }
 
@@ -313,24 +318,17 @@ func (w *Watcher) recheckPane(paneID, source string) {
 		delete(w.workingUntil, paneID)
 	}
 	w.mu.Unlock()
+	// Preserve args and provider from previous detection (reparse only updates
+	// activity, model, context, mode — not process-tree fields).
+	status.Args = prev.Args
+	status.Provider = prev.Provider
 	debugf("watcher: %s recheck pane=%s provider=%s activity=%s mode=%q ctx=%d capture_lines=%d", source, paneID, status.Provider.String(), status.Activity.String(), status.ModeLabel, status.ContextPct, len(strings.Split(content, "\n")))
-
-	// Preserve args from previous detection.
-	w.stateMu.RLock()
-	if prev, ok := w.agents[paneID]; ok {
-		status.Args = prev.Args
-		status.Provider = prev.Provider
-	}
-	w.stateMu.RUnlock()
 
 	updates := map[string]AgentStatus{paneID: status}
 
 	// Update cache.
 	w.stateMu.Lock()
-	if w.agents == nil {
-		w.agents = map[string]AgentStatus{}
-	}
-	w.agents[paneID] = status
+	w.agents = applyAgentUpdates(w.agents, updates)
 	w.stateMu.Unlock()
 
 	w.send(agentUpdateMsg{updates: updates})
@@ -415,8 +413,15 @@ func (w *Watcher) pollProcesses() {
 				}
 
 				if !status.Running && w.agentPanes[pane.ID] {
-					// Agent exited.
+					// Agent exited — clean up tracking state.
 					delete(w.agentPanes, pane.ID)
+					delete(w.lastOutput, pane.ID)
+					delete(w.lastLiveRecheck, pane.ID)
+					delete(w.workingUntil, pane.ID)
+					if t, ok := w.outputTimers[pane.ID]; ok {
+						t.Stop()
+						delete(w.outputTimers, pane.ID)
+					}
 					debugf("watcher: process poll exited pane=%s", pane.ID)
 					updates[pane.ID] = AgentStatus{Running: false}
 					continue
@@ -437,16 +442,7 @@ func (w *Watcher) pollProcesses() {
 
 	if len(updates) > 0 {
 		w.stateMu.Lock()
-		if w.agents == nil {
-			w.agents = map[string]AgentStatus{}
-		}
-		for id, status := range updates {
-			if status.Running {
-				w.agents[id] = status
-			} else {
-				delete(w.agents, id)
-			}
-		}
+		w.agents = applyAgentUpdates(w.agents, updates)
 		w.stateMu.Unlock()
 
 		w.send(agentUpdateMsg{updates: updates})

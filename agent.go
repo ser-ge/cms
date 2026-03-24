@@ -48,19 +48,6 @@ func (a Activity) String() string {
 	}
 }
 
-func (a Activity) Icon() string {
-	switch a {
-	case ActivityIdle:
-		return "💤"
-	case ActivityWorking:
-		return "⚡"
-	case ActivityWaitingInput:
-		return "❓"
-	default:
-		return "·"
-	}
-}
-
 // AgentModeKind is a normalized mode/category surfaced in the UI.
 type AgentModeKind int
 
@@ -169,7 +156,7 @@ func findProcessInTree(pt procTable, panePID int, match func(procEntry) bool, ex
 
 func isShellCommand(cmd string) bool {
 	switch cmd {
-	case "fish", "bash", "zsh":
+	case "fish", "bash", "zsh", "sh", "dash", "tcsh", "ksh":
 		return true
 	default:
 		return false

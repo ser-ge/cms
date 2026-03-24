@@ -180,6 +180,29 @@ func TestParseCodexPaneChoiceUINearPromptIsWaiting(t *testing.T) {
 	}
 }
 
+func TestParseCodexPaneWorkingIndicatorBetweenPrompts(t *testing.T) {
+	// Real Codex output: "Working (47s • esc to interrupt)" appears between
+	// an old prompt and a new prompt, far from the last › line.
+	content := strings.Join([]string{
+		"› run sleep for 120",
+		"",
+		"• Running sleep 120 in the shell now.",
+		"",
+		"• Working (47s • esc to interrupt) · 1 background terminal running",
+		"",
+		"› Summarize recent commits",
+		"",
+		"  gpt-5.4 default · 100% left · ~/projects/cms",
+	}, "\n")
+
+	status := AgentStatus{Running: true, Provider: ProviderCodex}
+	parseCodexPane(content, &status)
+
+	if status.Activity != ActivityWorking {
+		t.Fatalf("activity = %v, want %v", status.Activity, ActivityWorking)
+	}
+}
+
 func TestParseClaudePaneUnknownDefaultsToIdle(t *testing.T) {
 	status := AgentStatus{Running: true, Provider: ProviderClaude}
 	parseClaudePane("older output only\nno prompt visible", &status)
