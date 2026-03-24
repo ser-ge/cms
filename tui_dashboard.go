@@ -22,6 +22,8 @@ var (
 	waitingStyle  lipgloss.Style
 	idleStyle     lipgloss.Style
 	helpStyle     lipgloss.Style
+	separatorStyle lipgloss.Style
+	footerRuleStyle lipgloss.Style
 	attachLabel   string
 
 	claudeAccentStyle lipgloss.Style
@@ -50,7 +52,9 @@ func initStyles(c ColorsConfig) {
 	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working))
 	waitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting))
 	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Idle))
-	helpStyle = dimStyle
+	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim)).Faint(true)
+	separatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim)).Faint(true)
+	footerRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim)).Faint(true)
 	attachLabel = dimStyle.Render(" (attached)")
 
 	claudeAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Accent)).Bold(true)
@@ -495,7 +499,7 @@ func (m dashboardModel) View() string {
 
 	// Pass 1: compute column values and max widths for all visible panes.
 	allCols := make([]paneColumns, len(m.items))
-	var widths [numPaneCols]int
+	widths := fixedPaneColumnWidths()
 	for i, entry := range m.items {
 		if !visible[i] {
 			continue
@@ -539,11 +543,14 @@ func (m dashboardModel) View() string {
 
 		// Window header.
 		if entry.window.Index != lastWindow {
-			active := ""
-			if entry.window.Active {
-				active = "*"
+			if showWindowHeader(m.sessions, entry.session) {
+				active := ""
+				if entry.window.Active {
+					active = "*"
+				}
+				label := fmt.Sprintf("%s%s", entry.window.Name, active)
+				lines = append(lines, fmt.Sprintf("   %s", windowStyle.Render(label)))
 			}
-			lines = append(lines, fmt.Sprintf("   %s", windowStyle.Render(fmt.Sprintf("%s%s", entry.window.Name, active))))
 			lastWindow = entry.window.Index
 		}
 
@@ -568,16 +575,29 @@ func (m dashboardModel) View() string {
 	// Status bar.
 	var help string
 	if m.confirmKill {
-		help = waitingStyle.Render("  kill pane? (y/n)")
+		help = waitingStyle.Render(" kill pane? (y/n)")
 	} else if m.filtering {
-		help = "  " + m.filter.View()
+		help = " " + m.filter.View()
 	} else if m.moving {
-		help = moveSrcStyle.Render("  MOVE: j/k navigate  enter: drop here  esc: cancel")
+		help = moveSrcStyle.Render(" MOVE: j/k navigate  enter: drop here  esc: cancel")
 	} else {
-		help = helpStyle.Render("  j/k: navigate  enter: jump  m: move  x: kill  /: find  q: quit")
+		help = helpStyle.Render(" j/k: navigate  enter: jump  m: move  x: kill  /: find  q: quit")
 	}
 
-	return renderDashboardViewport(lines, selectedLine, help, m.height)
+	return renderDashboardViewport(lines, selectedLine, help, m.width, m.height)
+}
+
+func showWindowHeader(sessions []Session, sessionName string) bool {
+	for _, sess := range sessions {
+		if sess.Name != sessionName {
+			continue
+		}
+		if len(sess.Windows) != 1 {
+			return true
+		}
+		return len(sess.Windows[0].Panes) > 1
+	}
+	return true
 }
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -693,7 +713,7 @@ func renderPaneLine(pc paneColumns, widths [numPaneCols]int) string {
 		}
 		parts = append(parts, cell)
 	}
-	return fmt.Sprintf("   %s%s", pc.indicator, strings.Join(parts, " │ "))
+	return fmt.Sprintf("   %s%s", pc.indicator, strings.Join(parts, separatorStyle.Render(" │ ")))
 }
 
 func renderAgentActivity(cs AgentStatus) (string, string) {
@@ -713,6 +733,14 @@ func renderAgentActivity(cs AgentStatus) (string, string) {
 		return "", ""
 	}
 	return label, style.Render(label)
+}
+
+func fixedPaneColumnWidths() [numPaneCols]int {
+	var widths [numPaneCols]int
+	widths[3] = len("waiting")
+	widths[4] = len("100%")
+	widths[5] = len("danger-full-access")
+	return widths
 }
 
 func renderMode(status AgentStatus) string {
@@ -766,15 +794,37 @@ func modeStyle(status AgentStatus) lipgloss.Style {
 	}
 }
 
-func renderDashboardViewport(lines []string, selectedLine int, help string, height int) string {
+func renderDashboardViewport(lines []string, selectedLine int, help string, width, height int) string {
 	if height <= 1 {
 		if len(lines) == 0 {
 			return help
 		}
 		return lines[0] + "\n" + help
 	}
+	if height <= 3 {
+		contentHeight := max(0, height-1)
+		start := 0
+		if selectedLine >= contentHeight {
+			start = selectedLine - contentHeight + 1
+		}
+		if maxStart := max(0, len(lines)-contentHeight); start > maxStart {
+			start = maxStart
+		}
+		end := min(len(lines), start+contentHeight)
 
-	contentHeight := height - 1
+		var b strings.Builder
+		for i := start; i < end; i++ {
+			b.WriteString(lines[i])
+			b.WriteString("\n")
+		}
+		for i := end - start; i < contentHeight; i++ {
+			b.WriteString("\n")
+		}
+		b.WriteString(help)
+		return b.String()
+	}
+
+	contentHeight := height - 3
 	start := 0
 	if selectedLine >= contentHeight {
 		start = selectedLine - contentHeight + 1
@@ -792,6 +842,25 @@ func renderDashboardViewport(lines []string, selectedLine int, help string, heig
 	for i := end - start; i < contentHeight; i++ {
 		b.WriteString("\n")
 	}
+	b.WriteString("\n")
+	b.WriteString(renderDashboardFooterBorder(lines, help, width))
+	b.WriteString("\n")
 	b.WriteString(help)
 	return b.String()
+}
+
+func renderDashboardFooterBorder(lines []string, help string, width int) string {
+	if width > 0 {
+		return footerRuleStyle.Render(strings.Repeat("╌", width))
+	}
+	borderWidth := len(help)
+	for _, line := range lines {
+		if len(line) > borderWidth {
+			borderWidth = len(line)
+		}
+	}
+	if borderWidth < 24 {
+		borderWidth = 24
+	}
+	return footerRuleStyle.Render(strings.Repeat("╌", borderWidth))
 }
