@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,13 +11,11 @@ import (
 
 // Config holds cms settings loaded from ~/.config/cms/config.toml.
 type Config struct {
-	SearchPaths    []SearchPath `toml:"search_paths"`
-	Exclusions     []string     `toml:"exclusions"`
-	DefaultSession string       `toml:"default_session"`
-	SwitchPriority []string     `toml:"switch_priority"`
-	EscapeChord    string       `toml:"escape_chord"`
-	EscapeChordMs  int          `toml:"escape_chord_ms"`
-	Colors         ColorsConfig `toml:"colors"`
+	General   GeneralConfig   `toml:"general"`
+	Colors    ColorsConfig    `toml:"colors"`
+	Icons     IconsConfig     `toml:"icons"`
+	Dashboard DashboardConfig `toml:"dashboard"`
+	Finder    FinderConfig    `toml:"finder"`
 }
 
 // ColorsConfig holds shared UI colors and provider-specific accents.
@@ -27,18 +26,20 @@ type ColorsConfig struct {
 }
 
 type SharedColorsConfig struct {
-	Session  string `toml:"session"`
-	Window   string `toml:"window"`
-	Dim      string `toml:"dim"`
-	Selected string `toml:"selected"`
-	Current  string `toml:"current"`
-	Working  string `toml:"working"`
-	Waiting  string `toml:"waiting"`
-	Idle     string `toml:"idle"`
-	MoveSrc  string `toml:"move_src"`
-	CtxLow   string `toml:"ctx_low"`
-	CtxMid   string `toml:"ctx_mid"`
-	CtxHigh  string `toml:"ctx_high"`
+	Session    string `toml:"session"`
+	Window     string `toml:"window"`
+	Dim        string `toml:"dim"`
+	Selected   string `toml:"selected"`
+	Current    string `toml:"current"`
+	Working    string `toml:"working"`
+	Waiting    string `toml:"waiting"`
+	Idle       string `toml:"idle"`
+	MoveSrc    string `toml:"move_src"`
+	CtxLow     string `toml:"ctx_low"`
+	CtxMid     string `toml:"ctx_mid"`
+	CtxHigh    string `toml:"ctx_high"`
+	Separator  string `toml:"separator"`
+	FooterRule string `toml:"footer_rule"`
 }
 
 type ProviderColorsConfig struct {
@@ -55,22 +56,59 @@ type SearchPath struct {
 	MaxDepth int    `toml:"max_depth"`
 }
 
+type GeneralConfig struct {
+	DefaultSession   string       `toml:"default_session"`
+	SwitchPriority   []string     `toml:"switch_priority"`
+	EscapeChord      string       `toml:"escape_chord"`
+	EscapeChordMs    int          `toml:"escape_chord_ms"`
+	Exclusions       []string     `toml:"exclusions"`
+	AttachedLast     bool         `toml:"attached_last"`
+	LastSessionFirst bool         `toml:"last_session_first"`
+	SearchSubmodules bool         `toml:"search_submodules"`
+	SearchPaths      []SearchPath `toml:"search_paths"`
+}
+
+type IconsConfig struct {
+	WorkingFrames   []string `toml:"working_frames"`
+	Waiting         string   `toml:"waiting"`
+	Idle            string   `toml:"idle"`
+	Unknown         string   `toml:"unknown"`
+	ColumnSeparator string   `toml:"column_separator"`
+	FooterSeparator string   `toml:"footer_separator"`
+}
+
+type DashboardConfig struct {
+	Columns               []string `toml:"columns"`
+	WindowHeaders         string   `toml:"window_headers"`
+	FooterPadding         bool     `toml:"footer_padding"`
+	FooterSeparator       bool     `toml:"footer_separator"`
+	ShowContextPercentage bool     `toml:"show_context_percentage"`
+}
+
+type FinderConfig struct {
+	ProviderOrder         []string `toml:"provider_order"`
+	StateOrder            []string `toml:"state_order"`
+	ShowContextPercentage bool     `toml:"show_context_percentage"`
+}
+
 // DefaultColors returns the default color scheme.
 func DefaultColors() ColorsConfig {
 	return ColorsConfig{
 		Shared: SharedColorsConfig{
-			Session:  "15",
-			Window:   "245",
-			Dim:      "240",
-			Selected: "236",
-			Current:  "2",
-			Working:  "208",
-			Waiting:  "1",
-			Idle:     "12",
-			MoveSrc:  "5",
-			CtxLow:   "2",
-			CtxMid:   "3",
-			CtxHigh:  "1",
+			Session:    "15",
+			Window:     "245",
+			Dim:        "240",
+			Selected:   "236",
+			Current:    "2",
+			Working:    "208",
+			Waiting:    "1",
+			Idle:       "12",
+			MoveSrc:    "5",
+			CtxLow:     "2",
+			CtxMid:     "3",
+			CtxHigh:    "1",
+			Separator:  "240",
+			FooterRule: "240",
 		},
 		Claude: ProviderColorsConfig{
 			Accent: "5",
@@ -89,18 +127,60 @@ func DefaultColors() ColorsConfig {
 	}
 }
 
-// DefaultConfig returns sensible defaults when no config file exists.
-func DefaultConfig() Config {
+func DefaultIcons() IconsConfig {
+	return IconsConfig{
+		WorkingFrames:   []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		Waiting:         "?",
+		Idle:            "●",
+		Unknown:         "·",
+		ColumnSeparator: " │ ",
+		FooterSeparator: "╌",
+	}
+}
+
+func DefaultDashboardConfig() DashboardConfig {
+	return DashboardConfig{
+		Columns:               []string{"name", "branch", "command", "activity", "context", "mode"},
+		WindowHeaders:         "auto",
+		FooterPadding:         true,
+		FooterSeparator:       true,
+		ShowContextPercentage: true,
+	}
+}
+
+func DefaultFinderConfig() FinderConfig {
+	return FinderConfig{
+		ProviderOrder:         []string{"claude", "codex"},
+		StateOrder:            []string{"idle", "working", "waiting"},
+		ShowContextPercentage: true,
+	}
+}
+
+func DefaultGeneralConfig() GeneralConfig {
 	home, _ := os.UserHomeDir()
-	return Config{
+	return GeneralConfig{
+		DefaultSession:   "",
+		SwitchPriority:   []string{"waiting", "idle", "default", "working"},
+		EscapeChord:      "jj",
+		EscapeChordMs:    250,
+		Exclusions:       []string{},
+		AttachedLast:     true,
+		LastSessionFirst: true,
+		SearchSubmodules: false,
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
 		},
-		Exclusions:     []string{"node_modules", "vendor", ".git", ".cache"},
-		SwitchPriority: []string{"waiting", "idle", "default", "working"},
-		EscapeChord:    "jj",
-		EscapeChordMs:  250,
-		Colors:         DefaultColors(),
+	}
+}
+
+// DefaultConfig returns sensible defaults when no config file exists.
+func DefaultConfig() Config {
+	return Config{
+		General:   DefaultGeneralConfig(),
+		Colors:    DefaultColors(),
+		Icons:     DefaultIcons(),
+		Dashboard: DefaultDashboardConfig(),
+		Finder:    DefaultFinderConfig(),
 	}
 }
 
@@ -120,14 +200,63 @@ func LoadConfig() Config {
 	}
 
 	// Expand ~ in all search paths.
-	for i := range cfg.SearchPaths {
-		cfg.SearchPaths[i].Path = expandHome(cfg.SearchPaths[i].Path)
-		if cfg.SearchPaths[i].MaxDepth == 0 {
-			cfg.SearchPaths[i].MaxDepth = 3
+	for i := range cfg.General.SearchPaths {
+		cfg.General.SearchPaths[i].Path = expandHome(cfg.General.SearchPaths[i].Path)
+		if cfg.General.SearchPaths[i].MaxDepth == 0 {
+			cfg.General.SearchPaths[i].MaxDepth = 3
 		}
 	}
 
+	cfg.normalize()
+
 	return cfg
+}
+
+func (c *Config) normalize() {
+	if len(c.Icons.WorkingFrames) == 0 {
+		c.Icons.WorkingFrames = DefaultIcons().WorkingFrames
+	}
+	if c.Icons.Waiting == "" {
+		c.Icons.Waiting = DefaultIcons().Waiting
+	}
+	if c.Icons.Idle == "" {
+		c.Icons.Idle = DefaultIcons().Idle
+	}
+	if c.Icons.Unknown == "" {
+		c.Icons.Unknown = DefaultIcons().Unknown
+	}
+	if c.Icons.ColumnSeparator == "" {
+		c.Icons.ColumnSeparator = DefaultIcons().ColumnSeparator
+	}
+	if c.Icons.FooterSeparator == "" {
+		c.Icons.FooterSeparator = DefaultIcons().FooterSeparator
+	}
+
+	if len(c.Dashboard.Columns) == 0 {
+		c.Dashboard.Columns = DefaultDashboardConfig().Columns
+	}
+	if c.Dashboard.WindowHeaders == "" {
+		c.Dashboard.WindowHeaders = DefaultDashboardConfig().WindowHeaders
+	}
+
+	if len(c.Finder.ProviderOrder) == 0 && c.Finder.ProviderOrder == nil {
+		c.Finder.ProviderOrder = DefaultFinderConfig().ProviderOrder
+	}
+	if len(c.Finder.StateOrder) == 0 && c.Finder.StateOrder == nil {
+		c.Finder.StateOrder = DefaultFinderConfig().StateOrder
+	}
+	if len(c.General.SearchPaths) == 0 {
+		c.General.SearchPaths = DefaultGeneralConfig().SearchPaths
+	}
+	if len(c.General.SwitchPriority) == 0 {
+		c.General.SwitchPriority = DefaultGeneralConfig().SwitchPriority
+	}
+	if c.General.EscapeChord == "" {
+		c.General.EscapeChord = DefaultGeneralConfig().EscapeChord
+	}
+	if c.General.EscapeChordMs == 0 {
+		c.General.EscapeChordMs = DefaultGeneralConfig().EscapeChordMs
+	}
 }
 
 func configPath() string {
@@ -144,4 +273,39 @@ func expandHome(path string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
+}
+
+func DefaultConfigTOML() ([]byte, error) {
+	var buf bytes.Buffer
+	out := struct {
+		General GeneralConfig `toml:"general"`
+	}{
+		General: DefaultGeneralConfig(),
+	}
+	if err := toml.NewEncoder(&buf).Encode(out); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func WriteDefaultConfigFile() (string, error) {
+	path := configPath()
+	if _, err := os.Stat(path); err == nil {
+		return path, os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return path, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return path, err
+	}
+
+	data, err := DefaultConfigTOML()
+	if err != nil {
+		return path, err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return path, err
+	}
+	return path, nil
 }

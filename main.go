@@ -17,12 +17,28 @@ type jumpCandidate struct {
 func main() {
 	initDebugLogger()
 	cfg := LoadConfig()
-	initStyles(cfg.Colors)
+	initStyles(cfg)
 
 	initial := screenFinder
 	fk := finderAll
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "config":
+			if len(os.Args) > 2 && os.Args[2] == "init" {
+				path, err := WriteDefaultConfigFile()
+				if err != nil {
+					if err == os.ErrExist {
+						fmt.Fprintf(os.Stderr, "error: config already exists at %s\n", path)
+					} else {
+						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					}
+					os.Exit(1)
+				}
+				fmt.Println(path)
+				return
+			}
+			fmt.Fprintln(os.Stderr, "error: usage: cms config init")
+			os.Exit(1)
 		case "dash", "d", "dashboard":
 			initial = screenDashboard
 		case "find", "f":

@@ -199,7 +199,7 @@ func TestParseCodexPaneUnknownDefaultsToIdle(t *testing.T) {
 }
 
 func TestAgentSummaryMixedProviders(t *testing.T) {
-	initStyles(DefaultColors())
+	initStyles(DefaultConfig())
 
 	sess := Session{
 		Name: "cms",
@@ -219,7 +219,8 @@ func TestAgentSummaryMixedProviders(t *testing.T) {
 		"%3": {Running: true, Provider: ProviderCodex, Activity: ActivityIdle, ContextPct: 12},
 	}
 
-	summary := agentSummary(sess, agents)
+	m := finderModel{cfg: DefaultConfig()}
+	summary := m.agentSummary(sess, agents)
 	if !strings.Contains(summary, "claude") {
 		t.Fatalf("summary %q missing claude label", summary)
 	}

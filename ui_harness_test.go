@@ -11,8 +11,9 @@ func TestRenderHarnessDashboard(t *testing.T) {
 		t.Skip("set CMS_RENDER_HARNESS=1 to print dashboard render output")
 	}
 
-	initStyles(DefaultColors())
-	m := newDashboardModel()
+	cfg := DefaultConfig()
+	initStyles(cfg)
+	m := newDashboardModel(cfg)
 	m.width = 120
 	m.height = 18
 
@@ -32,11 +33,12 @@ func TestRenderHarnessFinder(t *testing.T) {
 		t.Skip("set CMS_RENDER_HARNESS=1 to print finder render output")
 	}
 
-	initStyles(DefaultColors())
+	cfg := DefaultConfig()
+	initStyles(cfg)
 	w := &Watcher{}
 	w.updateCache(harnessSessions(), harnessAgents(), CurrentTarget{Session: "cms", Window: 0, Pane: 1})
 
-	m := newFinderModel(LoadConfig(), w, finderSessions, 120, 18)
+	m := newFinderModel(cfg, w, finderSessions, 120, 18)
 	t.Log("=== finder harness ===")
 	t.Log("\n" + m.View())
 }
@@ -46,7 +48,8 @@ func TestRenderHarnessLive(t *testing.T) {
 		t.Skip("set CMS_LIVE_HARNESS=1 to print live finder/dashboard render output")
 	}
 
-	initStyles(DefaultColors())
+	cfg := LoadConfig()
+	initStyles(cfg)
 	sessions, pt, err := FetchState()
 	if err != nil {
 		t.Fatalf("FetchState: %v", err)
@@ -54,7 +57,7 @@ func TestRenderHarnessLive(t *testing.T) {
 	agents := detectAllAgents(sessions, pt)
 	current, _ := FetchCurrentTarget()
 
-	dash := newDashboardModel()
+	dash := newDashboardModel(cfg)
 	dash.width = 140
 	dash.height = 24
 	updated, _ := dash.Update(stateMsg{sessions: sessions, agents: agents, current: current})
@@ -62,7 +65,7 @@ func TestRenderHarnessLive(t *testing.T) {
 
 	w := &Watcher{}
 	w.updateCache(sessions, agents, current)
-	finder := newFinderModel(LoadConfig(), w, finderSessions, 140, 24)
+	finder := newFinderModel(cfg, w, finderSessions, 140, 24)
 
 	t.Logf("live sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 	t.Log("=== live dashboard ===")
@@ -154,15 +157,58 @@ func harnessAgents() map[string]AgentStatus {
 }
 
 func TestRenderHarnessProviderSummaryIncludesZeroContext(t *testing.T) {
-	initStyles(DefaultColors())
+	cfg := DefaultConfig()
+	initStyles(cfg)
 
 	out := renderProviderSummary(ProviderCodex, providerSummary{
 		total:  1,
 		idle:   1,
 		maxCtx: 0,
 		hasCtx: true,
-	})
+	}, cfg.Finder)
 	if !strings.Contains(out, "0%") {
 		t.Fatalf("summary %q missing 0%% context", out)
+	}
+}
+
+func TestRenderHarnessFinderSummaryConfigVariants(t *testing.T) {
+	cfg := DefaultConfig()
+	initStyles(cfg)
+
+	totalOnly := cfg
+	totalOnly.Finder.StateOrder = []string{"total"}
+	totalOnly.Finder.ShowContextPercentage = false
+	out := renderProviderSummary(ProviderCodex, providerSummary{total: 3, idle: 1, working: 1, waiting: 1, maxCtx: 37, hasCtx: true}, totalOnly.Finder)
+	if !strings.Contains(out, "3") || strings.Contains(out, "37%") {
+		t.Fatalf("total-only summary = %q, want total without context", out)
+	}
+
+	noProviders := cfg
+	noProviders.Finder.ProviderOrder = []string{}
+	m := finderModel{cfg: noProviders}
+	if got := m.agentSummary(harnessSessions()[0], harnessAgents()); got != "" {
+		t.Fatalf("agentSummary with no providers = %q, want empty", got)
+	}
+}
+
+func TestRenderHarnessDashboardConfigVariants(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Dashboard.Columns = []string{"name", "activity", "context"}
+	cfg.Dashboard.WindowHeaders = "never"
+	cfg.Dashboard.FooterPadding = false
+	cfg.Dashboard.FooterSeparator = false
+	initStyles(cfg)
+
+	m := newDashboardModel(cfg)
+	m.width = 100
+	m.height = 12
+	updated, _ := m.Update(stateMsg{sessions: harnessSessions(), agents: harnessAgents(), current: CurrentTarget{Session: "cms", Window: 0, Pane: 1}})
+	m = updated
+	view := m.View()
+	if strings.Contains(view, "fish*") {
+		t.Fatalf("dashboard view unexpectedly contains window header: %q", view)
+	}
+	if !strings.Contains(view, "idle") || !strings.Contains(view, "42%") {
+		t.Fatalf("dashboard view missing configured columns: %q", view)
 	}
 }

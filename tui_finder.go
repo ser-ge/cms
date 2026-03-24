@@ -136,7 +136,7 @@ func (m *finderModel) buildSessionItems(agents map[string]AgentStatus) {
 	m.sessIdx = nil
 	for _, sess := range m.sessData {
 		desc := fmt.Sprintf("%d windows", len(sess.Windows))
-		if cs := agentSummary(sess, agents); cs != "" {
+		if cs := m.agentSummary(sess, agents); cs != "" {
 			desc += " · " + cs
 		}
 		if sess.Attached {
@@ -155,8 +155,11 @@ func (m *finderModel) buildSessionItems(agents map[string]AgentStatus) {
 	}
 }
 
-func agentSummary(sess Session, agents map[string]AgentStatus) string {
+func (m finderModel) agentSummary(sess Session, agents map[string]AgentStatus) string {
 	if agents == nil {
+		return ""
+	}
+	if len(m.cfg.Finder.ProviderOrder) == 0 {
 		return ""
 	}
 
@@ -189,7 +192,7 @@ func agentSummary(sess Session, agents map[string]AgentStatus) string {
 	}
 
 	var parts []string
-	for _, provider := range knownProviders() {
+	for _, provider := range orderedProviders(m.cfg.Finder.ProviderOrder) {
 		s := summaries[provider]
 		if s == nil {
 			continue
@@ -197,28 +200,59 @@ func agentSummary(sess Session, agents map[string]AgentStatus) string {
 		if s.total == 0 {
 			continue
 		}
-		parts = append(parts, renderProviderSummary(provider, *s))
+		parts = append(parts, renderProviderSummary(provider, *s, m.cfg.Finder))
 	}
 	return joinParts(parts)
 }
 
-func renderProviderSummary(provider Provider, s providerSummary) string {
+func renderProviderSummary(provider Provider, s providerSummary, cfg FinderConfig) string {
 	label := providerAccent(provider).Render(provider.String())
 	var states []string
-	if s.idle > 0 {
-		states = append(states, idleStyle.Render(fmt.Sprintf("● %d", s.idle)))
-	}
-	if s.working > 0 {
-		states = append(states, workingStyle.Render(fmt.Sprintf("⚡%d", s.working)))
-	}
-	if s.waiting > 0 {
-		states = append(states, waitingStyle.Render(fmt.Sprintf("❓%d", s.waiting)))
+	for _, state := range cfg.StateOrder {
+		switch state {
+		case "total":
+			states = append(states, providerAccent(provider).Render(fmt.Sprintf("%d", s.total)))
+		case "idle":
+			if s.idle > 0 {
+				states = append(states, idleStyle.Render(fmt.Sprintf("%s %d", idleIndicator, s.idle)))
+			}
+		case "working":
+			if s.working > 0 {
+				states = append(states, workingStyle.Render(fmt.Sprintf("⚡%d", s.working)))
+			}
+		case "waiting":
+			if s.waiting > 0 {
+				states = append(states, waitingStyle.Render(fmt.Sprintf("%s%d", waitingIndicator, s.waiting)))
+			}
+		}
 	}
 	state := joinParts(states)
-	if s.hasCtx {
+	if cfg.ShowContextPercentage && s.hasCtx {
+		if state == "" {
+			return fmt.Sprintf("%s %s", label, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+		}
 		return fmt.Sprintf("%s %s %s", label, state, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
 	}
+	if state == "" {
+		return label
+	}
 	return fmt.Sprintf("%s %s", label, state)
+}
+
+func orderedProviders(ordered []string) []Provider {
+	if len(ordered) == 0 {
+		return nil
+	}
+	var providers []Provider
+	for _, name := range ordered {
+		switch name {
+		case "claude":
+			providers = append(providers, ProviderClaude)
+		case "codex":
+			providers = append(providers, ProviderCodex)
+		}
+	}
+	return providers
 }
 
 func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
@@ -302,7 +336,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 					kind:        entry.kind,
 					sessionName: entry.sessionName,
 					projectPath: entry.projectPath,
-					priority:    m.cfg.SwitchPriority,
+					priority:    m.cfg.General.SwitchPriority,
 					sessions:    m.sessData,
 					agents:      m.agentData,
 				}
@@ -326,15 +360,20 @@ func (m *finderModel) rebuildPicker() {
 	var items []PickerItem
 	var entries []finderEntry
 
-	// Sessions: sorted by recency (most recent closest to input),
-	// with the attached session pushed to end (furthest from input).
+	// Sessions: preserve tmux order, with optional last-session promotion and
+	// attached-session demotion controlled by config.
 	if m.kind != finderProjects && len(m.sessions) > 0 {
 		// Build index pairs so we can sort sessions + entries together.
 		type indexedSession struct {
-			idx      int
-			attached bool
+			idx         int
+			attached    bool
+			lastSession bool
 		}
 		ordered := make([]indexedSession, len(m.sessions))
+		lastSessionName := ""
+		if m.cfg.General.LastSessionFirst {
+			lastSessionName = FetchLastSession()
+		}
 		for i := range m.sessions {
 			name := m.sessIdx[i].sessionName
 			var attached bool
@@ -344,12 +383,19 @@ func (m *finderModel) rebuildPicker() {
 					break
 				}
 			}
-			ordered[i] = indexedSession{idx: i, attached: attached}
+			ordered[i] = indexedSession{
+				idx:         i,
+				attached:    attached,
+				lastSession: lastSessionName != "" && name == lastSessionName,
+			}
 		}
 
-		// Sort: attached last and preserve existing tmux order within each bucket.
+		// Sort: optionally promote the tmux last session and optionally demote attached.
 		sort.SliceStable(ordered, func(a, b int) bool {
-			if ordered[a].attached != ordered[b].attached {
+			if ordered[a].lastSession != ordered[b].lastSession {
+				return ordered[a].lastSession
+			}
+			if m.cfg.General.AttachedLast && ordered[a].attached != ordered[b].attached {
 				return !ordered[a].attached // unattached before attached
 			}
 			return false
@@ -384,7 +430,7 @@ func (m *finderModel) rebuildPicker() {
 	cursor := m.picker.cursor
 	mode := m.picker.mode
 
-	m.picker = newPicker("", items, m.cfg.EscapeChord, m.cfg.EscapeChordMs)
+	m.picker = newPicker("", items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
 	m.picker.width = m.width
 	m.picker.height = m.height
 	m.picker.mode = mode

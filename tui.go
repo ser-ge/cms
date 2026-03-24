@@ -32,7 +32,7 @@ func newRootModel(initial screen, fk finderKind, cfg Config, watcher *Watcher) r
 	m := rootModel{
 		screen:     initial,
 		initial:    initial,
-		dashboard:  newDashboardModel(),
+		dashboard:  newDashboardModel(cfg),
 		finderKind: fk,
 		watcher:    watcher,
 		cfg:        cfg,

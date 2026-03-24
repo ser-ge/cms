@@ -8,7 +8,7 @@ import (
 
 func TestFinderFlow(t *testing.T) {
 	cfg := LoadConfig()
-	fmt.Printf("Config search paths: %+v\n", cfg.SearchPaths)
+	fmt.Printf("Config search paths: %+v\n", cfg.General.SearchPaths)
 
 	t0 := time.Now()
 	sessions, pt, err := FetchState()

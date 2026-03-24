@@ -18,11 +18,11 @@ func TestScanTiming(t *testing.T) {
 	t1 := time.Now()
 	// Just the BFS part without git
 	excluded := map[string]bool{}
-	for _, e := range cfg.Exclusions {
+	for _, e := range cfg.General.Exclusions {
 		excluded[e] = true
 	}
 	count := 0
-	for _, sp := range cfg.SearchPaths {
+	for _, sp := range cfg.General.SearchPaths {
 		type entry struct {
 			path  string
 			depth int
