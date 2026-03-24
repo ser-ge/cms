@@ -24,9 +24,16 @@ var (
 	helpStyle     lipgloss.Style
 	attachLabel   string
 
-	modePlanStyle   lipgloss.Style
-	modeAcceptStyle lipgloss.Style
-	modeYoloStyle   lipgloss.Style
+	claudeAccentStyle lipgloss.Style
+	codexAccentStyle  lipgloss.Style
+	claudePlanStyle   lipgloss.Style
+	claudeAcceptStyle lipgloss.Style
+	claudeDangerStyle lipgloss.Style
+	claudeSafeStyle   lipgloss.Style
+	codexPlanStyle    lipgloss.Style
+	codexAcceptStyle  lipgloss.Style
+	codexDangerStyle  lipgloss.Style
+	codexSafeStyle    lipgloss.Style
 
 	ctxLowStyle  lipgloss.Style
 	ctxMidStyle  lipgloss.Style
@@ -34,33 +41,40 @@ var (
 )
 
 func initStyles(c ColorsConfig) {
-	sessionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Session))
-	windowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Window))
-	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Dim))
-	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Selected))
-	currentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Current))
-	moveSrcStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.MoveSrc)).Bold(true)
-	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Working))
-	waitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Waiting))
-	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Idle))
+	sessionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Shared.Session))
+	windowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Window))
+	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
+	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Shared.Selected))
+	currentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Current))
+	moveSrcStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.MoveSrc)).Bold(true)
+	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working))
+	waitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting))
+	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Idle))
 	helpStyle = dimStyle
 	attachLabel = dimStyle.Render(" (attached)")
 
-	modePlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModePlan))
-	modeAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModeAccept))
-	modeYoloStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModeYolo)).Bold(true)
+	claudeAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Accent)).Bold(true)
+	codexAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Accent)).Bold(true)
+	claudePlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Plan))
+	claudeAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Accept))
+	claudeDangerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Danger)).Bold(true)
+	claudeSafeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Safe))
+	codexPlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Plan))
+	codexAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Accept))
+	codexDangerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Danger)).Bold(true)
+	codexSafeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Safe))
 
-	ctxLowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxLow))
-	ctxMidStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxMid))
-	ctxHighStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxHigh))
+	ctxLowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxLow))
+	ctxMidStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxMid))
+	ctxHighStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxHigh))
 
 	// Picker styles.
-	pickerSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Selected)).Foreground(lipgloss.Color(c.Current)).Bold(true)
+	pickerSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Shared.Selected)).Foreground(lipgloss.Color(c.Shared.Current)).Bold(true)
 	pickerNormalStyle = lipgloss.NewStyle()
-	pickerDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Window))
-	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Working)).Bold(true)
-	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Session))
-	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Dim))
+	pickerDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Window))
+	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working)).Bold(true)
+	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Shared.Session))
+	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
 }
 
 func contextStyle(pct int) lipgloss.Style {
@@ -79,15 +93,15 @@ type paneEntry struct {
 	pane      Pane
 	session   string
 	window    Window
-	claude    ClaudeStatus
-	hasClaude bool
+	agent     AgentStatus
+	hasAgent  bool
 	isCurrent bool
 }
 
 type dashboardModel struct {
 	// Data.
 	sessions []Session
-	claude   map[string]ClaudeStatus
+	agents   map[string]AgentStatus
 	current  CurrentTarget
 
 	// Navigation.
@@ -145,9 +159,9 @@ func spinnerTickCmd() tea.Cmd {
 	})
 }
 
-// hasWorking reports whether any Claude instance is currently working.
+// hasWorking reports whether any agent instance is currently working.
 func (m *dashboardModel) hasWorking() bool {
-	for _, cs := range m.claude {
+	for _, cs := range m.agents {
 		if cs.Running && cs.Activity == ActivityWorking {
 			return true
 		}
@@ -177,7 +191,7 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	case stateMsg:
 		// Full state snapshot from watcher (bootstrap + structural changes).
 		m.sessions = msg.sessions
-		m.claude = msg.claude
+		m.agents = msg.agents
 		m.current = msg.current
 		m.loading = false
 		m.applyHysteresis()
@@ -187,16 +201,16 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		}
 		return m, nil
 
-	case claudeUpdateMsg:
-		// Incremental Claude status update from watcher.
-		if m.claude == nil {
-			m.claude = map[string]ClaudeStatus{}
+	case agentUpdateMsg:
+		// Incremental agent status update from watcher.
+		if m.agents == nil {
+			m.agents = map[string]AgentStatus{}
 		}
 		for id, status := range msg.updates {
 			if status.Running {
-				m.claude[id] = status
+				m.agents[id] = status
 			} else {
-				delete(m.claude, id)
+				delete(m.agents, id)
 			}
 		}
 		m.applyHysteresis()
@@ -400,13 +414,13 @@ func (m *dashboardModel) rebuildItems() {
 					win.Index == m.current.Window &&
 					pane.Index == m.current.Pane
 
-				cs, hasClaude := m.claude[pane.ID]
+				cs, hasAgent := m.agents[pane.ID]
 				m.items = append(m.items, paneEntry{
 					pane:      pane,
 					session:   sess.Name,
 					window:    win,
-					claude:    cs,
-					hasClaude: hasClaude && cs.Running,
+					agent:     cs,
+					hasAgent:  hasAgent && cs.Running,
 					isCurrent: isCurrent,
 				})
 			}
@@ -436,17 +450,17 @@ func (m *dashboardModel) rebuildItems() {
 }
 
 func (m *dashboardModel) applyHysteresis() {
-	for id, cs := range m.claude {
+	for id, cs := range m.agents {
 		if cs.Activity == ActivityWorking {
 			m.idleCount[id] = 0
-		} else if m.prevActivity[id] == ActivityWorking && cs.Activity == ActivityIdle {
+		} else if shouldHoldWorking(cs) && m.prevActivity[id] == ActivityWorking && cs.Activity == ActivityIdle {
 			m.idleCount[id]++
 			if m.idleCount[id] < idleThreshold {
 				cs.Activity = ActivityWorking
-				m.claude[id] = cs
+				m.agents[id] = cs
 			}
 		}
-		m.prevActivity[id] = m.claude[id].Activity
+		m.prevActivity[id] = m.agents[id].Activity
 	}
 }
 
@@ -454,8 +468,6 @@ func (m dashboardModel) View() string {
 	if m.loading {
 		return "  Loading...\n"
 	}
-
-	var b strings.Builder
 
 	// Determine which items are visible.
 	visible := make(map[int]bool)
@@ -490,6 +502,8 @@ func (m dashboardModel) View() string {
 	lastSession := ""
 	lastWindow := -1
 	visibleIdx := 0
+	selectedLine := -1
+	var lines []string
 
 	for i, entry := range m.items {
 		if !visible[i] {
@@ -499,7 +513,7 @@ func (m dashboardModel) View() string {
 		// Session header.
 		if entry.session != lastSession {
 			if lastSession != "" {
-				b.WriteString("\n")
+				lines = append(lines, "")
 			}
 			label := ""
 			for _, sess := range m.sessions {
@@ -507,7 +521,7 @@ func (m dashboardModel) View() string {
 					label = attachLabel
 				}
 			}
-			fmt.Fprintf(&b, " %s%s\n", sessionStyle.Render(entry.session), label)
+			lines = append(lines, fmt.Sprintf(" %s%s", sessionStyle.Render(entry.session), label))
 			lastSession = entry.session
 			lastWindow = -1
 		}
@@ -518,7 +532,7 @@ func (m dashboardModel) View() string {
 			if entry.window.Active {
 				active = "*"
 			}
-			fmt.Fprintf(&b, "   %s\n", windowStyle.Render(fmt.Sprintf("%s%s", entry.window.Name, active)))
+			lines = append(lines, fmt.Sprintf("   %s", windowStyle.Render(fmt.Sprintf("%s%s", entry.window.Name, active))))
 			lastWindow = entry.window.Index
 		}
 
@@ -531,16 +545,14 @@ func (m dashboardModel) View() string {
 			line = moveSrcStyle.Render(line)
 		} else if isSelected {
 			line = selectedStyle.Render(line)
+			selectedLine = len(lines)
 		} else if entry.isCurrent {
 			line = currentStyle.Render(line)
 		}
 
-		b.WriteString(line)
-		b.WriteString("\n")
+		lines = append(lines, line)
 		visibleIdx++
 	}
-
-	content := b.String()
 
 	// Status bar.
 	var help string
@@ -554,7 +566,7 @@ func (m dashboardModel) View() string {
 		help = helpStyle.Render("  j/k: navigate  enter: jump  m: move  x: kill  /: find  q: quit")
 	}
 
-	return pinBottom(content, help, m.height)
+	return renderDashboardViewport(lines, selectedLine, help, m.height)
 }
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -575,13 +587,13 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 
 	// Indicator.
 	pc.indicator = "  "
-	if entry.hasClaude {
-		switch entry.claude.Activity {
+	if entry.hasAgent {
+		switch entry.agent.Activity {
 		case ActivityWorking:
 			frame := spinnerFrames[m.frame%len(spinnerFrames)]
 			style := workingStyle
-			if entry.claude.Mode == ModeYolo {
-				style = modeYoloStyle
+			if entry.agent.Mode == ModeBypassPermissions || entry.agent.Mode == ModeDangerFullAccess {
+				style = modeStyle(entry.agent)
 			}
 			pc.indicator = style.Render(frame) + " "
 		case ActivityWaitingInput:
@@ -620,28 +632,30 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 
 	// Col 2: command (if not shell).
 	cmd := entry.pane.Command
-	if cmd != "fish" && cmd != "bash" && cmd != "zsh" {
+	if !isShellCommand(cmd) {
 		pc.cols[2] = cmd
 		pc.styled[2] = cmd
 	}
 
-	// Col 3: claude activity.
-	if entry.hasClaude {
-		pc.cols[3] = entry.claude.Activity.String()
-		pc.styled[3] = renderClaude(entry.claude)
+	// Col 3: activity.
+	if entry.hasAgent {
+		if label, styled := renderAgentActivity(entry.agent); label != "" {
+			pc.cols[3] = label
+			pc.styled[3] = styled
+		}
 	}
 
 	// Col 4: context %.
-	if entry.hasClaude && entry.claude.ContextPct > 0 {
-		txt := fmt.Sprintf("%d%%", entry.claude.ContextPct)
+	if entry.hasAgent && entry.agent.ContextPct > 0 {
+		txt := fmt.Sprintf("%d%%", entry.agent.ContextPct)
 		pc.cols[4] = txt
-		pc.styled[4] = contextStyle(entry.claude.ContextPct).Render(txt)
+		pc.styled[4] = contextStyle(entry.agent.ContextPct).Render(txt)
 	}
 
 	// Col 5: mode.
-	if entry.hasClaude {
-		if modeStr := renderMode(entry.claude.Mode); modeStr != "" {
-			pc.cols[5] = entry.claude.Mode.String()
+	if entry.hasAgent {
+		if modeStr := renderMode(entry.agent); modeStr != "" {
+			pc.cols[5] = entry.agent.ModeLabel
 			pc.styled[5] = modeStr
 		}
 	}
@@ -650,8 +664,15 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 }
 
 func renderPaneLine(pc paneColumns, widths [numPaneCols]int) string {
-	var parts []string
+	last := -1
 	for i := 0; i < numPaneCols; i++ {
+		if pc.cols[i] != "" {
+			last = i
+		}
+	}
+
+	var parts []string
+	for i := 0; i <= last; i++ {
 		if widths[i] == 0 {
 			continue
 		}
@@ -665,29 +686,102 @@ func renderPaneLine(pc paneColumns, widths [numPaneCols]int) string {
 	return fmt.Sprintf("   %s%d │ %s", pc.indicator, pc.paneIdx, strings.Join(parts, " │ "))
 }
 
-func renderClaude(cs ClaudeStatus) string {
+func renderAgentActivity(cs AgentStatus) (string, string) {
 	var style lipgloss.Style
+	label := ""
 	switch cs.Activity {
 	case ActivityWorking:
 		style = workingStyle
+		label = "working"
 	case ActivityWaitingInput:
 		style = waitingStyle
-	default:
+		label = "waiting"
+	case ActivityIdle:
 		style = idleStyle
+		label = "idle"
+	default:
+		return "", ""
 	}
-	return style.Render(cs.Activity.String())
+	return label, style.Render(label)
 }
 
-func renderMode(mode ClaudeMode) string {
-	switch mode {
-	case ModePlan:
-		return modePlanStyle.Render("plan")
-	case ModeAcceptEdits:
-		return modeAcceptStyle.Render("accept edits")
-	case ModeYolo:
-		return modeYoloStyle.Render("yolo")
-	default:
+func renderMode(status AgentStatus) string {
+	if status.ModeLabel == "" {
 		return ""
 	}
+	return modeStyle(status).Render(status.ModeLabel)
 }
 
+func providerAccent(provider Provider) lipgloss.Style {
+	switch provider {
+	case ProviderClaude:
+		return claudeAccentStyle
+	case ProviderCodex:
+		return codexAccentStyle
+	default:
+		return dimStyle
+	}
+}
+
+func modeStyle(status AgentStatus) lipgloss.Style {
+	switch status.Provider {
+	case ProviderCodex:
+		switch status.Mode {
+		case ModePlan:
+			return codexPlanStyle
+		case ModeAcceptEdits:
+			return codexAcceptStyle
+		case ModeReadOnly, ModeWorkspaceWrite:
+			return codexSafeStyle
+		case ModeBypassPermissions, ModeDangerFullAccess:
+			return codexDangerStyle
+		default:
+			return codexAccentStyle
+		}
+	case ProviderClaude:
+		switch status.Mode {
+		case ModePlan:
+			return claudePlanStyle
+		case ModeAcceptEdits:
+			return claudeAcceptStyle
+		case ModeBypassPermissions, ModeDangerFullAccess:
+			return claudeDangerStyle
+		case ModeReadOnly, ModeWorkspaceWrite:
+			return claudeSafeStyle
+		default:
+			return claudeAccentStyle
+		}
+	default:
+		return dimStyle
+	}
+}
+
+func renderDashboardViewport(lines []string, selectedLine int, help string, height int) string {
+	if height <= 1 {
+		if len(lines) == 0 {
+			return help
+		}
+		return lines[0] + "\n" + help
+	}
+
+	contentHeight := height - 1
+	start := 0
+	if selectedLine >= contentHeight {
+		start = selectedLine - contentHeight + 1
+	}
+	if maxStart := max(0, len(lines)-contentHeight); start > maxStart {
+		start = maxStart
+	}
+	end := min(len(lines), start+contentHeight)
+
+	var b strings.Builder
+	for i := start; i < end; i++ {
+		b.WriteString(lines[i])
+		b.WriteString("\n")
+	}
+	for i := end - start; i < contentHeight; i++ {
+		b.WriteString("\n")
+	}
+	b.WriteString(help)
+	return b.String()
+}

@@ -42,6 +42,6 @@ func TestScanTiming(t *testing.T) {
 	fmt.Printf("FetchState: %v (%d sessions)\n", time.Since(t2), len(sessions))
 
 	t3 := time.Now()
-	claude := detectAllClaude(sessions, pt)
-	fmt.Printf("detectAllClaude: %v (%d results)\n", time.Since(t3), len(claude))
+	agents := detectAllAgents(sessions, pt)
+	fmt.Printf("detectAllAgents: %v (%d results)\n", time.Since(t3), len(agents))
 }

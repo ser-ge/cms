@@ -53,14 +53,14 @@ func SwitchSession(name string) error {
 
 // SmartSwitchSession switches to a session, targeting the best pane based on
 // the priority list. Each entry is checked in order:
-//   - "waiting"  → first pane with Claude waiting for input
-//   - "idle"     → first pane with Claude idle
-//   - "working"  → first pane with Claude working
+//   - "waiting"  → first pane with an agent waiting for input
+//   - "idle"     → first pane with an agent idle
+//   - "working"  → first pane with an agent working
 //   - "default"  → tmux's last-active pane (normal switch)
 //
 // Falls back to normal switch if no priority matches.
-func SmartSwitchSession(name string, priority []string, sessions []Session, claude map[string]ClaudeStatus) error {
-	if len(priority) == 0 || claude == nil {
+func SmartSwitchSession(name string, priority []string, sessions []Session, agents map[string]AgentStatus) error {
+	if len(priority) == 0 || agents == nil {
 		return SwitchSession(name)
 	}
 
@@ -75,10 +75,18 @@ func SmartSwitchSession(name string, priority []string, sessions []Session, clau
 		}
 	}
 
-	// Walk the priority list and find the first matching pane.
+	if paneID := selectPriorityPane(panes, priority, agents); paneID != "" {
+		return SwitchToPane(paneID)
+	}
+
+	// No priority matched — normal switch.
+	return SwitchSession(name)
+}
+
+func selectPriorityPane(panes []Pane, priority []string, agents map[string]AgentStatus) string {
 	for _, p := range priority {
 		if p == "default" {
-			return SwitchSession(name)
+			return ""
 		}
 
 		var target Activity
@@ -94,15 +102,13 @@ func SmartSwitchSession(name string, priority []string, sessions []Session, clau
 		}
 
 		for _, pane := range panes {
-			cs, ok := claude[pane.ID]
+			cs, ok := agents[pane.ID]
 			if ok && cs.Running && cs.Activity == target {
-				return SwitchToPane(pane.ID)
+				return pane.ID
 			}
 		}
 	}
-
-	// No priority matched — normal switch.
-	return SwitchSession(name)
+	return ""
 }
 
 // SwitchToPane switches the tmux client to focus a specific pane.

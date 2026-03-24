@@ -16,26 +16,37 @@ type Config struct {
 	SwitchPriority []string     `toml:"switch_priority"`
 	EscapeChord    string       `toml:"escape_chord"`
 	EscapeChordMs  int          `toml:"escape_chord_ms"`
-	Colors ColorsConfig `toml:"colors"`
+	Colors         ColorsConfig `toml:"colors"`
 }
 
-// ColorsConfig holds all configurable color values (ANSI 0-255 or hex).
+// ColorsConfig holds shared UI colors and provider-specific accents.
 type ColorsConfig struct {
-	Session    string `toml:"session"`     // session name header
-	Window     string `toml:"window"`      // window name
-	Dim        string `toml:"dim"`         // dimmed/muted text
-	Selected   string `toml:"selected"`    // selected row background
-	Current    string `toml:"current"`     // current pane indicator
-	Working    string `toml:"working"`     // claude working
-	Waiting    string `toml:"waiting"`     // claude waiting for input
-	Idle       string `toml:"idle"`        // claude idle
-	MoveSrc    string `toml:"move_src"`    // pane being moved
-	ModePlan   string `toml:"mode_plan"`   // plan mode
-	ModeAccept string `toml:"mode_accept"` // auto-edit mode
-	ModeYolo   string `toml:"mode_yolo"`   // yolo mode
-	CtxLow     string `toml:"ctx_low"`     // context < 50%
-	CtxMid     string `toml:"ctx_mid"`     // context 50-79%
-	CtxHigh    string `toml:"ctx_high"`    // context >= 80%
+	Shared SharedColorsConfig   `toml:"shared"`
+	Claude ProviderColorsConfig `toml:"claude"`
+	Codex  ProviderColorsConfig `toml:"codex"`
+}
+
+type SharedColorsConfig struct {
+	Session  string `toml:"session"`
+	Window   string `toml:"window"`
+	Dim      string `toml:"dim"`
+	Selected string `toml:"selected"`
+	Current  string `toml:"current"`
+	Working  string `toml:"working"`
+	Waiting  string `toml:"waiting"`
+	Idle     string `toml:"idle"`
+	MoveSrc  string `toml:"move_src"`
+	CtxLow   string `toml:"ctx_low"`
+	CtxMid   string `toml:"ctx_mid"`
+	CtxHigh  string `toml:"ctx_high"`
+}
+
+type ProviderColorsConfig struct {
+	Accent string `toml:"accent"`
+	Plan   string `toml:"plan"`
+	Accept string `toml:"accept"`
+	Safe   string `toml:"safe"`
+	Danger string `toml:"danger"`
 }
 
 // SearchPath defines a directory to scan for projects.
@@ -47,21 +58,34 @@ type SearchPath struct {
 // DefaultColors returns the default color scheme.
 func DefaultColors() ColorsConfig {
 	return ColorsConfig{
-		Session:    "15",
-		Window:     "245",
-		Dim:        "240",
-		Selected:   "236",
-		Current:    "2",
-		Working:    "208",
-		Waiting:    "1",
-		Idle:       "240",
-		MoveSrc:    "5",
-		ModePlan:   "4",
-		ModeAccept: "5",
-		ModeYolo:   "1",
-		CtxLow:     "2",
-		CtxMid:     "3",
-		CtxHigh:    "1",
+		Shared: SharedColorsConfig{
+			Session:  "15",
+			Window:   "245",
+			Dim:      "240",
+			Selected: "236",
+			Current:  "2",
+			Working:  "208",
+			Waiting:  "1",
+			Idle:     "240",
+			MoveSrc:  "5",
+			CtxLow:   "2",
+			CtxMid:   "3",
+			CtxHigh:  "1",
+		},
+		Claude: ProviderColorsConfig{
+			Accent: "5",
+			Plan:   "4",
+			Accept: "5",
+			Safe:   "6",
+			Danger: "1",
+		},
+		Codex: ProviderColorsConfig{
+			Accent: "6",
+			Plan:   "12",
+			Accept: "14",
+			Safe:   "10",
+			Danger: "9",
+		},
 	}
 }
 

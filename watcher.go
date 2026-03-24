@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -12,13 +13,13 @@ import (
 // stateMsg delivers a full state snapshot (bootstrap + structural changes).
 type stateMsg struct {
 	sessions []Session
-	claude   map[string]ClaudeStatus
+	agents   map[string]AgentStatus
 	current  CurrentTarget
 }
 
-// claudeUpdateMsg delivers incremental Claude status updates for specific panes.
-type claudeUpdateMsg struct {
-	updates map[string]ClaudeStatus
+// agentUpdateMsg delivers incremental agent status updates for specific panes.
+type agentUpdateMsg struct {
+	updates map[string]AgentStatus
 }
 
 // focusChangedMsg indicates the user switched pane/window/session externally.
@@ -39,16 +40,18 @@ type Watcher struct {
 	send func(tea.Msg) // program.Send
 
 	// State tracking.
-	claudePanes map[string]bool      // pane IDs known to have Claude running
-	lastOutput  map[string]time.Time // last %output per pane
-	mu          sync.Mutex
+	agentPanes      map[string]bool      // pane IDs known to have an agent running
+	lastOutput      map[string]time.Time // last %output per pane
+	lastLiveRecheck map[string]time.Time
+	workingUntil    map[string]time.Time
+	mu              sync.Mutex
 
 	// Debouncing: coalesce rapid %output events per pane.
 	outputTimers map[string]*time.Timer
 
 	// Cached state for finder to read synchronously.
 	sessions []Session
-	claude   map[string]ClaudeStatus
+	agents   map[string]AgentStatus
 	current  CurrentTarget
 	stateMu  sync.RWMutex
 
@@ -56,13 +59,22 @@ type Watcher struct {
 	stopCh chan struct{}
 }
 
+const (
+	settleRecheckDelay    = 300 * time.Millisecond
+	liveRecheckInterval   = 250 * time.Millisecond
+	liveOutputGracePeriod = 350 * time.Millisecond
+	optimisticWorkingHold = 2 * time.Second
+)
+
 // NewWatcher creates a Watcher.
 func NewWatcher() *Watcher {
 	return &Watcher{
-		claudePanes:  map[string]bool{},
-		lastOutput:   map[string]time.Time{},
-		outputTimers: map[string]*time.Timer{},
-		stopCh:       make(chan struct{}),
+		agentPanes:      map[string]bool{},
+		lastOutput:      map[string]time.Time{},
+		lastLiveRecheck: map[string]time.Time{},
+		workingUntil:    map[string]time.Time{},
+		outputTimers:    map[string]*time.Timer{},
+		stopCh:          make(chan struct{}),
 	}
 }
 
@@ -94,16 +106,16 @@ func (w *Watcher) Stop() {
 }
 
 // CachedState returns the watcher's cached state for synchronous reads (e.g. finder Init).
-func (w *Watcher) CachedState() ([]Session, map[string]ClaudeStatus, CurrentTarget) {
+func (w *Watcher) CachedState() ([]Session, map[string]AgentStatus, CurrentTarget) {
 	w.stateMu.RLock()
 	defer w.stateMu.RUnlock()
-	return w.sessions, w.claude, w.current
+	return w.sessions, w.agents, w.current
 }
 
-func (w *Watcher) updateCache(sessions []Session, claude map[string]ClaudeStatus, current CurrentTarget) {
+func (w *Watcher) updateCache(sessions []Session, agents map[string]AgentStatus, current CurrentTarget) {
 	w.stateMu.Lock()
 	w.sessions = sessions
-	w.claude = claude
+	w.agents = agents
 	w.current = current
 	w.stateMu.Unlock()
 }
@@ -115,27 +127,31 @@ func (w *Watcher) bootstrap() {
 	sessions, pt, err := FetchState()
 	if err != nil {
 		// No tmux server — send empty state so finder can still show projects.
+		debugf("watcher: bootstrap no tmux err=%v", err)
 		w.send(stateMsg{})
 		return
 	}
 	current, _ := FetchCurrentTarget()
-	claude := detectAllClaude(sessions, pt)
+	agents := detectAllAgents(sessions, pt)
+	debugf("watcher: bootstrap sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 
-	// Track which panes have Claude.
+	// Track which panes have a known agent.
 	w.mu.Lock()
-	for id := range claude {
-		w.claudePanes[id] = true
+	for id := range agents {
+		w.agentPanes[id] = true
 	}
 	w.mu.Unlock()
 
-	w.updateCache(sessions, claude, current)
-	w.send(stateMsg{sessions: sessions, claude: claude, current: current})
+	w.updateCache(sessions, agents, current)
+	w.send(stateMsg{sessions: sessions, agents: agents, current: current})
 
 	// Start control mode for event-driven updates.
 	ctrl, err := NewCtrlClient()
 	if err == nil {
 		w.ctrl = ctrl
 		go w.runEventLoop()
+	} else {
+		debugf("watcher: control unavailable err=%v", err)
 	}
 
 	// Always run process + git polls regardless of control mode.
@@ -164,6 +180,7 @@ func (w *Watcher) handleEvent(ev CtrlEvent) {
 		CtrlWindowAdd, CtrlWindowClose,
 		CtrlPaneExited, CtrlLayoutChange:
 		// Structural change: re-fetch full state.
+		debugf("watcher: structural event kind=%d triggering full refresh", ev.Kind)
 		w.refreshFullState()
 
 	case CtrlSessionChanged, CtrlWindowChanged:
@@ -175,39 +192,89 @@ func (w *Watcher) handleEvent(ev CtrlEvent) {
 		w.stateMu.Lock()
 		w.current = current
 		w.stateMu.Unlock()
+		debugf("watcher: focus changed current=%s:%d.%d", current.Session, current.Window, current.Pane)
 		w.send(focusChangedMsg{current: current})
 
 	case CtrlOutput:
-		// Pane produced output — debounce then re-check Claude status.
+		// Pane produced output — debounce then re-check agent status.
 		w.handleOutput(ev.PaneID)
 	}
 }
 
 // handleOutput debounces %output events per pane.
-// If the pane has Claude running, schedule a re-check after 300ms of quiescence.
+// If the pane has an agent running, schedule a re-check after 300ms of quiescence.
 func (w *Watcher) handleOutput(paneID string) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	now := time.Now()
+	w.lastOutput[paneID] = now
 
-	w.lastOutput[paneID] = time.Now()
-
-	if !w.claudePanes[paneID] {
+	if !w.agentPanes[paneID] {
+		w.mu.Unlock()
+		debugf("watcher: ignore output pane=%s not tracked", paneID)
 		return
 	}
+	debugf("watcher: output pane=%s tracked=true", paneID)
+	optimisticUpdate := w.promotePaneWorkingLocked(paneID)
 
 	// Cancel any pending timer for this pane.
 	if t, ok := w.outputTimers[paneID]; ok {
 		t.Stop()
 	}
 
-	// Schedule a Claude re-check after 300ms of output quiescence.
-	w.outputTimers[paneID] = time.AfterFunc(300*time.Millisecond, func() {
-		w.recheckPane(paneID)
+	// Schedule a settle re-check after output quiesces.
+	w.outputTimers[paneID] = time.AfterFunc(settleRecheckDelay, func() {
+		w.settleRecheckPane(paneID)
 	})
+
+	lastLive := w.lastLiveRecheck[paneID]
+	if now.Sub(lastLive) >= liveRecheckInterval {
+		w.lastLiveRecheck[paneID] = now
+		w.mu.Unlock()
+		if optimisticUpdate != nil {
+			w.send(agentUpdateMsg{updates: optimisticUpdate})
+		}
+		debugf("watcher: live recheck pane=%s scheduled", paneID)
+		go w.liveRecheckPane(paneID)
+		return
+	}
+
+	w.mu.Unlock()
+	if optimisticUpdate != nil {
+		w.send(agentUpdateMsg{updates: optimisticUpdate})
+	}
+	debugf("watcher: live recheck pane=%s throttled age=%s", paneID, now.Sub(lastLive))
 }
 
-// recheckPane captures a pane and re-parses Claude status.
-func (w *Watcher) recheckPane(paneID string) {
+func (w *Watcher) promotePaneWorkingLocked(paneID string) map[string]AgentStatus {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+
+	status, ok := w.agents[paneID]
+	if !ok || !status.Running {
+		return nil
+	}
+	if status.Activity == ActivityWaitingInput || status.Activity == ActivityWorking {
+		return nil
+	}
+
+	status.Activity = ActivityWorking
+	w.agents[paneID] = status
+	w.workingUntil[paneID] = time.Now().Add(optimisticWorkingHold)
+	debugf("watcher: optimistic working pane=%s provider=%s", paneID, status.Provider.String())
+	return map[string]AgentStatus{paneID: status}
+}
+
+func (w *Watcher) liveRecheckPane(paneID string) {
+	w.recheckPane(paneID, "live")
+}
+
+func (w *Watcher) settleRecheckPane(paneID string) {
+	debugf("watcher: settle recheck pane=%s fired", paneID)
+	w.recheckPane(paneID, "settle")
+}
+
+// recheckPane captures a pane and re-parses agent status.
+func (w *Watcher) recheckPane(paneID, source string) {
 	select {
 	case <-w.stopCh:
 		return
@@ -216,64 +283,83 @@ func (w *Watcher) recheckPane(paneID string) {
 
 	content, err := capturePaneBottom(paneID)
 	if err != nil {
+		debugf("watcher: %s recheck capture failed pane=%s err=%v", source, paneID, err)
 		return
 	}
 
-	status := ClaudeStatus{Running: true}
-	parsePane(content, &status)
-
-	// Use lastOutput timestamp instead of detectStreaming.
-	if status.Activity == ActivityIdle {
-		w.mu.Lock()
-		lastOut := w.lastOutput[paneID]
-		w.mu.Unlock()
-		if time.Since(lastOut) < 2*time.Second {
-			status.Activity = ActivityWorking
-		}
+	var status AgentStatus
+	var prev AgentStatus
+	w.stateMu.RLock()
+	if cached, ok := w.agents[paneID]; ok {
+		prev = cached
+		status = cached
 	}
+	w.stateMu.RUnlock()
+	if !status.Running {
+		debugf("watcher: %s recheck pane=%s skipped not running", source, paneID)
+		return
+	}
+	if !reparseAgentStatus(content, &status) {
+		debugf("watcher: %s recheck pane=%s skipped unknown provider=%d", source, paneID, status.Provider)
+		return
+	}
+
+	w.mu.Lock()
+	now := time.Now()
+	lastOut := w.lastOutput[paneID]
+	workingUntil := w.workingUntil[paneID]
+	status.Activity = heldActivity(source, prev, status, lastOut, workingUntil, now)
+	if source == "settle" || status.Activity != ActivityWorking {
+		delete(w.workingUntil, paneID)
+	}
+	w.mu.Unlock()
+	debugf("watcher: %s recheck pane=%s provider=%s activity=%s mode=%q ctx=%d capture_lines=%d", source, paneID, status.Provider.String(), status.Activity.String(), status.ModeLabel, status.ContextPct, len(strings.Split(content, "\n")))
 
 	// Preserve args from previous detection.
 	w.stateMu.RLock()
-	if prev, ok := w.claude[paneID]; ok {
+	if prev, ok := w.agents[paneID]; ok {
 		status.Args = prev.Args
+		status.Provider = prev.Provider
 	}
 	w.stateMu.RUnlock()
 
-	updates := map[string]ClaudeStatus{paneID: status}
+	updates := map[string]AgentStatus{paneID: status}
 
 	// Update cache.
 	w.stateMu.Lock()
-	if w.claude == nil {
-		w.claude = map[string]ClaudeStatus{}
+	if w.agents == nil {
+		w.agents = map[string]AgentStatus{}
 	}
-	w.claude[paneID] = status
+	w.agents[paneID] = status
 	w.stateMu.Unlock()
 
-	w.send(claudeUpdateMsg{updates: updates})
+	w.send(agentUpdateMsg{updates: updates})
 }
 
-// refreshFullState fetches complete tmux + Claude state and emits a stateMsg.
+// refreshFullState fetches complete tmux + agent state and emits a stateMsg.
 func (w *Watcher) refreshFullState() {
 	sessions, pt, err := FetchState()
 	if err != nil {
+		debugf("watcher: refresh full state failed err=%v", err)
 		return
 	}
 	current, _ := FetchCurrentTarget()
-	claude := detectAllClaude(sessions, pt)
+	agents := detectAllAgents(sessions, pt)
+	debugf("watcher: full refresh sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 
-	// Update Claude pane tracking.
+	// Update agent pane tracking.
 	w.mu.Lock()
-	w.claudePanes = map[string]bool{}
-	for id := range claude {
-		w.claudePanes[id] = true
+	w.agentPanes = map[string]bool{}
+	for id := range agents {
+		w.agentPanes[id] = true
 	}
 	w.mu.Unlock()
 
-	w.updateCache(sessions, claude, current)
-	w.send(stateMsg{sessions: sessions, claude: claude, current: current})
+	w.updateCache(sessions, agents, current)
+	w.send(stateMsg{sessions: sessions, agents: agents, current: current})
 }
 
-// runProcessPoll periodically checks for new/exited Claude processes.
+// runProcessPoll periodically checks for new/exited agent processes.
 // When control mode is not connected, every 5th tick also does a full state
 // refresh to catch structural changes (new/removed sessions and windows).
 func (w *Watcher) runProcessPoll() {
@@ -288,16 +374,18 @@ func (w *Watcher) runProcessPoll() {
 		case <-ticker.C:
 			tick++
 			if w.ctrl == nil && tick%5 == 0 {
+				debugf("watcher: process poll fallback tick=%d triggering full refresh", tick)
 				w.refreshFullState()
 			} else {
+				debugf("watcher: process poll tick=%d ctrl_connected=%v", tick, w.ctrl != nil)
 				w.pollProcesses()
 			}
 		}
 	}
 }
 
-// pollProcesses checks the process table for Claude appear/disappear events
-// and re-captures all known Claude panes to keep status fresh.
+// pollProcesses checks the process table for agent appear/disappear events
+// and re-captures all known agent panes to keep status fresh.
 func (w *Watcher) pollProcesses() {
 	w.stateMu.RLock()
 	sessions := w.sessions
@@ -308,43 +396,34 @@ func (w *Watcher) pollProcesses() {
 	}
 
 	pt := buildProcTable()
-	updates := map[string]ClaudeStatus{}
+	updates := map[string]AgentStatus{}
 
 	w.mu.Lock()
 	for _, sess := range sessions {
 		for _, win := range sess.Windows {
 			for _, pane := range win.Panes {
-				found, args := findClaudeInTree(pt, pane.PID)
+				status := DetectAgent(pane, pt)
 
-				if found && !w.claudePanes[pane.ID] {
-					// New Claude process appeared.
-					w.claudePanes[pane.ID] = true
+				if status.Running && !w.agentPanes[pane.ID] {
+					// New agent process appeared.
+					w.agentPanes[pane.ID] = true
+					debugf("watcher: process poll discovered pane=%s provider=%s", pane.ID, status.Provider.String())
 				}
 
-				if !found && w.claudePanes[pane.ID] {
-					// Claude exited.
-					delete(w.claudePanes, pane.ID)
-					updates[pane.ID] = ClaudeStatus{Running: false}
+				if !status.Running && w.agentPanes[pane.ID] {
+					// Agent exited.
+					delete(w.agentPanes, pane.ID)
+					debugf("watcher: process poll exited pane=%s", pane.ID)
+					updates[pane.ID] = AgentStatus{Running: false}
 					continue
 				}
 
-				if found {
-					// Re-capture to keep status fresh.
-					content, err := capturePaneBottom(pane.ID)
-					if err != nil {
-						continue
-					}
-					status := ClaudeStatus{Running: true, Args: args}
-					parsePane(content, &status)
-
-					// Use lastOutput timestamp for streaming detection.
-					if status.Activity == ActivityIdle {
-						lastOut := w.lastOutput[pane.ID]
-						if time.Since(lastOut) < 2*time.Second {
-							status.Activity = ActivityWorking
-						}
-					}
-
+				if status.Running {
+					prev := w.agents[pane.ID]
+					lastOut := w.lastOutput[pane.ID]
+					workingUntil := w.workingUntil[pane.ID]
+					status.Activity = heldActivity("poll", prev, status, lastOut, workingUntil, time.Now())
+					debugf("watcher: process poll pane=%s provider=%s activity=%s mode=%q", pane.ID, status.Provider.String(), status.Activity.String(), status.ModeLabel)
 					updates[pane.ID] = status
 				}
 			}
@@ -354,20 +433,39 @@ func (w *Watcher) pollProcesses() {
 
 	if len(updates) > 0 {
 		w.stateMu.Lock()
-		if w.claude == nil {
-			w.claude = map[string]ClaudeStatus{}
+		if w.agents == nil {
+			w.agents = map[string]AgentStatus{}
 		}
 		for id, status := range updates {
 			if status.Running {
-				w.claude[id] = status
+				w.agents[id] = status
 			} else {
-				delete(w.claude, id)
+				delete(w.agents, id)
 			}
 		}
 		w.stateMu.Unlock()
 
-		w.send(claudeUpdateMsg{updates: updates})
+		w.send(agentUpdateMsg{updates: updates})
 	}
+}
+
+func heldActivity(source string, prev AgentStatus, status AgentStatus, lastOut, workingUntil, now time.Time) Activity {
+	activity := status.Activity
+	if activity != ActivityIdle {
+		return activity
+	}
+
+	if source != "settle" && prev.Activity == ActivityWorking {
+		if now.Sub(lastOut) < liveOutputGracePeriod || now.Before(workingUntil) {
+			return ActivityWorking
+		}
+	}
+
+	if shouldHoldWorking(status) && now.Sub(lastOut) < optimisticWorkingHold {
+		return ActivityWorking
+	}
+
+	return activity
 }
 
 // runGitPoll periodically re-checks git status for all pane working dirs.

@@ -12,17 +12,17 @@ import (
 type CtrlEventKind int
 
 const (
-	CtrlOutput          CtrlEventKind = iota // %output — pane produced output
-	CtrlSessionCreated                       // %session-created
-	CtrlSessionClosed                        // %session-closed
-	CtrlSessionChanged                       // %session-changed — focus moved to another session
-	CtrlWindowAdd                            // %window-add
-	CtrlWindowClose                          // %window-close
-	CtrlWindowChanged                        // %session-window-changed
-	CtrlPaneExited                           // %pane-exited (tmux 3.3a+: %unlinked-window-close can also signal this)
-	CtrlLayoutChange                         // %layout-change
-	CtrlClientDetached                       // %client-detached — our control client was kicked
-	CtrlUnhandled                            // unknown notification
+	CtrlOutput         CtrlEventKind = iota // %output — pane produced output
+	CtrlSessionCreated                      // %session-created
+	CtrlSessionClosed                       // %session-closed
+	CtrlSessionChanged                      // %session-changed — focus moved to another session
+	CtrlWindowAdd                           // %window-add
+	CtrlWindowClose                         // %window-close
+	CtrlWindowChanged                       // %session-window-changed
+	CtrlPaneExited                          // %pane-exited (tmux 3.3a+: %unlinked-window-close can also signal this)
+	CtrlLayoutChange                        // %layout-change
+	CtrlClientDetached                      // %client-detached — our control client was kicked
+	CtrlUnhandled                           // unknown notification
 )
 
 // CtrlEvent is a parsed notification from tmux control mode.
@@ -62,6 +62,7 @@ func NewCtrlClient() (*CtrlClient, error) {
 		stdinPipe.Close()
 		return nil, fmt.Errorf("control start: %w", err)
 	}
+	debugf("control: connected pid=%d", cmd.Process.Pid)
 
 	c := &CtrlClient{
 		cmd:    cmd,
@@ -93,6 +94,7 @@ func (c *CtrlClient) Stop() {
 
 	c.cmd.Process.Kill()
 	c.cmd.Wait()
+	debugf("control: stopped")
 }
 
 // readLoop reads lines from tmux control mode stdout and parses notifications.
@@ -115,6 +117,7 @@ func (c *CtrlClient) readLoop(scanner *bufio.Scanner) {
 		if ev.Kind == CtrlUnhandled {
 			continue
 		}
+		debugf("control: event kind=%d pane=%s session=%s window=%s raw=%q", ev.Kind, ev.PaneID, ev.SessionID, ev.WindowID, ev.Raw)
 
 		select {
 		case c.events <- ev:
