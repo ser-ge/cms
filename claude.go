@@ -151,16 +151,9 @@ func parsePane(content string, status *ClaudeStatus) {
 			status.Branch = m[3]
 		}
 
-		if insertModeRe.MatchString(line) {
-			status.Mode = "insert"
-			if planModeRe.MatchString(line) {
-				status.Mode = "plan"
-			}
+		if planModeRe.MatchString(line) {
+			status.Mode = "plan"
 		}
-	}
-
-	if status.Mode == "" {
-		status.Mode = "normal"
 	}
 }
 
