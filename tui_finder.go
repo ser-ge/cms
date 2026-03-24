@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"time"
+	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -12,6 +12,15 @@ type itemKind int
 const (
 	kindSession itemKind = iota
 	kindProject
+)
+
+// finderKind controls what the finder shows.
+type finderKind int
+
+const (
+	finderAll      finderKind = iota // sessions + projects
+	finderSessions                   // sessions only (cms switch)
+	finderProjects                   // projects only (cms open)
 )
 
 type finderEntry struct {
@@ -36,7 +45,7 @@ type finderModel struct {
 	picker  pickerModel
 	entries []finderEntry // parallel to picker items
 
-	// Async loading state.
+	// Session/Claude state from watcher.
 	sessData    []Session                // raw session data for Claude enrichment
 	claudeData  map[string]ClaudeStatus // latest Claude status for smart switch
 	sessions    []PickerItem
@@ -46,94 +55,70 @@ type finderModel struct {
 	hasSess  bool
 	hasProj  bool
 
+	kind          finderKind
 	done          bool
 	action        *postAction // action to run after TUI exits
 	focusSession  string // session name to focus in dashboard on esc
+	watcher       *Watcher
 	cfg           Config
 	width  int
 	height int
 }
 
-func newFinderModel(cfg Config, width, height int) finderModel {
-	return finderModel{
-		cfg:    cfg,
-		width:  width,
-		height: height,
+func newFinderModel(cfg Config, watcher *Watcher, kind finderKind, width, height int) finderModel {
+	m := finderModel{
+		kind:    kind,
+		cfg:     cfg,
+		watcher: watcher,
+		width:   width,
+		height:  height,
 	}
+
+	// Pre-populate sessions from watcher cache if this mode needs them.
+	if kind != finderProjects {
+		sessions, claude, _ := watcher.CachedState()
+		if len(sessions) > 0 {
+			m.sessData = sessions
+			m.claudeData = claude
+			m.buildSessionItems(claude)
+			m.hasSess = true
+		}
+	}
+
+	// For projects-only mode, mark sessions as "done" so we don't wait for them.
+	if kind == finderProjects {
+		m.hasSess = true
+	}
+	// For sessions-only mode, mark projects as "done" so we don't wait for them.
+	if kind == finderSessions {
+		m.hasProj = true
+	}
+
+	if m.hasSess || m.hasProj {
+		m.rebuildPicker()
+	}
+
+	return m
 }
 
 func (m finderModel) Init() tea.Cmd {
-	// Fetch sessions (fast), projects, and Claude detection all concurrently.
-	return tea.Batch(
-		fetchSessionsFastCmd(),
-		scanProjectsCmd(m.cfg),
-	)
+	if m.kind == finderSessions {
+		return nil // sessions already loaded from cache
+	}
+	// Scan projects from disk (async).
+	return scanProjectsCmd(m.cfg)
 }
 
 // --- Messages ---
-
-type sessionsLoadedMsg struct {
-	sessions []Session
-	pt       procTable
-}
-
-type claudeLoadedMsg struct {
-	claude map[string]ClaudeStatus
-}
 
 type projectsScannedMsg struct {
 	projects []Project
 }
 
-// Phase 1: just tmux state — instant.
-func fetchSessionsFastCmd() tea.Cmd {
-	return func() tea.Msg {
-		sessions, pt, err := FetchState()
-		if err != nil {
-			return sessionsLoadedMsg{}
-		}
-		return sessionsLoadedMsg{sessions, pt}
-	}
-}
-
-// Phase 2a: Claude detection — can take 600ms+.
-func fetchClaudeForFinderCmd(sessions []Session, pt procTable) tea.Cmd {
-	return func() tea.Msg {
-		return claudeLoadedMsg{detectAllClaude(sessions, pt)}
-	}
-}
-
-// Phase 2b: project scan.
 func scanProjectsCmd(cfg Config) tea.Cmd {
 	return func() tea.Msg {
 		return projectsScannedMsg{ScanProjects(cfg)}
 	}
-}
-
-// Periodic refresh: fetch sessions + Claude in one shot.
-func fetchSessionsWithClaudeCmd() tea.Cmd {
-	return func() tea.Msg {
-		sessions, pt, err := FetchState()
-		if err != nil {
-			return sessionsLoadedMsg{}
-		}
-		claude := detectAllClaude(sessions, pt)
-		return sessionsWithClaudeMsg{sessions, pt, claude}
-	}
-}
-
-type sessionsWithClaudeMsg struct {
-	sessions []Session
-	pt       procTable
-	claude   map[string]ClaudeStatus
-}
-
-type finderTickMsg struct{}
-
-func finderTickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
-		return finderTickMsg{}
-	})
 }
 
 // buildSessionItems populates session picker items from raw session data.
@@ -220,33 +205,30 @@ func joinParts(parts []string) string {
 
 func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case sessionsLoadedMsg:
-		// Sessions arrived — show immediately, fire Claude detection.
-		m.sessData = msg.sessions
-		m.buildSessionItems(nil)
-		m.hasSess = true
-		m.rebuildPicker()
-		return m, fetchClaudeForFinderCmd(msg.sessions, msg.pt)
-
-	case claudeLoadedMsg:
-		// Claude status arrived — update session descriptions, schedule refresh.
-		m.claudeData = msg.claude
-		m.buildSessionItems(msg.claude)
-		m.rebuildPicker()
-		return m, finderTickCmd()
-
-	case finderTickMsg:
-		// Periodic refresh: re-fetch sessions + Claude status.
-		return m, fetchSessionsWithClaudeCmd()
-
-	case sessionsWithClaudeMsg:
-		// Refresh arrived — update sessions with latest Claude status.
+	case stateMsg:
+		// Full state snapshot from watcher — update sessions + Claude.
 		m.sessData = msg.sessions
 		m.claudeData = msg.claude
 		m.buildSessionItems(msg.claude)
 		m.hasSess = true
 		m.rebuildPicker()
-		return m, finderTickCmd()
+		return m, nil
+
+	case claudeUpdateMsg:
+		// Incremental Claude update from watcher.
+		if m.claudeData == nil {
+			m.claudeData = map[string]ClaudeStatus{}
+		}
+		for id, status := range msg.updates {
+			if status.Running {
+				m.claudeData[id] = status
+			} else {
+				delete(m.claudeData, id)
+			}
+		}
+		m.buildSessionItems(m.claudeData)
+		m.rebuildPicker()
+		return m, nil
 
 	case projectsScannedMsg:
 		m.projects = nil
@@ -317,29 +299,64 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 
 // rebuildPicker merges sessions + projects into the picker.
 // Sessions come first (lower indices = bottom of fzf-style display, near input).
+// The attached session is placed last among sessions (furthest from input).
 // Projects that already have a matching session are excluded.
 func (m *finderModel) rebuildPicker() {
-	// Build set of active session names for dedup.
-	activeNames := map[string]bool{}
-	for _, e := range m.sessIdx {
-		activeNames[NormalizeSessionName(e.sessionName)] = true
-	}
-
 	var items []PickerItem
 	var entries []finderEntry
 
-	// Sessions first (appear at bottom, nearest input).
-	items = append(items, m.sessions...)
-	entries = append(entries, m.sessIdx...)
+	// Sessions: sorted by recency (most recent closest to input),
+	// with the attached session pushed to end (furthest from input).
+	if m.kind != finderProjects && len(m.sessions) > 0 {
+		// Build index pairs so we can sort sessions + entries together.
+		type indexedSession struct {
+			idx      int
+			attached bool
+			activity int64
+		}
+		ordered := make([]indexedSession, len(m.sessions))
+		for i := range m.sessions {
+			name := m.sessIdx[i].sessionName
+			var attached bool
+			var activity int64
+			for _, sess := range m.sessData {
+				if sess.Name == name {
+					attached = sess.Attached
+					activity = sess.LastActivity
+					break
+				}
+			}
+			ordered[i] = indexedSession{idx: i, attached: attached, activity: activity}
+		}
+
+		// Sort: attached last, then by activity descending (most recent first).
+		sort.SliceStable(ordered, func(a, b int) bool {
+			if ordered[a].attached != ordered[b].attached {
+				return !ordered[a].attached // unattached before attached
+			}
+			return ordered[a].activity > ordered[b].activity // most recent first
+		})
+
+		for _, o := range ordered {
+			items = append(items, m.sessions[o.idx])
+			entries = append(entries, m.sessIdx[o.idx])
+		}
+	}
 
 	// Projects, excluding those that already have an active session.
-	for i, p := range m.projects {
-		normName := NormalizeSessionName(p.Title)
-		if activeNames[normName] {
-			continue
+	if m.kind != finderSessions {
+		activeNames := map[string]bool{}
+		for _, e := range m.sessIdx {
+			activeNames[NormalizeSessionName(e.sessionName)] = true
 		}
-		items = append(items, p)
-		entries = append(entries, m.projIdx[i])
+		for i, p := range m.projects {
+			normName := NormalizeSessionName(p.Title)
+			if activeNames[normName] {
+				continue
+			}
+			items = append(items, p)
+			entries = append(entries, m.projIdx[i])
+		}
 	}
 
 	m.entries = entries

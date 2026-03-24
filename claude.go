@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Activity represents what Claude is doing right now.
@@ -116,14 +115,6 @@ func DetectClaude(pane Pane, pt procTable) ClaudeStatus {
 	}
 
 	parsePane(content, &status)
-
-	// If detected as idle (no spinner), sample the pane to catch streaming output.
-	// When Claude streams text there's no spinner — content just changes.
-	// Once we see a change (working), require 3 consecutive unchanged samples
-	// before switching back to idle. This prevents flickering during pauses.
-	if status.Activity == ActivityIdle {
-		status.Activity = detectStreaming(pane.ID, content)
-	}
 
 	return status
 }
@@ -242,21 +233,3 @@ func detectActivity(lines []string) Activity {
 	return ActivityUnknown
 }
 
-// detectStreaming samples a pane to detect content changes (streaming output).
-// Takes 3 samples over ~600ms. Returns ActivityWorking as soon as any change
-// is detected, or ActivityIdle if all samples are unchanged.
-func detectStreaming(paneID, initial string) Activity {
-	prev := initial
-	for range 3 {
-		time.Sleep(200 * time.Millisecond)
-		cur, err := capturePaneBottom(paneID)
-		if err != nil {
-			continue
-		}
-		if cur != prev {
-			return ActivityWorking
-		}
-		prev = cur
-	}
-	return ActivityIdle
-}

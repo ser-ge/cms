@@ -309,7 +309,13 @@ func (m *pickerModel) applyFilter() {
 	}
 
 	// Sort by score descending (best match first = index 0 = bottom of picker).
+	// Active items (sessions) are prioritized over inactive (projects).
 	sort.Slice(m.matches, func(i, j int) bool {
+		ai := m.items[m.matches[i].Index].Active
+		aj := m.items[m.matches[j].Index].Active
+		if ai != aj {
+			return ai // sessions before projects
+		}
 		return m.matches[i].Score > m.matches[j].Score
 	})
 

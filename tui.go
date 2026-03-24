@@ -2,7 +2,6 @@ package main
 
 import (
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -17,25 +16,29 @@ const (
 
 // rootModel is the top-level bubbletea model that delegates to sub-screens.
 type rootModel struct {
-	screen    screen
-	initial   screen // the screen we started on
-	dashboard dashboardModel
-	finder    finderModel
-	cfg       Config
-	width     int
-	height    int
+	screen     screen
+	initial    screen // the screen we started on
+	dashboard  dashboardModel
+	finder     finderModel
+	finderKind finderKind
+	watcher    *Watcher
+	cfg        Config
+	width      int
+	height     int
 	postAction *postAction // action to execute after TUI exits
 }
 
-func newRootModel(initial screen, cfg Config) rootModel {
+func newRootModel(initial screen, fk finderKind, cfg Config, watcher *Watcher) rootModel {
 	m := rootModel{
-		screen:    initial,
-		initial:   initial,
-		dashboard: newDashboardModel(),
-		cfg:       cfg,
+		screen:     initial,
+		initial:    initial,
+		dashboard:  newDashboardModel(),
+		finderKind: fk,
+		watcher:    watcher,
+		cfg:        cfg,
 	}
 	if initial == screenFinder {
-		m.finder = newFinderModel(cfg, 0, 0)
+		m.finder = newFinderModel(cfg, watcher, fk, 0, 0)
 	}
 	return m
 }
@@ -127,7 +130,7 @@ func (m rootModel) switchTo(s screen) (tea.Model, tea.Cmd) {
 }
 
 func (m *rootModel) initFinder() tea.Cmd {
-	m.finder = newFinderModel(m.cfg, m.width, m.height)
+	m.finder = newFinderModel(m.cfg, m.watcher, finderAll, m.width, m.height)
 	return m.finder.Init()
 }
 
@@ -151,8 +154,6 @@ func pinBottom(content, footer string, height int) string {
 }
 
 // Shared message types.
-
-type tickStartMsg time.Time
 
 type errMsg struct {
 	err error

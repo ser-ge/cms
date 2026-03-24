@@ -16,7 +16,7 @@ type Config struct {
 	SwitchPriority []string     `toml:"switch_priority"`
 	EscapeChord    string       `toml:"escape_chord"`
 	EscapeChordMs  int          `toml:"escape_chord_ms"`
-	Colors         ColorsConfig `toml:"colors"`
+	Colors ColorsConfig `toml:"colors"`
 }
 
 // ColorsConfig holds all configurable color values (ANSI 0-255 or hex).
@@ -57,7 +57,7 @@ func DefaultColors() ColorsConfig {
 		Idle:       "240",
 		MoveSrc:    "5",
 		ModePlan:   "4",
-		ModeAccept: "3",
+		ModeAccept: "5",
 		ModeYolo:   "1",
 		CtxLow:     "2",
 		CtxMid:     "3",

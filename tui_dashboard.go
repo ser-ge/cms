@@ -137,8 +137,27 @@ func newDashboardModel() dashboardModel {
 	}
 }
 
+type spinnerTickMsg struct{}
+
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg {
+		return spinnerTickMsg{}
+	})
+}
+
+// hasWorking reports whether any Claude instance is currently working.
+func (m *dashboardModel) hasWorking() bool {
+	for _, cs := range m.claude {
+		if cs.Running && cs.Activity == ActivityWorking {
+			return true
+		}
+	}
+	return false
+}
+
 func (m dashboardModel) Init() tea.Cmd {
-	return fetchFastStateCmd()
+	// Watcher handles bootstrap — no command needed.
+	return nil
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
@@ -148,26 +167,62 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tickStartMsg:
-		return m, fetchFastStateCmd()
+	case spinnerTickMsg:
+		if m.hasWorking() {
+			m.frame++
+			return m, spinnerTickCmd()
+		}
+		return m, nil
 
-	case fastStateMsg:
+	case stateMsg:
+		// Full state snapshot from watcher (bootstrap + structural changes).
 		m.sessions = msg.sessions
+		m.claude = msg.claude
 		m.current = msg.current
 		m.loading = false
-		m.frame++
-		m.rebuildItems()
-		// Kick off Claude detection in background (can take 600ms+).
-		return m, fetchClaudeCmd(msg.sessions, msg.pt)
-
-	case claudeMsg:
-		m.claude = msg.claude
 		m.applyHysteresis()
 		m.rebuildItems()
-		return m, tickCmd()
+		if m.hasWorking() {
+			return m, spinnerTickCmd()
+		}
+		return m, nil
+
+	case claudeUpdateMsg:
+		// Incremental Claude status update from watcher.
+		if m.claude == nil {
+			m.claude = map[string]ClaudeStatus{}
+		}
+		for id, status := range msg.updates {
+			if status.Running {
+				m.claude[id] = status
+			} else {
+				delete(m.claude, id)
+			}
+		}
+		m.applyHysteresis()
+		m.rebuildItems()
+		if m.hasWorking() {
+			return m, spinnerTickCmd()
+		}
+		return m, nil
+
+	case focusChangedMsg:
+		// User switched pane/window/session externally.
+		m.current = msg.current
+		m.rebuildItems()
+		return m, nil
+
+	case gitUpdateMsg:
+		// Update git info on panes.
+		for i := range m.items {
+			if info, ok := msg.gitInfo[m.items[i].pane.WorkingDir]; ok {
+				m.items[i].pane.Git = info
+			}
+		}
+		return m, nil
 
 	case errMsg:
-		return m, tickCmd()
+		return m, nil
 
 	case tea.KeyMsg:
 		if m.filtering {
@@ -187,7 +242,8 @@ func (m dashboardModel) updateNormal(msg tea.KeyMsg) (dashboardModel, tea.Cmd) {
 			KillPane(m.killTarget)
 			m.confirmKill = false
 			m.killTarget = ""
-			return m, fetchFastStateCmd()
+			// Watcher will detect the structural change via control mode events.
+			return m, nil
 		default:
 			m.confirmKill = false
 			m.killTarget = ""
@@ -209,8 +265,8 @@ func (m dashboardModel) updateNormal(msg tea.KeyMsg) (dashboardModel, tea.Cmd) {
 			}
 			m.moving = false
 			m.moveSrc = ""
-			// Refresh immediately.
-			return m, fetchFastStateCmd()
+			// Watcher will detect the structural change via control mode events.
+			return m, nil
 		case "esc":
 			m.moving = false
 			m.moveSrc = ""
@@ -523,7 +579,11 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 		switch entry.claude.Activity {
 		case ActivityWorking:
 			frame := spinnerFrames[m.frame%len(spinnerFrames)]
-			pc.indicator = workingStyle.Render(frame) + " "
+			style := workingStyle
+			if entry.claude.Mode == ModeYolo {
+				style = modeYoloStyle
+			}
+			pc.indicator = style.Render(frame) + " "
 		case ActivityWaitingInput:
 			pc.indicator = waitingStyle.Render("?") + " "
 		case ActivityIdle:
@@ -631,38 +691,3 @@ func renderMode(mode ClaudeMode) string {
 	}
 }
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
-		return tickStartMsg(t)
-	})
-}
-
-// fastStateMsg delivers tmux state without Claude detection (instant).
-type fastStateMsg struct {
-	sessions []Session
-	pt       procTable
-	current  CurrentTarget
-}
-
-// claudeMsg delivers Claude detection results (can take 600ms+).
-type claudeMsg struct {
-	claude map[string]ClaudeStatus
-}
-
-func fetchFastStateCmd() tea.Cmd {
-	return func() tea.Msg {
-		sessions, pt, err := FetchState()
-		if err != nil {
-			return errMsg{err}
-		}
-		current, _ := FetchCurrentTarget()
-		return fastStateMsg{sessions: sessions, pt: pt, current: current}
-	}
-}
-
-func fetchClaudeCmd(sessions []Session, pt procTable) tea.Cmd {
-	return func() tea.Msg {
-		claude := detectAllClaude(sessions, pt)
-		return claudeMsg{claude: claude}
-	}
-}

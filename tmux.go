@@ -60,6 +60,16 @@ func FetchCurrentTarget() (CurrentTarget, error) {
 	}, nil
 }
 
+// FetchLastSession returns the name of the session the user was in before the current one.
+// Returns "" if there is no previous session.
+func FetchLastSession() string {
+	out, err := runTmux("display-message", "-p", "#{client_last_session}")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 // runTmux executes a tmux command and returns its trimmed stdout.
 // This is a helper so we don't repeat exec.Command boilerplate everywhere.
 func runTmux(args ...string) (string, error) {
@@ -103,7 +113,7 @@ func FetchState() ([]Session, procTable, error) {
 
 		sessName := fields[0]
 		sessID := fields[1]
-		sessAttached := fields[2] == "1"
+		sessAttached := fields[2] != "0"
 		winIdx, _ := strconv.Atoi(fields[3])
 		winName := fields[4]
 		winActive := fields[5] == "1"
