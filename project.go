@@ -47,6 +47,8 @@ func ScanProjects(cfg Config) []Project {
 				if info.IsDir() {
 					// Normal repo (.git is a directory).
 					repoPaths = append(repoPaths, entry.path)
+				} else if isWorktreeCheckout(entry.path) {
+					// Linked worktree checkout — skip, main repo will enumerate it.
 				} else if cfg.General.SearchSubmodules {
 					// Submodule checkout (.git is a file) — optionally include.
 					repoPaths = append(repoPaths, entry.path)

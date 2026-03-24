@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -140,7 +141,7 @@ func MovePane(srcPaneID, dstPaneID string) error {
 // OpenProject opens a project directory as a tmux session.
 // If a session for this directory already exists, switches to it.
 // Otherwise creates a new session and switches.
-// For bare repos, each worktree becomes a window in the session.
+// If the repo has linked worktrees, each becomes a tmux window.
 func OpenProject(path string) error {
 	name := NormalizeSessionName(filepath.Base(path))
 
@@ -152,59 +153,80 @@ func OpenProject(path string) error {
 		return err
 	}
 
-	// For bare repos, create a window per worktree and kill the initial empty window.
-	if isBareRepo(path) {
-		setupBareRepoWindows(name, path)
-	}
+	setupWorktreeWindows(name, path)
 
 	return SwitchSession(name)
 }
 
-// isBareRepo checks if a path is a bare git repository.
-func isBareRepo(path string) bool {
-	// Bare repos have HEAD at the top level and no .git directory.
-	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(path, "HEAD"))
-	return err == nil
-}
-
-// setupBareRepoWindows creates a tmux window for each worktree in a bare repo.
-// Mirrors tms behavior: each worktree branch gets its own window.
-func setupBareRepoWindows(sessionName, bareRepoPath string) {
-	worktreesDir := filepath.Join(bareRepoPath, "worktrees")
-	entries, err := os.ReadDir(worktreesDir)
-	if err != nil {
+// setupWorktreeWindows creates a tmux window for each linked worktree.
+// Works for both bare and normal repos. No-op if the repo has no linked worktrees.
+func setupWorktreeWindows(sessionName, repoPath string) {
+	wts, err := listWorktrees(repoPath)
+	if err != nil || len(wts) <= 1 {
 		return
 	}
 
-	createdWindows := false
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	// Sort: main/master first, then alphabetical.
+	sort.SliceStable(wts, func(i, j int) bool {
+		iMain := wts[i].Branch == "main" || wts[i].Branch == "master"
+		jMain := wts[j].Branch == "main" || wts[j].Branch == "master"
+		if iMain != jMain {
+			return iMain
 		}
-		wtName := entry.Name()
-		// Read the worktree's gitdir file to find its checkout path.
-		gitdirFile := filepath.Join(worktreesDir, wtName, "gitdir")
-		data, err := os.ReadFile(gitdirFile)
-		if err != nil {
-			continue
-		}
-		// gitdir points to the .git file inside the worktree checkout.
-		// The checkout path is its parent.
-		gitFilePath := strings.TrimSpace(string(data))
-		checkoutPath := filepath.Dir(gitFilePath)
-		if _, err := os.Stat(checkoutPath); err != nil {
-			continue
-		}
+		return wts[i].Branch < wts[j].Branch
+	})
 
-		runTmux("new-window", "-t", sessionName, "-n", wtName, "-c", checkoutPath)
-		createdWindows = true
+	for _, wt := range wts {
+		if wt.IsBare {
+			continue
+		}
+		windowName := wt.Branch
+		if windowName == "" {
+			windowName = filepath.Base(wt.Path)
+		}
+		runTmux("new-window", "-t", sessionName, "-n", windowName, "-c", wt.Path)
 	}
 
-	if createdWindows {
-		// Kill the initial empty window that was created with the session.
-		runTmux("kill-window", "-t", sessionName+":^")
+	// Kill the initial empty window that was created with the session.
+	runTmux("kill-window", "-t", sessionName+":^")
+}
+
+// RefreshWorktrees adds missing worktree windows to existing tmux sessions.
+// If sessionFilter is non-empty, only that session is refreshed.
+func RefreshWorktrees(sessionFilter string) error {
+	sessions, _, err := FetchState()
+	if err != nil {
+		return err
 	}
+	for _, sess := range sessions {
+		if sessionFilter != "" && sess.Name != sessionFilter {
+			continue
+		}
+		if len(sess.Windows) == 0 || len(sess.Windows[0].Panes) == 0 {
+			continue
+		}
+		repoPath := sess.Windows[0].Panes[0].WorkingDir
+		wts, err := listWorktrees(repoPath)
+		if err != nil || len(wts) <= 1 {
+			continue
+		}
+		existing := map[string]bool{}
+		for _, win := range sess.Windows {
+			existing[win.Name] = true
+		}
+		for _, wt := range wts {
+			if wt.IsBare {
+				continue
+			}
+			name := wt.Branch
+			if name == "" {
+				name = filepath.Base(wt.Path)
+			}
+			if existing[name] {
+				continue
+			}
+			runTmux("new-window", "-t", sess.Name, "-n", name, "-c", wt.Path)
+		}
+	}
+	return nil
 }

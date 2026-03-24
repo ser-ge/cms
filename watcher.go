@@ -32,6 +32,9 @@ type gitUpdateMsg struct {
 	gitInfo map[string]GitInfo // workingDir → GitInfo
 }
 
+// attentionUpdateMsg notifies the TUI that the attention queue changed.
+type attentionUpdateMsg struct{}
+
 // Watcher bridges tmux events to bubbletea messages.
 // It manages the control mode connection, debounced output handling,
 // and slow polls for process table and git status.
@@ -55,6 +58,10 @@ type Watcher struct {
 	current  CurrentTarget
 	stateMu  sync.RWMutex
 
+	// Activity transition tracking.
+	activitySince map[string]time.Time // paneID → when current activity started
+	Attention     AttentionQueue
+
 	// Lifecycle.
 	stopCh chan struct{}
 }
@@ -74,6 +81,7 @@ func NewWatcher() *Watcher {
 		lastLiveRecheck: map[string]time.Time{},
 		workingUntil:    map[string]time.Time{},
 		outputTimers:    map[string]*time.Timer{},
+		activitySince:   map[string]time.Time{},
 		stopCh:          make(chan struct{}),
 	}
 }
@@ -120,6 +128,84 @@ func (w *Watcher) updateCache(sessions []Session, agents map[string]AgentStatus,
 	w.stateMu.Unlock()
 }
 
+// ActivitySince returns a snapshot of activity transition timestamps.
+func (w *Watcher) ActivitySince() map[string]time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make(map[string]time.Time, len(w.activitySince))
+	for k, v := range w.activitySince {
+		out[k] = v
+	}
+	return out
+}
+
+// trackTransitions compares previous and new agent states,
+// updates activitySince timestamps, and emits attention events.
+func (w *Watcher) trackTransitions(prev, next map[string]AgentStatus) {
+	changed := false
+	now := time.Now()
+
+	w.mu.Lock()
+	for paneID, ns := range next {
+		if !ns.Running {
+			if _, had := w.activitySince[paneID]; had {
+				delete(w.activitySince, paneID)
+				ClearPersistedActivity(paneID)
+			}
+			continue
+		}
+		ps, existed := prev[paneID]
+		if !existed || !ps.Running || ps.Activity != ns.Activity {
+			w.activitySince[paneID] = now
+			PersistActivitySince(paneID, ns.Activity, now)
+		}
+	}
+	// Clean up removed panes.
+	for paneID := range prev {
+		if _, ok := next[paneID]; !ok {
+			delete(w.activitySince, paneID)
+			ClearPersistedActivity(paneID)
+		}
+	}
+	w.mu.Unlock()
+
+	// Emit attention events based on transitions.
+	for paneID, ns := range next {
+		if !ns.Running {
+			w.Attention.RemovePane(paneID)
+			changed = true
+			continue
+		}
+		ps := prev[paneID]
+
+		// Became waiting → attention.
+		if ns.Activity == ActivityWaitingInput && ps.Activity != ActivityWaitingInput {
+			w.Attention.Add(paneID, AttentionWaiting)
+			changed = true
+		}
+		// Stopped waiting → remove waiting attention.
+		if ns.Activity != ActivityWaitingInput && ps.Activity == ActivityWaitingInput {
+			w.Attention.Remove(paneID, AttentionWaiting)
+			changed = true
+		}
+
+		// Just finished work (Working → Idle).
+		if ns.Activity == ActivityIdle && ps.Activity == ActivityWorking {
+			w.Attention.Add(paneID, AttentionFinished)
+			changed = true
+		}
+		// Started working again → remove finished attention.
+		if ns.Activity == ActivityWorking && ps.Activity != ActivityWorking {
+			w.Attention.Remove(paneID, AttentionFinished)
+			changed = true
+		}
+	}
+
+	if changed {
+		w.send(attentionUpdateMsg{})
+	}
+}
+
 // bootstrap fetches the initial state and starts the event + poll goroutines.
 // If tmux isn't running yet, it sends an empty stateMsg so the TUI can still
 // show the finder (projects from disk). Control mode is started if available.
@@ -135,10 +221,24 @@ func (w *Watcher) bootstrap() {
 	agents := detectAllAgents(sessions, pt)
 	debugf("watcher: bootstrap sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 
-	// Track which panes have a known agent.
-	w.mu.Lock()
+	// Track which panes have a known agent and restore persisted timestamps.
+	var agentPaneIDs []string
 	for id := range agents {
+		agentPaneIDs = append(agentPaneIDs, id)
+	}
+	persisted := LoadPersistedActivitySince(agentPaneIDs)
+
+	w.mu.Lock()
+	for id, status := range agents {
 		w.agentPanes[id] = true
+		// Restore persisted activity timestamp if the activity hasn't changed.
+		if p, ok := persisted[id]; ok && p.activity == status.Activity.String() {
+			w.activitySince[id] = p.since
+		}
+		// Seed initial attention for panes already waiting.
+		if status.Activity == ActivityWaitingInput {
+			w.Attention.Add(id, AttentionWaiting)
+		}
 	}
 	w.mu.Unlock()
 
@@ -326,11 +426,17 @@ func (w *Watcher) recheckPane(paneID, source string) {
 
 	updates := map[string]AgentStatus{paneID: status}
 
+	// Track transitions before updating cache.
+	w.stateMu.RLock()
+	prevSnapshot := map[string]AgentStatus{paneID: prev}
+	w.stateMu.RUnlock()
+
 	// Update cache.
 	w.stateMu.Lock()
 	w.agents = applyAgentUpdates(w.agents, updates)
 	w.stateMu.Unlock()
 
+	w.trackTransitions(prevSnapshot, updates)
 	w.send(agentUpdateMsg{updates: updates})
 }
 
@@ -345,6 +451,11 @@ func (w *Watcher) refreshFullState() {
 	agents := detectAllAgents(sessions, pt)
 	debugf("watcher: full refresh sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 
+	// Track transitions against previous state.
+	w.stateMu.RLock()
+	prevAgents := w.agents
+	w.stateMu.RUnlock()
+
 	// Update agent pane tracking.
 	w.mu.Lock()
 	w.agentPanes = map[string]bool{}
@@ -353,6 +464,7 @@ func (w *Watcher) refreshFullState() {
 	}
 	w.mu.Unlock()
 
+	w.trackTransitions(prevAgents, agents)
 	w.updateCache(sessions, agents, current)
 	w.send(stateMsg{sessions: sessions, agents: agents, current: current})
 }
@@ -441,6 +553,8 @@ func (w *Watcher) pollProcesses() {
 	w.mu.Unlock()
 
 	if len(updates) > 0 {
+		w.trackTransitions(cachedAgents, updates)
+
 		w.stateMu.Lock()
 		w.agents = applyAgentUpdates(w.agents, updates)
 		w.stateMu.Unlock()

@@ -10,6 +10,7 @@ type screen int
 const (
 	screenDashboard screen = iota
 	screenFinder
+	screenQueue
 )
 
 // rootModel is the top-level bubbletea model that delegates to sub-screens.
@@ -18,6 +19,7 @@ type rootModel struct {
 	initial    screen // the screen we started on
 	dashboard  dashboardModel
 	finder     finderModel
+	queue      queueModel
 	finderKind finderKind
 	watcher    *Watcher
 	cfg        Config
@@ -38,6 +40,9 @@ func newRootModel(initial screen, fk finderKind, cfg Config, watcher *Watcher) r
 	if initial == screenFinder {
 		m.finder = newFinderModel(cfg, watcher, fk, 0, 0)
 	}
+	if initial == screenQueue {
+		m.queue = newQueueModel(cfg, watcher, 0, 0)
+	}
 	return m
 }
 
@@ -47,6 +52,8 @@ func (m rootModel) Init() tea.Cmd {
 		return m.dashboard.Init()
 	case screenFinder:
 		return m.finder.Init()
+	case screenQueue:
+		return m.queue.Init()
 	}
 	return nil
 }
@@ -68,6 +75,8 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "/":
 				return m.switchTo(screenFinder)
+			case "a":
+				return m.switchTo(screenQueue)
 			case "q":
 				return m, tea.Quit
 			}
@@ -83,6 +92,8 @@ func (m rootModel) View() string {
 		return m.dashboard.View()
 	case screenFinder:
 		return m.finder.View()
+	case screenQueue:
+		return m.queue.View()
 	}
 	return ""
 }
@@ -112,6 +123,19 @@ func (m rootModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.switchTo(screenDashboard)
 		}
+	case screenQueue:
+		m.queue, cmd = m.queue.Update(msg)
+		if m.queue.done {
+			if m.queue.action != nil {
+				m.postAction = m.queue.action
+				return m, tea.Quit
+			}
+			// Started as standalone queue with no action (esc) → just quit.
+			if m.initial == screenQueue {
+				return m, tea.Quit
+			}
+			return m.switchTo(screenDashboard)
+		}
 	}
 	return m, cmd
 }
@@ -123,6 +147,8 @@ func (m rootModel) switchTo(s screen) (tea.Model, tea.Cmd) {
 		return m, m.dashboard.Init()
 	case screenFinder:
 		return m, m.initFinder()
+	case screenQueue:
+		return m, m.initQueue()
 	}
 	return m, nil
 }
@@ -130,6 +156,11 @@ func (m rootModel) switchTo(s screen) (tea.Model, tea.Cmd) {
 func (m *rootModel) initFinder() tea.Cmd {
 	m.finder = newFinderModel(m.cfg, m.watcher, finderAll, m.width, m.height)
 	return m.finder.Init()
+}
+
+func (m *rootModel) initQueue() tea.Cmd {
+	m.queue = newQueueModel(m.cfg, m.watcher, m.width, m.height)
+	return m.queue.Init()
 }
 
 // Shared message types.
