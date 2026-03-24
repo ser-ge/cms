@@ -65,6 +65,21 @@ func TestParseCodexPane(t *testing.T) {
 	}
 }
 
+func TestParseCodexPaneLeftFooterConvertsToUsedContext(t *testing.T) {
+	content := strings.Join([]string{
+		"› Implement feature",
+		"gpt-5.4 default · 63% left · ~/projects/cms",
+		"Plan mode (shift+tab to cycle)",
+	}, "\n")
+
+	status := AgentStatus{Running: true, Provider: ProviderCodex}
+	parseCodexPane(content, &status)
+
+	if status.ContextPct != 37 {
+		t.Fatalf("context = %d, want 37", status.ContextPct)
+	}
+}
+
 func TestParseCodexPaneStaleApprovalFallsBackToIdle(t *testing.T) {
 	content := strings.Join([]string{
 		"Previous step: Tool call needs your approval.",

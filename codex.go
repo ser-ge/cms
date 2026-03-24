@@ -9,6 +9,7 @@ import (
 var (
 	codexModelRe          = regexp.MustCompile(`(?i)\bmodel:\s*([^\|\n]+)`)
 	codexCtxRe            = regexp.MustCompile(`(?i)\b(\d+)%\s*ctx\b`)
+	codexLeftRe           = regexp.MustCompile(`(?i)\b(\d+)%\s*left\b`)
 	codexBranchRe         = regexp.MustCompile(`(?i)\bbranch:\s*(\S+)`)
 	codexPlanModeRe       = regexp.MustCompile(`(?i)\bplan mode\b`)
 	codexAcceptEditsRe    = regexp.MustCompile(`(?i)\baccept edits\b`)
@@ -73,6 +74,15 @@ func parseCodexPane(content string, status *AgentStatus) {
 		if status.ContextPct == 0 {
 			if m := codexCtxRe.FindStringSubmatch(line); m != nil {
 				status.ContextPct, _ = strconv.Atoi(m[1])
+			} else if m := codexLeftRe.FindStringSubmatch(line); m != nil {
+				left, _ := strconv.Atoi(m[1])
+				if left < 0 {
+					left = 0
+				}
+				if left > 100 {
+					left = 100
+				}
+				status.ContextPct = 100 - left
 			}
 		}
 		if status.Branch == "" {
