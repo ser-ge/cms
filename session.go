@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -31,6 +32,15 @@ func insideTmux() bool {
 	return os.Getenv("TMUX") != ""
 }
 
+// attachTmux runs tmux attach-session interactively with the terminal connected.
+func attachTmux(args ...string) error {
+	cmd := exec.Command("tmux", append([]string{"attach-session"}, args...)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // SwitchSession switches the current tmux client to the named session.
 // If running outside tmux, attaches to the session instead.
 func SwitchSession(name string) error {
@@ -38,8 +48,7 @@ func SwitchSession(name string) error {
 		_, err := runTmux("switch-client", "-t", name)
 		return err
 	}
-	_, err := runTmux("attach-session", "-t", name)
-	return err
+	return attachTmux("-t", name)
 }
 
 // SmartSwitchSession switches to a session, targeting the best pane based on
@@ -104,8 +113,7 @@ func SwitchToPane(paneID string) error {
 		_, err := runTmux("switch-client", "-t", paneID)
 		return err
 	}
-	_, err := runTmux("attach-session", "-t", paneID)
-	return err
+	return attachTmux("-t", paneID)
 }
 
 // KillPane closes a tmux pane.

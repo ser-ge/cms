@@ -414,14 +414,29 @@ func (m dashboardModel) View() string {
 		}
 	}
 
-	// Track which session/window headers we've rendered.
+	// Pass 1: compute column values and max widths for all visible panes.
+	allCols := make([]paneColumns, len(m.items))
+	var widths [numPaneCols]int
+	for i, entry := range m.items {
+		if !visible[i] {
+			continue
+		}
+		pc := m.paneLineCols(entry)
+		allCols[i] = pc
+		for c := 0; c < numPaneCols; c++ {
+			if len(pc.cols[c]) > widths[c] {
+				widths[c] = len(pc.cols[c])
+			}
+		}
+	}
+
+	// Pass 2: render with aligned columns.
 	lastSession := ""
 	lastWindow := -1
 	visibleIdx := 0
 
 	for i, entry := range m.items {
 		if !visible[i] {
-			// Still track headers for filtered items.
 			continue
 		}
 
@@ -452,7 +467,7 @@ func (m dashboardModel) View() string {
 		}
 
 		// Pane line.
-		line := m.renderPaneLine(entry)
+		line := renderPaneLine(allCols[i], widths)
 
 		isSelected := visibleIdx == m.cursor
 		isMoveSrc := m.moving && entry.pane.ID == m.moveSrc
@@ -488,28 +503,47 @@ func (m dashboardModel) View() string {
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-func (m dashboardModel) renderPaneLine(entry paneEntry) string {
-	// Left-side indicator for Claude panes.
-	indicator := "  " // no claude
+// paneColumns holds the column values for a single pane line.
+// Columns: name, branch, command, activity, context, mode
+const numPaneCols = 6
+
+type paneColumns struct {
+	indicator string
+	paneIdx   int
+	cols      [numPaneCols]string // plain text for width calculation
+	styled    [numPaneCols]string // styled text for rendering
+}
+
+func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
+	pc := paneColumns{paneIdx: entry.pane.Index}
+
+	// Indicator.
+	pc.indicator = "  "
 	if entry.hasClaude {
 		switch entry.claude.Activity {
 		case ActivityWorking:
 			frame := spinnerFrames[m.frame%len(spinnerFrames)]
-			indicator = workingStyle.Render(frame) + " "
+			pc.indicator = workingStyle.Render(frame) + " "
 		case ActivityWaitingInput:
-			indicator = waitingStyle.Render("?") + " "
+			pc.indicator = waitingStyle.Render("?") + " "
 		case ActivityIdle:
-			indicator = dimStyle.Render("●") + " "
+			pc.indicator = dimStyle.Render("●") + " "
 		default:
-			indicator = dimStyle.Render("·") + " "
+			pc.indicator = dimStyle.Render("·") + " "
 		}
 	}
 
-	parts := []string{}
-
+	// Col 0: name (repo or dir).
 	if entry.pane.Git.IsRepo {
-		parts = append(parts, entry.pane.Git.RepoName)
+		pc.cols[0] = entry.pane.Git.RepoName
+		pc.styled[0] = entry.pane.Git.RepoName
+	} else if dir := shortenHome(entry.pane.WorkingDir); dir != "" {
+		pc.cols[0] = dir
+		pc.styled[0] = dir
+	}
 
+	// Col 1: branch/git.
+	if entry.pane.Git.IsRepo {
 		g := entry.pane.Git.Branch
 		if entry.pane.Git.Dirty {
 			g += "*"
@@ -520,24 +554,55 @@ func (m dashboardModel) renderPaneLine(entry paneEntry) string {
 		if entry.pane.Git.Behind > 0 {
 			g += fmt.Sprintf("↓%d", entry.pane.Git.Behind)
 		}
-		parts = append(parts, g)
-	} else if dir := shortenHome(entry.pane.WorkingDir); dir != "" {
-		parts = append(parts, dir)
+		pc.cols[1] = g
+		pc.styled[1] = g
 	}
 
+	// Col 2: command (if not shell).
 	cmd := entry.pane.Command
 	if cmd != "fish" && cmd != "bash" && cmd != "zsh" {
-		parts = append(parts, cmd)
+		pc.cols[2] = cmd
+		pc.styled[2] = cmd
 	}
 
+	// Col 3: claude activity.
 	if entry.hasClaude {
-		parts = append(parts, renderClaude(entry.claude))
-		if m := renderMode(entry.claude.Mode); m != "" {
-			parts = append(parts, m)
+		pc.cols[3] = entry.claude.Activity.String()
+		pc.styled[3] = renderClaude(entry.claude)
+	}
+
+	// Col 4: context %.
+	if entry.hasClaude && entry.claude.ContextPct > 0 {
+		txt := fmt.Sprintf("%d%%", entry.claude.ContextPct)
+		pc.cols[4] = txt
+		pc.styled[4] = contextStyle(entry.claude.ContextPct).Render(txt)
+	}
+
+	// Col 5: mode.
+	if entry.hasClaude {
+		if modeStr := renderMode(entry.claude.Mode); modeStr != "" {
+			pc.cols[5] = entry.claude.Mode.String()
+			pc.styled[5] = modeStr
 		}
 	}
 
-	return fmt.Sprintf("   %s%d │ %s", indicator, entry.pane.Index, strings.Join(parts, " │ "))
+	return pc
+}
+
+func renderPaneLine(pc paneColumns, widths [numPaneCols]int) string {
+	var parts []string
+	for i := 0; i < numPaneCols; i++ {
+		if widths[i] == 0 {
+			continue
+		}
+		cell := pc.styled[i]
+		pad := widths[i] - len(pc.cols[i])
+		if pad > 0 {
+			cell += strings.Repeat(" ", pad)
+		}
+		parts = append(parts, cell)
+	}
+	return fmt.Sprintf("   %s%d │ %s", pc.indicator, pc.paneIdx, strings.Join(parts, " │ "))
 }
 
 func renderClaude(cs ClaudeStatus) string {
@@ -550,12 +615,7 @@ func renderClaude(cs ClaudeStatus) string {
 	default:
 		style = idleStyle
 	}
-
-	c := style.Render(cs.Activity.String())
-	if cs.ContextPct > 0 {
-		c += " " + contextStyle(cs.ContextPct).Render(fmt.Sprintf("%d%%", cs.ContextPct))
-	}
-	return c
+	return style.Render(cs.Activity.String())
 }
 
 func renderMode(mode ClaudeMode) string {
@@ -563,7 +623,7 @@ func renderMode(mode ClaudeMode) string {
 	case ModePlan:
 		return modePlanStyle.Render("plan")
 	case ModeAcceptEdits:
-		return modeAcceptStyle.Render("auto-edit")
+		return modeAcceptStyle.Render("accept edits")
 	case ModeYolo:
 		return modeYoloStyle.Render("yolo")
 	default:

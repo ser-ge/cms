@@ -50,7 +50,7 @@ const (
 	ModeNormal ClaudeMode = iota
 	ModePlan
 	ModeAcceptEdits
-	ModeYolo // dangerously accept all
+	ModeYolo // bypass permissions / dangerously accept all
 )
 
 func (m ClaudeMode) String() string {
@@ -58,7 +58,7 @@ func (m ClaudeMode) String() string {
 	case ModePlan:
 		return "plan"
 	case ModeAcceptEdits:
-		return "auto-edit"
+		return "accept edits"
 	case ModeYolo:
 		return "yolo"
 	default:
@@ -82,7 +82,7 @@ var (
 	statusLineRe = regexp.MustCompile(`^\s*(.+?\([\d]+[kM] context\))\s*\|\s*(\d+)% ctx\s*\|\s*(\S+)`)
 	planModeRe       = regexp.MustCompile(`plan mode on`)
 	acceptEditsRe    = regexp.MustCompile(`accept edits on`)
-	yoloModeRe       = regexp.MustCompile(`dangerously accept`)
+	yoloModeRe       = regexp.MustCompile(`(bypass permissions on|dangerously accept)`)
 
 	// Spinner line: e.g. "✢ Booping…", "· Cultivating… (32s · ↓ 277 tokens)"
 	spinnerRe = regexp.MustCompile(`^[✢✶·⏳⏺●] \S+…`)
