@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -34,7 +33,10 @@ func insideTmux() bool {
 
 // attachTmux runs tmux attach-session interactively with the terminal connected.
 func attachTmux(args ...string) error {
-	cmd := exec.Command("tmux", append([]string{"attach-session"}, args...)...)
+	cmd, err := tmuxCommand(append([]string{"attach-session"}, args...)...)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

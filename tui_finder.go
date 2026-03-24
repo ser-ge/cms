@@ -127,6 +127,7 @@ type providerSummary struct {
 	waiting int
 	idle    int
 	maxCtx  int
+	hasCtx  bool
 }
 
 // buildSessionItems populates session picker items from raw session data.
@@ -180,7 +181,10 @@ func agentSummary(sess Session, agents map[string]AgentStatus) string {
 			default:
 				s.idle++
 			}
-			s.maxCtx = max(s.maxCtx, cs.ContextPct)
+			if cs.ContextSet {
+				s.maxCtx = max(s.maxCtx, cs.ContextPct)
+				s.hasCtx = true
+			}
 		}
 	}
 
@@ -211,7 +215,10 @@ func renderProviderSummary(provider Provider, s providerSummary) string {
 		states = append(states, idleStyle.Render(fmt.Sprintf("●%d", s.idle)))
 	}
 	state := joinParts(states)
-	return fmt.Sprintf("%s %d %s %s", label, s.total, state, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+	if s.hasCtx {
+		return fmt.Sprintf("%s %d %s %s", label, s.total, state, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+	}
+	return fmt.Sprintf("%s %d %s", label, s.total, state)
 }
 
 func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {

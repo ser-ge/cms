@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Session represents a tmux session.
@@ -41,6 +42,12 @@ type CurrentTarget struct {
 	Pane    int
 }
 
+var (
+	tmuxPathOnce sync.Once
+	tmuxPath     string
+	tmuxPathErr  error
+)
+
 // FetchCurrentTarget returns the session/window/pane the user is currently in.
 func FetchCurrentTarget() (CurrentTarget, error) {
 	out, err := runTmux("display-message", "-p", "#{session_name}\t#{window_index}\t#{pane_index}")
@@ -73,12 +80,33 @@ func FetchLastSession() string {
 // runTmux executes a tmux command and returns its trimmed stdout.
 // This is a helper so we don't repeat exec.Command boilerplate everywhere.
 func runTmux(args ...string) (string, error) {
-	cmd := exec.Command("tmux", args...)
+	cmd, err := tmuxCommand(args...)
+	if err != nil {
+		return "", err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func tmuxCommand(args ...string) (*exec.Cmd, error) {
+	path, err := tmuxExecutable()
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command(path, args...), nil
+}
+
+func tmuxExecutable() (string, error) {
+	tmuxPathOnce.Do(func() {
+		tmuxPath, tmuxPathErr = exec.LookPath("tmux")
+	})
+	if tmuxPathErr != nil {
+		return "", fmt.Errorf("find tmux: %w", tmuxPathErr)
+	}
+	return tmuxPath, nil
 }
 
 // FetchState queries tmux for the full session/window/pane hierarchy.

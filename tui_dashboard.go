@@ -646,7 +646,7 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 	}
 
 	// Col 4: context %.
-	if entry.hasAgent && entry.agent.ContextPct > 0 {
+	if entry.hasAgent && entry.agent.ContextSet {
 		txt := fmt.Sprintf("%d%%", entry.agent.ContextPct)
 		pc.cols[4] = txt
 		pc.styled[4] = contextStyle(entry.agent.ContextPct).Render(txt)

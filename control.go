@@ -47,7 +47,10 @@ type CtrlClient struct {
 
 // NewCtrlClient starts a tmux control mode connection.
 func NewCtrlClient() (*CtrlClient, error) {
-	cmd := exec.Command("tmux", "-C", "attach-session")
+	cmd, err := tmuxCommand("-C", "attach-session")
+	if err != nil {
+		return nil, fmt.Errorf("control command: %w", err)
+	}
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("control stdin: %w", err)

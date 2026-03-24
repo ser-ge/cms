@@ -389,6 +389,10 @@ func (w *Watcher) runProcessPoll() {
 func (w *Watcher) pollProcesses() {
 	w.stateMu.RLock()
 	sessions := w.sessions
+	cachedAgents := make(map[string]AgentStatus, len(w.agents))
+	for id, status := range w.agents {
+		cachedAgents[id] = status
+	}
 	w.stateMu.RUnlock()
 
 	if len(sessions) == 0 {
@@ -419,7 +423,7 @@ func (w *Watcher) pollProcesses() {
 				}
 
 				if status.Running {
-					prev := w.agents[pane.ID]
+					prev := cachedAgents[pane.ID]
 					lastOut := w.lastOutput[pane.ID]
 					workingUntil := w.workingUntil[pane.ID]
 					status.Activity = heldActivity("poll", prev, status, lastOut, workingUntil, time.Now())

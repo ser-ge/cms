@@ -71,9 +71,10 @@ func parseCodexPane(content string, status *AgentStatus) {
 				status.Model = strings.TrimSpace(m[1])
 			}
 		}
-		if status.ContextPct == 0 {
+		if !status.ContextSet {
 			if m := codexCtxRe.FindStringSubmatch(line); m != nil {
 				status.ContextPct, _ = strconv.Atoi(m[1])
+				status.ContextSet = true
 			} else if m := codexLeftRe.FindStringSubmatch(line); m != nil {
 				left, _ := strconv.Atoi(m[1])
 				if left < 0 {
@@ -83,6 +84,7 @@ func parseCodexPane(content string, status *AgentStatus) {
 					left = 100
 				}
 				status.ContextPct = 100 - left
+				status.ContextSet = true
 			}
 		}
 		if status.Branch == "" {

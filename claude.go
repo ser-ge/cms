@@ -83,6 +83,7 @@ func parseClaudePane(content string, status *AgentStatus) {
 		if m := claudeStatusLineRe.FindStringSubmatch(line); m != nil {
 			status.Model = m[1]
 			status.ContextPct, _ = strconv.Atoi(m[2])
+			status.ContextSet = true
 			status.Branch = m[3]
 		}
 

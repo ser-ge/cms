@@ -81,6 +81,7 @@ type AgentStatus struct {
 	Activity   Activity
 	Model      string
 	ContextPct int
+	ContextSet bool
 	Branch     string
 	Mode       AgentModeKind
 	ModeLabel  string

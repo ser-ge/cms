@@ -28,6 +28,9 @@ func TestParseClaudePane(t *testing.T) {
 	if status.ContextPct != 42 {
 		t.Fatalf("context = %d, want 42", status.ContextPct)
 	}
+	if !status.ContextSet {
+		t.Fatal("context should be marked as parsed")
+	}
 	if status.Branch != "feature/claude" {
 		t.Fatalf("branch = %q, want feature/claude", status.Branch)
 	}
@@ -60,6 +63,9 @@ func TestParseCodexPane(t *testing.T) {
 	if status.ContextPct != 61 {
 		t.Fatalf("context = %d, want 61", status.ContextPct)
 	}
+	if !status.ContextSet {
+		t.Fatal("context should be marked as parsed")
+	}
 	if status.Branch != "codex/functionality" {
 		t.Fatalf("branch = %q, want codex/functionality", status.Branch)
 	}
@@ -77,6 +83,26 @@ func TestParseCodexPaneLeftFooterConvertsToUsedContext(t *testing.T) {
 
 	if status.ContextPct != 37 {
 		t.Fatalf("context = %d, want 37", status.ContextPct)
+	}
+	if !status.ContextSet {
+		t.Fatal("context should be marked as parsed")
+	}
+}
+
+func TestParseCodexPaneHundredPercentLeftShowsZeroUsedContext(t *testing.T) {
+	content := strings.Join([]string{
+		"› Ready",
+		"gpt-5.4 default · 100% left · ~/projects/cms",
+	}, "\n")
+
+	status := AgentStatus{Running: true, Provider: ProviderCodex}
+	parseCodexPane(content, &status)
+
+	if status.ContextPct != 0 {
+		t.Fatalf("context = %d, want 0", status.ContextPct)
+	}
+	if !status.ContextSet {
+		t.Fatal("zero used context should still be marked as parsed")
 	}
 }
 
