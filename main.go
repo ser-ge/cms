@@ -5,22 +5,50 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+type jumpCandidate struct {
+	paneID   string
+	activity Activity
+}
+
 func main() {
+	initDebugLogger()
 	cfg := LoadConfig()
-	initStyles(cfg.Colors)
+	initStyles(cfg)
 
 	initial := screenFinder
+	fk := finderAll
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "config":
+			if len(os.Args) > 2 && os.Args[2] == "init" {
+				path, err := WriteDefaultConfigFile()
+				if err != nil {
+					if err == os.ErrExist {
+						fmt.Fprintf(os.Stderr, "error: config already exists at %s\n", path)
+					} else {
+						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					}
+					os.Exit(1)
+				}
+				fmt.Println(path)
+				return
+			}
+			fmt.Fprintln(os.Stderr, "error: usage: cms config init")
+			os.Exit(1)
 		case "dash", "d", "dashboard":
 			initial = screenDashboard
-		case "find", "f", "switch", "s", "open", "o":
+		case "find", "f":
 			initial = screenFinder
+		case "switch", "s":
+			initial = screenFinder
+			fk = finderSessions
+		case "open", "o":
+			initial = screenFinder
+			fk = finderProjects
 		case "next", "n":
 			if err := jumpNext(); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -30,9 +58,12 @@ func main() {
 		}
 	}
 
-	m := newRootModel(initial, cfg)
+	watcher := NewWatcher()
+	m := newRootModel(initial, fk, cfg, watcher)
 	p := tea.NewProgram(m, tea.WithAltScreen())
+	watcher.Start(p.Send)
 	result, err := p.Run()
+	watcher.Stop()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -52,14 +83,14 @@ func executePostAction(a *postAction) error {
 	}
 	switch a.kind {
 	case kindSession:
-		return SmartSwitchSession(a.sessionName, a.priority, a.sessions, a.claude)
+		return SmartSwitchSession(a.sessionName, a.priority, a.sessions, a.agents)
 	case kindProject:
 		return OpenProject(a.projectPath)
 	}
 	return nil
 }
 
-// jumpNext finds the next Claude pane needing attention and switches to it.
+// jumpNext finds the next agent pane needing attention and switches to it.
 // Priority: waiting > idle. Cycles through panes across all sessions,
 // starting after the current pane.
 func jumpNext() error {
@@ -68,73 +99,49 @@ func jumpNext() error {
 		return err
 	}
 	current, _ := FetchCurrentTarget()
-	claude := detectAllClaude(sessions, pt)
+	agents := detectAllAgents(sessions, pt)
 
-	// Flatten all panes with Claude status.
-	type candidate struct {
-		paneID   string
-		activity Activity
-	}
-	var all []candidate
+	// Flatten all panes with agent status.
+	var all []jumpCandidate
 	currentIdx := -1
 
 	for _, sess := range sessions {
 		for _, win := range sess.Windows {
 			for _, pane := range win.Panes {
-				cs, ok := claude[pane.ID]
+				cs, ok := agents[pane.ID]
 				if !ok || !cs.Running {
 					continue
 				}
 				if sess.Name == current.Session && win.Index == current.Window && pane.Index == current.Pane {
 					currentIdx = len(all)
 				}
-				all = append(all, candidate{paneID: pane.ID, activity: cs.Activity})
+				all = append(all, jumpCandidate{paneID: pane.ID, activity: cs.Activity})
 			}
 		}
 	}
 
 	if len(all) == 0 {
-		return fmt.Errorf("no claude sessions found")
+		return fmt.Errorf("no agent sessions found")
 	}
 
-	// Find next waiting pane (cycling from current position).
+	if paneID := selectNextPane(all, currentIdx); paneID != "" {
+		return SwitchToPane(paneID)
+	}
+
+	return fmt.Errorf("no waiting or idle agent sessions")
+}
+
+func selectNextPane(all []jumpCandidate, currentIdx int) string {
 	start := currentIdx + 1
 	for _, target := range []Activity{ActivityWaitingInput, ActivityIdle} {
 		for i := 0; i < len(all); i++ {
 			idx := (start + i) % len(all)
 			if all[idx].activity == target {
-				return SwitchToPane(all[idx].paneID)
+				return all[idx].paneID
 			}
 		}
 	}
-
-	return fmt.Errorf("no waiting or idle claude sessions")
-}
-
-// detectAllClaude runs Claude detection for all panes concurrently.
-func detectAllClaude(sessions []Session, pt procTable) map[string]ClaudeStatus {
-	var mu sync.Mutex
-	results := map[string]ClaudeStatus{}
-	var wg sync.WaitGroup
-
-	for _, sess := range sessions {
-		for _, win := range sess.Windows {
-			for _, pane := range win.Panes {
-				wg.Add(1)
-				go func(p Pane) {
-					defer wg.Done()
-					status := DetectClaude(p, pt)
-					if status.Running {
-						mu.Lock()
-						results[p.ID] = status
-						mu.Unlock()
-					}
-				}(pane)
-			}
-		}
-	}
-	wg.Wait()
-	return results
+	return ""
 }
 
 func shortenHome(path string) string {

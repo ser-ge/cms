@@ -12,55 +12,88 @@ import (
 
 // Styles — initialized from config via initStyles().
 var (
-	sessionStyle  lipgloss.Style
-	windowStyle   lipgloss.Style
-	dimStyle      lipgloss.Style
-	selectedStyle lipgloss.Style
-	currentStyle  lipgloss.Style
-	moveSrcStyle  lipgloss.Style
-	workingStyle  lipgloss.Style
-	waitingStyle  lipgloss.Style
-	idleStyle     lipgloss.Style
-	helpStyle     lipgloss.Style
-	attachLabel   string
+	sessionStyle    lipgloss.Style
+	windowStyle     lipgloss.Style
+	dimStyle        lipgloss.Style
+	selectedStyle   lipgloss.Style
+	currentStyle    lipgloss.Style
+	moveSrcStyle    lipgloss.Style
+	workingStyle    lipgloss.Style
+	waitingStyle    lipgloss.Style
+	idleStyle       lipgloss.Style
+	helpStyle       lipgloss.Style
+	separatorStyle  lipgloss.Style
+	footerRuleStyle lipgloss.Style
+	attachLabel     string
 
-	modePlanStyle   lipgloss.Style
-	modeAcceptStyle lipgloss.Style
-	modeYoloStyle   lipgloss.Style
+	claudeAccentStyle lipgloss.Style
+	codexAccentStyle  lipgloss.Style
+	claudePlanStyle   lipgloss.Style
+	claudeAcceptStyle lipgloss.Style
+	claudeDangerStyle lipgloss.Style
+	claudeSafeStyle   lipgloss.Style
+	codexPlanStyle    lipgloss.Style
+	codexAcceptStyle  lipgloss.Style
+	codexDangerStyle  lipgloss.Style
+	codexSafeStyle    lipgloss.Style
 
 	ctxLowStyle  lipgloss.Style
 	ctxMidStyle  lipgloss.Style
 	ctxHighStyle lipgloss.Style
+
+	workingFramesUI   []string
+	waitingIndicator  string
+	idleIndicator     string
+	unknownIndicator  string
+	columnSeparatorUI string
+	footerSeparatorUI string
 )
 
-func initStyles(c ColorsConfig) {
-	sessionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Session))
-	windowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Window))
-	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Dim))
-	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Selected))
-	currentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Current))
-	moveSrcStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.MoveSrc)).Bold(true)
-	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Working))
-	waitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Waiting))
-	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Idle))
-	helpStyle = dimStyle
+func initStyles(cfg Config) {
+	c := cfg.Colors
+	sessionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Shared.Session))
+	windowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Window))
+	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
+	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Shared.Selected))
+	currentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Current))
+	moveSrcStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.MoveSrc)).Bold(true)
+	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working))
+	waitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting))
+	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Idle))
+	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim)).Faint(true)
+	separatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Separator)).Faint(true)
+	footerRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.FooterRule)).Faint(true)
 	attachLabel = dimStyle.Render(" (attached)")
 
-	modePlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModePlan))
-	modeAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModeAccept))
-	modeYoloStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModeYolo)).Bold(true)
+	claudeAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Accent)).Bold(true)
+	codexAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Accent)).Bold(true)
+	claudePlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Plan))
+	claudeAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Accept))
+	claudeDangerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Danger)).Bold(true)
+	claudeSafeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Safe))
+	codexPlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Plan))
+	codexAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Accept))
+	codexDangerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Danger)).Bold(true)
+	codexSafeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Safe))
 
-	ctxLowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxLow))
-	ctxMidStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxMid))
-	ctxHighStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxHigh))
+	ctxLowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxLow))
+	ctxMidStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxMid))
+	ctxHighStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxHigh))
 
 	// Picker styles.
-	pickerSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Selected)).Foreground(lipgloss.Color(c.Current)).Bold(true)
+	pickerSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Shared.Selected)).Foreground(lipgloss.Color(c.Shared.Current)).Bold(true)
 	pickerNormalStyle = lipgloss.NewStyle()
-	pickerDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Window))
-	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Working)).Bold(true)
-	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Session))
-	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Dim))
+	pickerDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Window))
+	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working)).Bold(true)
+	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Shared.Session))
+	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
+
+	workingFramesUI = append([]string(nil), cfg.Icons.WorkingFrames...)
+	waitingIndicator = cfg.Icons.Waiting
+	idleIndicator = cfg.Icons.Idle
+	unknownIndicator = cfg.Icons.Unknown
+	columnSeparatorUI = cfg.Icons.ColumnSeparator
+	footerSeparatorUI = cfg.Icons.FooterSeparator
 }
 
 func contextStyle(pct int) lipgloss.Style {
@@ -79,15 +112,15 @@ type paneEntry struct {
 	pane      Pane
 	session   string
 	window    Window
-	claude    ClaudeStatus
-	hasClaude bool
+	agent     AgentStatus
+	hasAgent  bool
 	isCurrent bool
 }
 
 type dashboardModel struct {
 	// Data.
 	sessions []Session
-	claude   map[string]ClaudeStatus
+	agents   map[string]AgentStatus
 	current  CurrentTarget
 
 	// Navigation.
@@ -116,15 +149,17 @@ type dashboardModel struct {
 
 	postAction *postAction // action to run after TUI exits
 
-	loading bool
-	width   int
-	height  int
-	frame   int // tick counter for spinner animation
+	loading  bool
+	width    int
+	height   int
+	frame    int // tick counter for spinner animation
+	spinning bool
+	cfg      DashboardConfig
 }
 
 const idleThreshold = 10
 
-func newDashboardModel() dashboardModel {
+func newDashboardModel(cfg Config) dashboardModel {
 	ti := textinput.New()
 	ti.Prompt = "/"
 	ti.CharLimit = 64
@@ -134,11 +169,44 @@ func newDashboardModel() dashboardModel {
 		idleCount:    map[string]int{},
 		filter:       ti,
 		loading:      true,
+		cfg:          cfg.Dashboard,
 	}
 }
 
+type spinnerTickMsg struct{}
+
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(450*time.Millisecond, func(time.Time) tea.Msg {
+		return spinnerTickMsg{}
+	})
+}
+
+// hasWorking reports whether any agent instance is currently working.
+func (m *dashboardModel) hasWorking() bool {
+	for _, cs := range m.agents {
+		if cs.Running && cs.Activity == ActivityWorking {
+			return true
+		}
+	}
+	return false
+}
+
+// syncSpinner starts or stops the spinner animation based on working state.
+func (m *dashboardModel) syncSpinner() tea.Cmd {
+	if m.hasWorking() {
+		if !m.spinning {
+			m.spinning = true
+			return spinnerTickCmd()
+		}
+	} else {
+		m.spinning = false
+	}
+	return nil
+}
+
 func (m dashboardModel) Init() tea.Cmd {
-	return fetchFastStateCmd()
+	// Watcher handles bootstrap — no command needed.
+	return nil
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
@@ -148,26 +216,49 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tickStartMsg:
-		return m, fetchFastStateCmd()
+	case spinnerTickMsg:
+		if m.hasWorking() {
+			m.frame++
+			m.spinning = true
+			return m, spinnerTickCmd()
+		}
+		m.spinning = false
+		return m, nil
 
-	case fastStateMsg:
+	case stateMsg:
+		// Full state snapshot from watcher (bootstrap + structural changes).
 		m.sessions = msg.sessions
+		m.agents = msg.agents
 		m.current = msg.current
 		m.loading = false
-		m.frame++
-		m.rebuildItems()
-		// Kick off Claude detection in background (can take 600ms+).
-		return m, fetchClaudeCmd(msg.sessions, msg.pt)
-
-	case claudeMsg:
-		m.claude = msg.claude
 		m.applyHysteresis()
 		m.rebuildItems()
-		return m, tickCmd()
+		return m, m.syncSpinner()
+
+	case agentUpdateMsg:
+		// Incremental agent status update from watcher.
+		m.agents = applyAgentUpdates(m.agents, msg.updates)
+		m.applyHysteresis()
+		m.rebuildItems()
+		return m, m.syncSpinner()
+
+	case focusChangedMsg:
+		// User switched pane/window/session externally.
+		m.current = msg.current
+		m.rebuildItems()
+		return m, nil
+
+	case gitUpdateMsg:
+		// Update git info on panes.
+		for i := range m.items {
+			if info, ok := msg.gitInfo[m.items[i].pane.WorkingDir]; ok {
+				m.items[i].pane.Git = info
+			}
+		}
+		return m, nil
 
 	case errMsg:
-		return m, tickCmd()
+		return m, nil
 
 	case tea.KeyMsg:
 		if m.filtering {
@@ -187,7 +278,8 @@ func (m dashboardModel) updateNormal(msg tea.KeyMsg) (dashboardModel, tea.Cmd) {
 			KillPane(m.killTarget)
 			m.confirmKill = false
 			m.killTarget = ""
-			return m, fetchFastStateCmd()
+			// Watcher will detect the structural change via control mode events.
+			return m, nil
 		default:
 			m.confirmKill = false
 			m.killTarget = ""
@@ -209,8 +301,8 @@ func (m dashboardModel) updateNormal(msg tea.KeyMsg) (dashboardModel, tea.Cmd) {
 			}
 			m.moving = false
 			m.moveSrc = ""
-			// Refresh immediately.
-			return m, fetchFastStateCmd()
+			// Watcher will detect the structural change via control mode events.
+			return m, nil
 		case "esc":
 			m.moving = false
 			m.moveSrc = ""
@@ -344,13 +436,13 @@ func (m *dashboardModel) rebuildItems() {
 					win.Index == m.current.Window &&
 					pane.Index == m.current.Pane
 
-				cs, hasClaude := m.claude[pane.ID]
+				cs, hasAgent := m.agents[pane.ID]
 				m.items = append(m.items, paneEntry{
 					pane:      pane,
 					session:   sess.Name,
 					window:    win,
-					claude:    cs,
-					hasClaude: hasClaude && cs.Running,
+					agent:     cs,
+					hasAgent:  hasAgent && cs.Running,
 					isCurrent: isCurrent,
 				})
 			}
@@ -380,17 +472,17 @@ func (m *dashboardModel) rebuildItems() {
 }
 
 func (m *dashboardModel) applyHysteresis() {
-	for id, cs := range m.claude {
+	for id, cs := range m.agents {
 		if cs.Activity == ActivityWorking {
 			m.idleCount[id] = 0
-		} else if m.prevActivity[id] == ActivityWorking && cs.Activity == ActivityIdle {
+		} else if shouldHoldWorking(cs) && m.prevActivity[id] == ActivityWorking && cs.Activity == ActivityIdle {
 			m.idleCount[id]++
 			if m.idleCount[id] < idleThreshold {
 				cs.Activity = ActivityWorking
-				m.claude[id] = cs
+				m.agents[id] = cs
 			}
 		}
-		m.prevActivity[id] = m.claude[id].Activity
+		m.prevActivity[id] = m.agents[id].Activity
 	}
 }
 
@@ -398,8 +490,6 @@ func (m dashboardModel) View() string {
 	if m.loading {
 		return "  Loading...\n"
 	}
-
-	var b strings.Builder
 
 	// Determine which items are visible.
 	visible := make(map[int]bool)
@@ -416,7 +506,8 @@ func (m dashboardModel) View() string {
 
 	// Pass 1: compute column values and max widths for all visible panes.
 	allCols := make([]paneColumns, len(m.items))
-	var widths [numPaneCols]int
+	widths := fixedPaneColumnWidths()
+	colIndices := dashboardColumnIndexes(m.cfg.Columns)
 	for i, entry := range m.items {
 		if !visible[i] {
 			continue
@@ -434,6 +525,8 @@ func (m dashboardModel) View() string {
 	lastSession := ""
 	lastWindow := -1
 	visibleIdx := 0
+	selectedLine := -1
+	var lines []string
 
 	for i, entry := range m.items {
 		if !visible[i] {
@@ -443,7 +536,7 @@ func (m dashboardModel) View() string {
 		// Session header.
 		if entry.session != lastSession {
 			if lastSession != "" {
-				b.WriteString("\n")
+				lines = append(lines, "")
 			}
 			label := ""
 			for _, sess := range m.sessions {
@@ -451,23 +544,26 @@ func (m dashboardModel) View() string {
 					label = attachLabel
 				}
 			}
-			fmt.Fprintf(&b, " %s%s\n", sessionStyle.Render(entry.session), label)
+			lines = append(lines, fmt.Sprintf(" %s%s", sessionStyle.Render(entry.session), label))
 			lastSession = entry.session
 			lastWindow = -1
 		}
 
 		// Window header.
 		if entry.window.Index != lastWindow {
-			active := ""
-			if entry.window.Active {
-				active = "*"
+			if showWindowHeader(m.cfg, m.sessions, entry.session) {
+				active := ""
+				if entry.window.Active {
+					active = "*"
+				}
+				label := fmt.Sprintf("%s%s", entry.window.Name, active)
+				lines = append(lines, fmt.Sprintf("   %s", windowStyle.Render(label)))
 			}
-			fmt.Fprintf(&b, "   %s\n", windowStyle.Render(fmt.Sprintf("%s%s", entry.window.Name, active)))
 			lastWindow = entry.window.Index
 		}
 
 		// Pane line.
-		line := renderPaneLine(allCols[i], widths)
+		line := renderPaneLine(allCols[i], widths, colIndices)
 
 		isSelected := visibleIdx == m.cursor
 		isMoveSrc := m.moving && entry.pane.ID == m.moveSrc
@@ -475,30 +571,47 @@ func (m dashboardModel) View() string {
 			line = moveSrcStyle.Render(line)
 		} else if isSelected {
 			line = selectedStyle.Render(line)
+			selectedLine = len(lines)
 		} else if entry.isCurrent {
 			line = currentStyle.Render(line)
 		}
 
-		b.WriteString(line)
-		b.WriteString("\n")
+		lines = append(lines, line)
 		visibleIdx++
 	}
-
-	content := b.String()
 
 	// Status bar.
 	var help string
 	if m.confirmKill {
-		help = waitingStyle.Render("  kill pane? (y/n)")
+		help = waitingStyle.Render(" kill pane? (y/n)")
 	} else if m.filtering {
-		help = "  " + m.filter.View()
+		help = " " + m.filter.View()
 	} else if m.moving {
-		help = moveSrcStyle.Render("  MOVE: j/k navigate  enter: drop here  esc: cancel")
+		help = moveSrcStyle.Render(" MOVE: j/k navigate  enter: drop here  esc: cancel")
 	} else {
-		help = helpStyle.Render("  j/k: navigate  enter: jump  m: move  x: kill  /: find  q: quit")
+		help = helpStyle.Render(" j/k: navigate  enter: jump  m: move  x: kill  /: find  q: quit")
 	}
 
-	return pinBottom(content, help, m.height)
+	return renderDashboardViewport(lines, selectedLine, help, m.width, m.height, m.cfg)
+}
+
+func showWindowHeader(cfg DashboardConfig, sessions []Session, sessionName string) bool {
+	switch cfg.WindowHeaders {
+	case "always":
+		return true
+	case "never":
+		return false
+	}
+	for _, sess := range sessions {
+		if sess.Name != sessionName {
+			continue
+		}
+		if len(sess.Windows) != 1 {
+			return true
+		}
+		return len(sess.Windows[0].Panes) > 1
+	}
+	return true
 }
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -509,27 +622,30 @@ const numPaneCols = 6
 
 type paneColumns struct {
 	indicator string
-	paneIdx   int
 	cols      [numPaneCols]string // plain text for width calculation
 	styled    [numPaneCols]string // styled text for rendering
 }
 
 func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
-	pc := paneColumns{paneIdx: entry.pane.Index}
+	pc := paneColumns{}
 
 	// Indicator.
 	pc.indicator = "  "
-	if entry.hasClaude {
-		switch entry.claude.Activity {
+	if entry.hasAgent {
+		switch entry.agent.Activity {
 		case ActivityWorking:
-			frame := spinnerFrames[m.frame%len(spinnerFrames)]
-			pc.indicator = workingStyle.Render(frame) + " "
+			frame := workingFramesUI[m.frame%len(workingFramesUI)]
+			style := workingStyle
+			if entry.agent.Mode == ModeBypassPermissions || entry.agent.Mode == ModeDangerFullAccess {
+				style = modeStyle(entry.agent)
+			}
+			pc.indicator = style.Render(frame) + " "
 		case ActivityWaitingInput:
-			pc.indicator = waitingStyle.Render("?") + " "
+			pc.indicator = waitingStyle.Render(waitingIndicator) + " "
 		case ActivityIdle:
-			pc.indicator = dimStyle.Render("●") + " "
+			pc.indicator = idleStyle.Render(idleIndicator) + " "
 		default:
-			pc.indicator = dimStyle.Render("·") + " "
+			pc.indicator = dimStyle.Render(unknownIndicator) + " "
 		}
 	}
 
@@ -560,28 +676,30 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 
 	// Col 2: command (if not shell).
 	cmd := entry.pane.Command
-	if cmd != "fish" && cmd != "bash" && cmd != "zsh" {
+	if !isShellCommand(cmd) {
 		pc.cols[2] = cmd
 		pc.styled[2] = cmd
 	}
 
-	// Col 3: claude activity.
-	if entry.hasClaude {
-		pc.cols[3] = entry.claude.Activity.String()
-		pc.styled[3] = renderClaude(entry.claude)
+	// Col 3: activity.
+	if entry.hasAgent {
+		if label, styled := renderAgentActivity(entry.agent); label != "" {
+			pc.cols[3] = label
+			pc.styled[3] = styled
+		}
 	}
 
 	// Col 4: context %.
-	if entry.hasClaude && entry.claude.ContextPct > 0 {
-		txt := fmt.Sprintf("%d%%", entry.claude.ContextPct)
+	if m.cfg.ShowContextPercentage && entry.hasAgent && entry.agent.ContextSet {
+		txt := fmt.Sprintf("%d%%", entry.agent.ContextPct)
 		pc.cols[4] = txt
-		pc.styled[4] = contextStyle(entry.claude.ContextPct).Render(txt)
+		pc.styled[4] = contextStyle(entry.agent.ContextPct).Render(txt)
 	}
 
 	// Col 5: mode.
-	if entry.hasClaude {
-		if modeStr := renderMode(entry.claude.Mode); modeStr != "" {
-			pc.cols[5] = entry.claude.Mode.String()
+	if entry.hasAgent {
+		if modeStr := renderMode(entry.agent); modeStr != "" {
+			pc.cols[5] = entry.agent.ModeLabel
 			pc.styled[5] = modeStr
 		}
 	}
@@ -589,10 +707,13 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 	return pc
 }
 
-func renderPaneLine(pc paneColumns, widths [numPaneCols]int) string {
+func renderPaneLine(pc paneColumns, widths [numPaneCols]int, indices []int) string {
 	var parts []string
-	for i := 0; i < numPaneCols; i++ {
+	for _, i := range indices {
 		if widths[i] == 0 {
+			continue
+		}
+		if pc.cols[i] == "" {
 			continue
 		}
 		cell := pc.styled[i]
@@ -602,67 +723,168 @@ func renderPaneLine(pc paneColumns, widths [numPaneCols]int) string {
 		}
 		parts = append(parts, cell)
 	}
-	return fmt.Sprintf("   %s%d │ %s", pc.indicator, pc.paneIdx, strings.Join(parts, " │ "))
+	return fmt.Sprintf("   %s%s", pc.indicator, strings.Join(parts, separatorStyle.Render(columnSeparatorUI)))
 }
 
-func renderClaude(cs ClaudeStatus) string {
+func dashboardColumnIndexes(ordered []string) []int {
+	if len(ordered) == 0 {
+		ordered = DefaultDashboardConfig().Columns
+	}
+	var idx []int
+	for _, col := range ordered {
+		switch col {
+		case "name":
+			idx = append(idx, 0)
+		case "branch":
+			idx = append(idx, 1)
+		case "command":
+			idx = append(idx, 2)
+		case "activity":
+			idx = append(idx, 3)
+		case "context":
+			idx = append(idx, 4)
+		case "mode":
+			idx = append(idx, 5)
+		}
+	}
+	return idx
+}
+
+func renderAgentActivity(cs AgentStatus) (string, string) {
 	var style lipgloss.Style
+	label := ""
 	switch cs.Activity {
 	case ActivityWorking:
 		style = workingStyle
+		label = "working"
 	case ActivityWaitingInput:
 		style = waitingStyle
-	default:
+		label = "waiting"
+	case ActivityIdle:
 		style = idleStyle
+		label = "idle"
+	default:
+		return "", ""
 	}
-	return style.Render(cs.Activity.String())
+	return label, style.Render(label)
 }
 
-func renderMode(mode ClaudeMode) string {
-	switch mode {
-	case ModePlan:
-		return modePlanStyle.Render("plan")
-	case ModeAcceptEdits:
-		return modeAcceptStyle.Render("accept edits")
-	case ModeYolo:
-		return modeYoloStyle.Render("yolo")
-	default:
+func fixedPaneColumnWidths() [numPaneCols]int {
+	var widths [numPaneCols]int
+	widths[3] = len("waiting")
+	widths[4] = len("100%")
+	widths[5] = len("danger-full-access")
+	return widths
+}
+
+func renderMode(status AgentStatus) string {
+	if status.ModeLabel == "" {
 		return ""
 	}
+	return modeStyle(status).Render(status.ModeLabel)
 }
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
-		return tickStartMsg(t)
-	})
+func providerAccent(provider Provider) lipgloss.Style {
+	switch provider {
+	case ProviderClaude:
+		return claudeAccentStyle
+	case ProviderCodex:
+		return codexAccentStyle
+	default:
+		return dimStyle
+	}
 }
 
-// fastStateMsg delivers tmux state without Claude detection (instant).
-type fastStateMsg struct {
-	sessions []Session
-	pt       procTable
-	current  CurrentTarget
-}
-
-// claudeMsg delivers Claude detection results (can take 600ms+).
-type claudeMsg struct {
-	claude map[string]ClaudeStatus
-}
-
-func fetchFastStateCmd() tea.Cmd {
-	return func() tea.Msg {
-		sessions, pt, err := FetchState()
-		if err != nil {
-			return errMsg{err}
+func modeStyle(status AgentStatus) lipgloss.Style {
+	switch status.Provider {
+	case ProviderCodex:
+		switch status.Mode {
+		case ModePlan:
+			return codexPlanStyle
+		case ModeAcceptEdits:
+			return codexAcceptStyle
+		case ModeReadOnly, ModeWorkspaceWrite:
+			return codexSafeStyle
+		case ModeBypassPermissions, ModeDangerFullAccess:
+			return codexDangerStyle
+		default:
+			return codexAccentStyle
 		}
-		current, _ := FetchCurrentTarget()
-		return fastStateMsg{sessions: sessions, pt: pt, current: current}
+	case ProviderClaude:
+		switch status.Mode {
+		case ModePlan:
+			return claudePlanStyle
+		case ModeAcceptEdits:
+			return claudeAcceptStyle
+		case ModeBypassPermissions, ModeDangerFullAccess:
+			return claudeDangerStyle
+		case ModeReadOnly, ModeWorkspaceWrite:
+			return claudeSafeStyle
+		default:
+			return claudeAccentStyle
+		}
+	default:
+		return dimStyle
 	}
 }
 
-func fetchClaudeCmd(sessions []Session, pt procTable) tea.Cmd {
-	return func() tea.Msg {
-		claude := detectAllClaude(sessions, pt)
-		return claudeMsg{claude: claude}
+// renderScrolledContent writes visible lines into b, scrolled to keep selectedLine visible.
+func renderScrolledContent(b *strings.Builder, lines []string, selectedLine, contentHeight int) {
+	start := 0
+	if selectedLine >= contentHeight {
+		start = selectedLine - contentHeight + 1
 	}
+	if maxStart := max(0, len(lines)-contentHeight); start > maxStart {
+		start = maxStart
+	}
+	end := min(len(lines), start+contentHeight)
+	for i := start; i < end; i++ {
+		b.WriteString(lines[i])
+		b.WriteString("\n")
+	}
+	for i := end - start; i < contentHeight; i++ {
+		b.WriteString("\n")
+	}
+}
+
+func renderDashboardViewport(lines []string, selectedLine int, help string, width, height int, cfg DashboardConfig) string {
+	if height <= 1 {
+		if len(lines) == 0 {
+			return help
+		}
+		return lines[0] + "\n" + help
+	}
+
+	var b strings.Builder
+	if height <= 3 {
+		renderScrolledContent(&b, lines, selectedLine, max(0, height-1))
+		b.WriteString(help)
+		return b.String()
+	}
+
+	footerRows := 1
+	if cfg.FooterPadding {
+		footerRows++
+	}
+	if cfg.FooterSeparator {
+		footerRows++
+	}
+	contentHeight := max(0, height-footerRows)
+	renderScrolledContent(&b, lines, selectedLine, contentHeight)
+	if cfg.FooterPadding {
+		b.WriteString("\n")
+	}
+	if cfg.FooterSeparator {
+		b.WriteString(renderDashboardFooterBorder(width))
+		b.WriteString("\n")
+	}
+	b.WriteString(help)
+	return b.String()
+}
+
+func renderDashboardFooterBorder(width int) string {
+	if width <= 0 {
+		width = 24
+	}
+	return footerRuleStyle.Render(strings.Repeat(footerSeparatorUI, width))
 }

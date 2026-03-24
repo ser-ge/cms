@@ -8,7 +8,7 @@ import (
 
 func TestFinderFlow(t *testing.T) {
 	cfg := LoadConfig()
-	fmt.Printf("Config search paths: %+v\n", cfg.SearchPaths)
+	fmt.Printf("Config search paths: %+v\n", cfg.General.SearchPaths)
 
 	t0 := time.Now()
 	sessions, pt, err := FetchState()
@@ -19,8 +19,8 @@ func TestFinderFlow(t *testing.T) {
 	fmt.Printf("ScanProjects: %v, %d projects\n", time.Since(t1), len(projects))
 
 	t2 := time.Now()
-	claude := detectAllClaude(sessions, pt)
-	fmt.Printf("detectAllClaude: %v, %d results\n", time.Since(t2), len(claude))
+	agents := detectAllAgents(sessions, pt)
+	fmt.Printf("detectAllAgents: %v, %d results\n", time.Since(t2), len(agents))
 
 	// Show some projects
 	for i, p := range projects {

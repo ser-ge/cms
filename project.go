@@ -16,8 +16,8 @@ type Project struct {
 // ScanProjects walks the configured search paths and returns all git repositories found.
 // Uses BFS with depth limiting, respects exclusion list.
 func ScanProjects(cfg Config) []Project {
-	excluded := make(map[string]bool, len(cfg.Exclusions))
-	for _, e := range cfg.Exclusions {
+	excluded := make(map[string]bool, len(cfg.General.Exclusions))
+	for _, e := range cfg.General.Exclusions {
 		excluded[e] = true
 	}
 
@@ -29,7 +29,7 @@ func ScanProjects(cfg Config) []Project {
 	var repoPaths []string
 	seen := map[string]bool{}
 
-	for _, sp := range cfg.SearchPaths {
+	for _, sp := range cfg.General.SearchPaths {
 		queue := []searchEntry{{path: sp.Path, depth: sp.MaxDepth}}
 
 		for len(queue) > 0 {
@@ -47,9 +47,10 @@ func ScanProjects(cfg Config) []Project {
 				if info.IsDir() {
 					// Normal repo (.git is a directory).
 					repoPaths = append(repoPaths, entry.path)
+				} else if cfg.General.SearchSubmodules {
+					// Submodule checkout (.git is a file) — optionally include.
+					repoPaths = append(repoPaths, entry.path)
 				}
-				// If .git is a file it's a worktree link — skip it.
-				// Worktrees belong to their parent bare repo.
 				continue
 			}
 

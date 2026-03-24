@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"time"
+	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -12,6 +12,15 @@ type itemKind int
 const (
 	kindSession itemKind = iota
 	kindProject
+)
+
+// finderKind controls what the finder shows.
+type finderKind int
+
+const (
+	finderAll      finderKind = iota // sessions + projects
+	finderSessions                   // sessions only (cms switch)
+	finderProjects                   // projects only (cms open)
 )
 
 type finderEntry struct {
@@ -29,120 +38,111 @@ type postAction struct {
 	paneID      string // direct pane switch (dashboard)
 	priority    []string
 	sessions    []Session
-	claude      map[string]ClaudeStatus
+	agents      map[string]AgentStatus
 }
 
 type finderModel struct {
 	picker  pickerModel
 	entries []finderEntry // parallel to picker items
 
-	// Async loading state.
-	sessData    []Session                // raw session data for Claude enrichment
-	claudeData  map[string]ClaudeStatus // latest Claude status for smart switch
-	sessions    []PickerItem
-	sessIdx  []finderEntry
-	projects []PickerItem
-	projIdx  []finderEntry
-	hasSess  bool
-	hasProj  bool
+	// Session/agent state from watcher.
+	sessData  []Session
+	agentData map[string]AgentStatus
+	sessions  []PickerItem
+	sessIdx   []finderEntry
+	projects  []PickerItem
+	projIdx   []finderEntry
+	hasSess   bool
+	hasProj   bool
 
-	done          bool
-	action        *postAction // action to run after TUI exits
-	focusSession  string // session name to focus in dashboard on esc
-	cfg           Config
-	width  int
-	height int
+	kind            finderKind
+	done            bool
+	action          *postAction // action to run after TUI exits
+	focusSession    string      // session name to focus in dashboard on esc
+	lastSessionName string      // cached tmux last session (updated on focus change)
+	watcher         *Watcher
+	cfg             Config
+	width           int
+	height          int
 }
 
-func newFinderModel(cfg Config, width, height int) finderModel {
-	return finderModel{
-		cfg:    cfg,
-		width:  width,
-		height: height,
+func newFinderModel(cfg Config, watcher *Watcher, kind finderKind, width, height int) finderModel {
+	m := finderModel{
+		kind:    kind,
+		cfg:     cfg,
+		watcher: watcher,
+		width:   width,
+		height:  height,
 	}
+
+	// Cache the last session name once at init (avoid subprocess per rebuild).
+	if cfg.General.LastSessionFirst {
+		m.lastSessionName = FetchLastSession()
+	}
+
+	// Pre-populate sessions from watcher cache if this mode needs them.
+	if kind != finderProjects {
+		sessions, agents, _ := watcher.CachedState()
+		if len(sessions) > 0 {
+			m.sessData = sessions
+			m.agentData = agents
+			m.buildSessionItems(agents)
+			m.hasSess = true
+		}
+	}
+
+	// For projects-only mode, mark sessions as "done" so we don't wait for them.
+	if kind == finderProjects {
+		m.hasSess = true
+	}
+	// For sessions-only mode, mark projects as "done" so we don't wait for them.
+	if kind == finderSessions {
+		m.hasProj = true
+	}
+
+	if m.hasSess || m.hasProj {
+		m.rebuildPicker()
+	}
+
+	return m
 }
 
 func (m finderModel) Init() tea.Cmd {
-	// Fetch sessions (fast), projects, and Claude detection all concurrently.
-	return tea.Batch(
-		fetchSessionsFastCmd(),
-		scanProjectsCmd(m.cfg),
-	)
+	if m.kind == finderSessions {
+		return nil // sessions already loaded from cache
+	}
+	// Scan projects from disk (async).
+	return scanProjectsCmd(m.cfg)
 }
 
 // --- Messages ---
-
-type sessionsLoadedMsg struct {
-	sessions []Session
-	pt       procTable
-}
-
-type claudeLoadedMsg struct {
-	claude map[string]ClaudeStatus
-}
 
 type projectsScannedMsg struct {
 	projects []Project
 }
 
-// Phase 1: just tmux state — instant.
-func fetchSessionsFastCmd() tea.Cmd {
-	return func() tea.Msg {
-		sessions, pt, err := FetchState()
-		if err != nil {
-			return sessionsLoadedMsg{}
-		}
-		return sessionsLoadedMsg{sessions, pt}
-	}
-}
-
-// Phase 2a: Claude detection — can take 600ms+.
-func fetchClaudeForFinderCmd(sessions []Session, pt procTable) tea.Cmd {
-	return func() tea.Msg {
-		return claudeLoadedMsg{detectAllClaude(sessions, pt)}
-	}
-}
-
-// Phase 2b: project scan.
 func scanProjectsCmd(cfg Config) tea.Cmd {
 	return func() tea.Msg {
 		return projectsScannedMsg{ScanProjects(cfg)}
 	}
 }
 
-// Periodic refresh: fetch sessions + Claude in one shot.
-func fetchSessionsWithClaudeCmd() tea.Cmd {
-	return func() tea.Msg {
-		sessions, pt, err := FetchState()
-		if err != nil {
-			return sessionsLoadedMsg{}
-		}
-		claude := detectAllClaude(sessions, pt)
-		return sessionsWithClaudeMsg{sessions, pt, claude}
-	}
-}
-
-type sessionsWithClaudeMsg struct {
-	sessions []Session
-	pt       procTable
-	claude   map[string]ClaudeStatus
-}
-
-type finderTickMsg struct{}
-
-func finderTickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
-		return finderTickMsg{}
-	})
+type providerSummary struct {
+	total   int
+	working int
+	waiting int
+	idle    int
+	maxCtx  int
+	hasCtx  bool
 }
 
 // buildSessionItems populates session picker items from raw session data.
-func (m *finderModel) buildSessionItems(claude map[string]ClaudeStatus) {
+func (m *finderModel) buildSessionItems(agents map[string]AgentStatus) {
 	m.sessions = nil
 	m.sessIdx = nil
 	for _, sess := range m.sessData {
 		desc := fmt.Sprintf("%d windows", len(sess.Windows))
-		if cs := claudeSummary(sess, claude); cs != "" {
+		if cs := m.agentSummary(sess, agents); cs != "" {
 			desc += " · " + cs
 		}
 		if sess.Attached {
@@ -161,92 +161,133 @@ func (m *finderModel) buildSessionItems(claude map[string]ClaudeStatus) {
 	}
 }
 
-func claudeSummary(sess Session, claude map[string]ClaudeStatus) string {
-	if claude == nil {
+func (m finderModel) agentSummary(sess Session, agents map[string]AgentStatus) string {
+	if agents == nil {
+		return ""
+	}
+	if len(m.cfg.Finder.ProviderOrder) == 0 {
 		return ""
 	}
 
-	var working, waiting, idle int
-	var workingCtx, waitingCtx, idleCtx int
+	summaries := map[Provider]*providerSummary{}
 
 	for _, win := range sess.Windows {
 		for _, pane := range win.Panes {
-			cs, ok := claude[pane.ID]
+			cs, ok := agents[pane.ID]
 			if !ok || !cs.Running {
 				continue
 			}
+			if summaries[cs.Provider] == nil {
+				summaries[cs.Provider] = &providerSummary{}
+			}
+			s := summaries[cs.Provider]
+			s.total++
 			switch cs.Activity {
 			case ActivityWorking:
-				working++
-				workingCtx = max(workingCtx, cs.ContextPct)
+				s.working++
 			case ActivityWaitingInput:
-				waiting++
-				waitingCtx = max(waitingCtx, cs.ContextPct)
+				s.waiting++
 			default:
-				idle++
-				idleCtx = max(idleCtx, cs.ContextPct)
+				s.idle++
+			}
+			if cs.ContextSet {
+				s.maxCtx = max(s.maxCtx, cs.ContextPct)
+				s.hasCtx = true
 			}
 		}
 	}
 
-	total := working + waiting + idle
-	if total == 0 {
-		return ""
-	}
-
 	var parts []string
-	if working > 0 {
-		parts = append(parts, workingStyle.Render(fmt.Sprintf("⚡%d %d%%", working, workingCtx)))
+	for _, provider := range orderedProviders(m.cfg.Finder.ProviderOrder) {
+		s := summaries[provider]
+		if s == nil {
+			continue
+		}
+		if s.total == 0 {
+			continue
+		}
+		parts = append(parts, renderProviderSummary(provider, *s, m.cfg.Finder))
 	}
-	if waiting > 0 {
-		parts = append(parts, waitingStyle.Render(fmt.Sprintf("❓%d %d%%", waiting, waitingCtx)))
-	}
-	if idle > 0 {
-		parts = append(parts, idleStyle.Render(fmt.Sprintf("💤%d %d%%", idle, idleCtx)))
-	}
-	return fmt.Sprintf("%d claude · %s", total, fmt.Sprintf("%s", joinParts(parts)))
+	return joinParts(parts)
 }
 
-func joinParts(parts []string) string {
-	s := ""
-	for i, p := range parts {
-		if i > 0 {
-			s += " · "
+func renderProviderSummary(provider Provider, s providerSummary, cfg FinderConfig) string {
+	label := providerAccent(provider).Render(provider.String())
+	var states []string
+	for _, state := range cfg.StateOrder {
+		switch state {
+		case "total":
+			states = append(states, providerAccent(provider).Render(fmt.Sprintf("%d", s.total)))
+		case "idle":
+			if s.idle > 0 {
+				states = append(states, idleStyle.Render(fmt.Sprintf("%s %d", idleIndicator, s.idle)))
+			}
+		case "working":
+			if s.working > 0 {
+				states = append(states, workingStyle.Render(fmt.Sprintf("⚡%d", s.working)))
+			}
+		case "waiting":
+			if s.waiting > 0 {
+				states = append(states, waitingStyle.Render(fmt.Sprintf("%s%d", waitingIndicator, s.waiting)))
+			}
 		}
-		s += p
 	}
-	return s
+	state := joinParts(states)
+	if cfg.ShowContextPercentage && s.hasCtx {
+		if state == "" {
+			return fmt.Sprintf("%s %s", label, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+		}
+		return fmt.Sprintf("%s %s %s", label, state, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+	}
+	if state == "" {
+		return label
+	}
+	return fmt.Sprintf("%s %s", label, state)
+}
+
+func orderedProviders(ordered []string) []Provider {
+	if len(ordered) == 0 {
+		return nil
+	}
+	var providers []Provider
+	for _, name := range ordered {
+		switch name {
+		case "claude":
+			providers = append(providers, ProviderClaude)
+		case "codex":
+			providers = append(providers, ProviderCodex)
+		}
+	}
+	return providers
 }
 
 func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case sessionsLoadedMsg:
-		// Sessions arrived — show immediately, fire Claude detection.
+	case stateMsg:
+		// Full state snapshot from watcher — update sessions + agents.
+		debugf("finder: full state sessions=%d agents=%d", len(msg.sessions), len(msg.agents))
 		m.sessData = msg.sessions
-		m.buildSessionItems(nil)
+		m.agentData = msg.agents
+		m.buildSessionItems(msg.agents)
 		m.hasSess = true
 		m.rebuildPicker()
-		return m, fetchClaudeForFinderCmd(msg.sessions, msg.pt)
+		return m, nil
 
-	case claudeLoadedMsg:
-		// Claude status arrived — update session descriptions, schedule refresh.
-		m.claudeData = msg.claude
-		m.buildSessionItems(msg.claude)
+	case agentUpdateMsg:
+		// Incremental agent update from watcher.
+		debugf("finder: agent update panes=%d", len(msg.updates))
+		m.agentData = applyAgentUpdates(m.agentData, msg.updates)
+		m.buildSessionItems(m.agentData)
 		m.rebuildPicker()
-		return m, finderTickCmd()
+		return m, nil
 
-	case finderTickMsg:
-		// Periodic refresh: re-fetch sessions + Claude status.
-		return m, fetchSessionsWithClaudeCmd()
-
-	case sessionsWithClaudeMsg:
-		// Refresh arrived — update sessions with latest Claude status.
-		m.sessData = msg.sessions
-		m.claudeData = msg.claude
-		m.buildSessionItems(msg.claude)
-		m.hasSess = true
+	case focusChangedMsg:
+		// User switched session — refresh cached last session name.
+		if m.cfg.General.LastSessionFirst {
+			m.lastSessionName = FetchLastSession()
+		}
 		m.rebuildPicker()
-		return m, finderTickCmd()
+		return m, nil
 
 	case projectsScannedMsg:
 		m.projects = nil
@@ -299,9 +340,9 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 					kind:        entry.kind,
 					sessionName: entry.sessionName,
 					projectPath: entry.projectPath,
-					priority:    m.cfg.SwitchPriority,
+					priority:    m.cfg.General.SwitchPriority,
 					sessions:    m.sessData,
-					claude:      m.claudeData,
+					agents:      m.agentData,
 				}
 			}
 
@@ -317,29 +358,70 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 
 // rebuildPicker merges sessions + projects into the picker.
 // Sessions come first (lower indices = bottom of fzf-style display, near input).
+// The attached session is placed last among sessions (furthest from input).
 // Projects that already have a matching session are excluded.
 func (m *finderModel) rebuildPicker() {
-	// Build set of active session names for dedup.
-	activeNames := map[string]bool{}
-	for _, e := range m.sessIdx {
-		activeNames[NormalizeSessionName(e.sessionName)] = true
-	}
-
 	var items []PickerItem
 	var entries []finderEntry
 
-	// Sessions first (appear at bottom, nearest input).
-	items = append(items, m.sessions...)
-	entries = append(entries, m.sessIdx...)
+	// Sessions: preserve tmux order, with optional last-session promotion and
+	// attached-session demotion controlled by config.
+	if m.kind != finderProjects && len(m.sessions) > 0 {
+		// Build index pairs so we can sort sessions + entries together.
+		type indexedSession struct {
+			idx         int
+			attached    bool
+			lastSession bool
+		}
+		ordered := make([]indexedSession, len(m.sessions))
+		lastSessionName := m.lastSessionName
+		for i := range m.sessions {
+			name := m.sessIdx[i].sessionName
+			var attached bool
+			for _, sess := range m.sessData {
+				if sess.Name == name {
+					attached = sess.Attached
+					break
+				}
+			}
+			ordered[i] = indexedSession{
+				idx:         i,
+				attached:    attached,
+				lastSession: lastSessionName != "" && name == lastSessionName,
+			}
+		}
+
+		// Sort: optionally promote the tmux last session and optionally demote attached.
+		sort.SliceStable(ordered, func(a, b int) bool {
+			if ordered[a].lastSession != ordered[b].lastSession {
+				return ordered[a].lastSession
+			}
+			if m.cfg.General.AttachedLast && ordered[a].attached != ordered[b].attached {
+				return !ordered[a].attached // unattached before attached
+			}
+			return false
+		})
+
+		for _, o := range ordered {
+			items = append(items, m.sessions[o.idx])
+			entries = append(entries, m.sessIdx[o.idx])
+		}
+	}
 
 	// Projects, excluding those that already have an active session.
-	for i, p := range m.projects {
-		normName := NormalizeSessionName(p.Title)
-		if activeNames[normName] {
-			continue
+	if m.kind != finderSessions {
+		activeNames := map[string]bool{}
+		for _, e := range m.sessIdx {
+			activeNames[NormalizeSessionName(e.sessionName)] = true
 		}
-		items = append(items, p)
-		entries = append(entries, m.projIdx[i])
+		for i, p := range m.projects {
+			normName := NormalizeSessionName(p.Title)
+			if activeNames[normName] {
+				continue
+			}
+			items = append(items, p)
+			entries = append(entries, m.projIdx[i])
+		}
 	}
 
 	m.entries = entries
@@ -349,7 +431,7 @@ func (m *finderModel) rebuildPicker() {
 	cursor := m.picker.cursor
 	mode := m.picker.mode
 
-	m.picker = newPicker("", items, m.cfg.EscapeChord, m.cfg.EscapeChordMs)
+	m.picker = newPicker("", items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
 	m.picker.width = m.width
 	m.picker.height = m.height
 	m.picker.mode = mode
