@@ -58,15 +58,12 @@ type pickerModel struct {
 }
 
 var (
-	pickerSelectedStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("236")).
-				Foreground(lipgloss.Color("2")).
-				Bold(true)
-	pickerNormalStyle = lipgloss.NewStyle()
-	pickerDescStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	pickerMatchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
-	pickerTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-	pickerCountStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	pickerSelectedStyle lipgloss.Style
+	pickerNormalStyle   lipgloss.Style
+	pickerDescStyle     lipgloss.Style
+	pickerMatchStyle    lipgloss.Style
+	pickerTitleStyle    lipgloss.Style
+	pickerCountStyle    lipgloss.Style
 )
 
 func newPicker(title string, items []PickerItem, escapeChord string, escapeChordMs int) pickerModel {
@@ -408,6 +405,11 @@ func (m pickerModel) View() string {
 		line := " " + icon + title + desc
 
 		if isSelected {
+			// Pad to full width so background highlight extends across.
+			visible := lipgloss.Width(line)
+			if visible < m.width {
+				line += strings.Repeat(" ", m.width-visible)
+			}
 			line = pickerSelectedStyle.Render(line)
 		}
 

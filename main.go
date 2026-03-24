@@ -12,25 +12,15 @@ import (
 
 func main() {
 	cfg := LoadConfig()
+	initStyles(cfg.Colors)
 
+	initial := screenFinder
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "dash", "d", "dashboard":
+			initial = screenDashboard
 		case "find", "f", "switch", "s", "open", "o":
-			m := newRootModel(screenFinder, cfg)
-			p := tea.NewProgram(m, tea.WithAltScreen())
-			result, err := p.Run()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			// Execute post-exit action (e.g. tmux attach when outside tmux).
-			if rm, ok := result.(rootModel); ok && rm.postAction != nil {
-				if err := executePostAction(rm.postAction); err != nil {
-					fmt.Fprintf(os.Stderr, "error: %v\n", err)
-					os.Exit(1)
-				}
-			}
-			return
+			initial = screenFinder
 		case "next", "n":
 			if err := jumpNext(); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -40,7 +30,7 @@ func main() {
 		}
 	}
 
-	m := newRootModel(screenDashboard, cfg)
+	m := newRootModel(initial, cfg)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	result, err := p.Run()
 	if err != nil {

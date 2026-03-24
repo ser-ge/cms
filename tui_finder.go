@@ -196,13 +196,13 @@ func claudeSummary(sess Session, claude map[string]ClaudeStatus) string {
 
 	var parts []string
 	if working > 0 {
-		parts = append(parts, fmt.Sprintf("⚡%d %d%%", working, workingCtx))
+		parts = append(parts, workingStyle.Render(fmt.Sprintf("⚡%d %d%%", working, workingCtx)))
 	}
 	if waiting > 0 {
-		parts = append(parts, fmt.Sprintf("❓%d %d%%", waiting, waitingCtx))
+		parts = append(parts, waitingStyle.Render(fmt.Sprintf("❓%d %d%%", waiting, waitingCtx)))
 	}
 	if idle > 0 {
-		parts = append(parts, fmt.Sprintf("💤%d %d%%", idle, idleCtx))
+		parts = append(parts, idleStyle.Render(fmt.Sprintf("💤%d %d%%", idle, idleCtx)))
 	}
 	return fmt.Sprintf("%d claude · %s", total, fmt.Sprintf("%s", joinParts(parts)))
 }

@@ -10,34 +10,67 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Styles.
+// Styles — initialized from config via initStyles().
 var (
-	sessionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-	windowStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	currentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	moveSrcStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
-	workingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // orange
-	waitingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	idleStyle     = dimStyle
-	helpStyle     = dimStyle
-	attachLabel   = dimStyle.Render(" (attached)")
+	sessionStyle  lipgloss.Style
+	windowStyle   lipgloss.Style
+	dimStyle      lipgloss.Style
+	selectedStyle lipgloss.Style
+	currentStyle  lipgloss.Style
+	moveSrcStyle  lipgloss.Style
+	workingStyle  lipgloss.Style
+	waitingStyle  lipgloss.Style
+	idleStyle     lipgloss.Style
+	helpStyle     lipgloss.Style
+	attachLabel   string
 
-	// Mode styles.
-	modePlanStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))  // blue
-	modeAcceptStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))  // yellow
-	modeYoloStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true) // red bold
+	modePlanStyle   lipgloss.Style
+	modeAcceptStyle lipgloss.Style
+	modeYoloStyle   lipgloss.Style
+
+	ctxLowStyle  lipgloss.Style
+	ctxMidStyle  lipgloss.Style
+	ctxHighStyle lipgloss.Style
 )
+
+func initStyles(c ColorsConfig) {
+	sessionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Session))
+	windowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Window))
+	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Dim))
+	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Selected))
+	currentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Current))
+	moveSrcStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.MoveSrc)).Bold(true)
+	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Working))
+	waitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Waiting))
+	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Idle))
+	helpStyle = dimStyle
+	attachLabel = dimStyle.Render(" (attached)")
+
+	modePlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModePlan))
+	modeAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModeAccept))
+	modeYoloStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.ModeYolo)).Bold(true)
+
+	ctxLowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxLow))
+	ctxMidStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxMid))
+	ctxHighStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.CtxHigh))
+
+	// Picker styles.
+	pickerSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Selected)).Foreground(lipgloss.Color(c.Current)).Bold(true)
+	pickerNormalStyle = lipgloss.NewStyle()
+	pickerDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Window))
+	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Working)).Bold(true)
+	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Session))
+	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Dim))
+}
 
 func contextStyle(pct int) lipgloss.Style {
 	switch {
 	case pct >= 80:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+		return ctxHighStyle
 	case pct >= 50:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+		return ctxMidStyle
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+		return ctxLowStyle
 	}
 }
 

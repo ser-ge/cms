@@ -13,22 +13,56 @@ type Config struct {
 	SearchPaths    []SearchPath `toml:"search_paths"`
 	Exclusions     []string     `toml:"exclusions"`
 	DefaultSession string       `toml:"default_session"`
-	// SwitchPriority controls which pane to focus when switching to a session.
-	// Values: "waiting", "idle", "default", "working".
-	// Empty or unset uses the default priority: ["waiting", "idle", "default", "working"].
-	// Set to ["default"] to always use tmux's last-active pane.
-	SwitchPriority []string `toml:"switch_priority"`
-	// EscapeChord is a two-key sequence to exit insert mode in the picker (like vim's jj/jk).
-	// Set to "" to disable. Default: "jj".
-	EscapeChord string `toml:"escape_chord"`
-	// EscapeChordMs is the timeout in milliseconds for the escape chord. Default: 250.
-	EscapeChordMs int `toml:"escape_chord_ms"`
+	SwitchPriority []string     `toml:"switch_priority"`
+	EscapeChord    string       `toml:"escape_chord"`
+	EscapeChordMs  int          `toml:"escape_chord_ms"`
+	Colors         ColorsConfig `toml:"colors"`
+}
+
+// ColorsConfig holds all configurable color values (ANSI 0-255 or hex).
+type ColorsConfig struct {
+	Session    string `toml:"session"`     // session name header
+	Window     string `toml:"window"`      // window name
+	Dim        string `toml:"dim"`         // dimmed/muted text
+	Selected   string `toml:"selected"`    // selected row background
+	Current    string `toml:"current"`     // current pane indicator
+	Working    string `toml:"working"`     // claude working
+	Waiting    string `toml:"waiting"`     // claude waiting for input
+	Idle       string `toml:"idle"`        // claude idle
+	MoveSrc    string `toml:"move_src"`    // pane being moved
+	ModePlan   string `toml:"mode_plan"`   // plan mode
+	ModeAccept string `toml:"mode_accept"` // auto-edit mode
+	ModeYolo   string `toml:"mode_yolo"`   // yolo mode
+	CtxLow     string `toml:"ctx_low"`     // context < 50%
+	CtxMid     string `toml:"ctx_mid"`     // context 50-79%
+	CtxHigh    string `toml:"ctx_high"`    // context >= 80%
 }
 
 // SearchPath defines a directory to scan for projects.
 type SearchPath struct {
 	Path     string `toml:"path"`
 	MaxDepth int    `toml:"max_depth"`
+}
+
+// DefaultColors returns the default color scheme.
+func DefaultColors() ColorsConfig {
+	return ColorsConfig{
+		Session:    "15",
+		Window:     "245",
+		Dim:        "240",
+		Selected:   "236",
+		Current:    "2",
+		Working:    "208",
+		Waiting:    "1",
+		Idle:       "240",
+		MoveSrc:    "5",
+		ModePlan:   "4",
+		ModeAccept: "3",
+		ModeYolo:   "1",
+		CtxLow:     "2",
+		CtxMid:     "3",
+		CtxHigh:    "1",
+	}
 }
 
 // DefaultConfig returns sensible defaults when no config file exists.
@@ -42,6 +76,7 @@ func DefaultConfig() Config {
 		SwitchPriority: []string{"waiting", "idle", "default", "working"},
 		EscapeChord:    "jj",
 		EscapeChordMs:  250,
+		Colors:         DefaultColors(),
 	}
 }
 
