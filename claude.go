@@ -43,6 +43,29 @@ func (a Activity) Icon() string {
 	}
 }
 
+// ClaudeMode represents the operating mode of Claude Code.
+type ClaudeMode int
+
+const (
+	ModeNormal ClaudeMode = iota
+	ModePlan
+	ModeAcceptEdits
+	ModeYolo // dangerously accept all
+)
+
+func (m ClaudeMode) String() string {
+	switch m {
+	case ModePlan:
+		return "plan"
+	case ModeAcceptEdits:
+		return "auto-edit"
+	case ModeYolo:
+		return "yolo"
+	default:
+		return ""
+	}
+}
+
 // ClaudeStatus represents the state of a Claude Code instance in a pane.
 type ClaudeStatus struct {
 	Running    bool
@@ -50,15 +73,17 @@ type ClaudeStatus struct {
 	Model      string
 	ContextPct int
 	Branch     string
-	Mode       string
+	Mode       ClaudeMode
 	Args       string
 }
 
 // Patterns to parse the Claude status bar.
 var (
 	statusLineRe = regexp.MustCompile(`^\s*(.+?\([\d]+[kM] context\))\s*\|\s*(\d+)% ctx\s*\|\s*(\S+)`)
-	insertModeRe = regexp.MustCompile(`-- INSERT --`)
-	planModeRe   = regexp.MustCompile(`plan mode on`)
+	planModeRe       = regexp.MustCompile(`plan mode on`)
+	acceptEditsRe    = regexp.MustCompile(`accept edits on`)
+	yoloModeRe       = regexp.MustCompile(`dangerously accept`)
+
 	// Spinner line: e.g. "✢ Booping…", "· Cultivating… (32s · ↓ 277 tokens)"
 	spinnerRe = regexp.MustCompile(`^[✢✶·⏳⏺●] \S+…`)
 	// Tool running: "⎿  Running…" or similar tool output indicator
@@ -151,8 +176,13 @@ func parsePane(content string, status *ClaudeStatus) {
 			status.Branch = m[3]
 		}
 
-		if planModeRe.MatchString(line) {
-			status.Mode = "plan"
+		// Detect mode — check most permissive first.
+		if yoloModeRe.MatchString(line) {
+			status.Mode = ModeYolo
+		} else if acceptEditsRe.MatchString(line) {
+			status.Mode = ModeAcceptEdits
+		} else if planModeRe.MatchString(line) {
+			status.Mode = ModePlan
 		}
 	}
 }

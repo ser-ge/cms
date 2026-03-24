@@ -6,118 +6,119 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	// Persistent activity state for hysteresis across ticks.
-	// Once working is detected, require 10 consecutive idle readings (~5s) to switch back.
-	prevActivity := map[string]Activity{}
-	idleCount := map[string]int{}
-	const idleThreshold = 10
+	cfg := LoadConfig()
 
-	for {
-		sessions, pt, err := FetchState()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-
-		current, err := FetchCurrentTarget()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not get current target: %v\n", err)
-		}
-
-		claudeResults := detectAllClaude(sessions, pt)
-
-		// Apply hysteresis: smooth working→idle transitions.
-		for id, cs := range claudeResults {
-			if cs.Activity == ActivityWorking {
-				idleCount[id] = 0
-			} else if prevActivity[id] == ActivityWorking && cs.Activity == ActivityIdle {
-				idleCount[id]++
-				if idleCount[id] < idleThreshold {
-					cs.Activity = ActivityWorking // hold working
-					claudeResults[id] = cs
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "find", "f", "switch", "s", "open", "o":
+			m := newRootModel(screenFinder, cfg)
+			p := tea.NewProgram(m, tea.WithAltScreen())
+			result, err := p.Run()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			// Execute post-exit action (e.g. tmux attach when outside tmux).
+			if rm, ok := result.(rootModel); ok && rm.postAction != nil {
+				if err := executePostAction(rm.postAction); err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					os.Exit(1)
 				}
 			}
-			prevActivity[id] = claudeResults[id].Activity
-		}
-
-		// Clear screen and redraw.
-		fmt.Print("\033[2J\033[H")
-
-		for _, sess := range sessions {
-			isCurrent := sess.Name == current.Session
-			label := ""
-			if isCurrent {
-				label = " ← you are here"
-			} else if sess.Attached {
-				label = " (attached)"
+			return
+		case "next", "n":
+			if err := jumpNext(); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
 			}
-			fmt.Printf("Session: %s%s\n", sess.Name, label)
-
-			for _, win := range sess.Windows {
-				active := ""
-				if win.Active {
-					active = "*"
-				}
-				fmt.Printf("  Window %d: %s%s\n", win.Index, win.Name, active)
-
-				for _, pane := range win.Panes {
-					marker := " "
-					if isCurrent && win.Index == current.Window && pane.Index == current.Pane {
-						marker = "▶"
-					} else if pane.Active {
-						marker = "▸"
-					}
-
-					parts := []string{}
-
-					if dir := shortenHome(pane.WorkingDir); dir != "" {
-						parts = append(parts, dir)
-					}
-
-					if pane.Git.IsRepo {
-						g := pane.Git.Branch
-						if pane.Git.Dirty {
-							g += "*"
-						}
-						if pane.Git.Ahead > 0 {
-							g += fmt.Sprintf("↑%d", pane.Git.Ahead)
-						}
-						if pane.Git.Behind > 0 {
-							g += fmt.Sprintf("↓%d", pane.Git.Behind)
-						}
-						parts = append(parts, g)
-					}
-
-					cmd := pane.Command
-					if cmd != "fish" && cmd != "bash" && cmd != "zsh" {
-						parts = append(parts, cmd)
-					}
-
-					if claude, ok := claudeResults[pane.ID]; ok && claude.Running {
-						c := claude.Activity.Icon()
-						if claude.ContextPct > 0 {
-							c += fmt.Sprintf(" %d%%", claude.ContextPct)
-						}
-						if claude.Mode != "" {
-							c += " " + claude.Mode
-						}
-						c += " " + claude.Activity.String()
-						parts = append(parts, c)
-					}
-
-					fmt.Printf("   %s %d │ %s\n", marker, pane.Index, strings.Join(parts, " │ "))
-				}
-			}
-			fmt.Println()
+			return
 		}
-
-		time.Sleep(500 * time.Millisecond)
 	}
+
+	m := newRootModel(screenDashboard, cfg)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	result, err := p.Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if rm, ok := result.(rootModel); ok && rm.postAction != nil {
+		if err := executePostAction(rm.postAction); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func executePostAction(a *postAction) error {
+	// Direct pane switch (from dashboard).
+	if a.paneID != "" {
+		return SwitchToPane(a.paneID)
+	}
+	switch a.kind {
+	case kindSession:
+		return SmartSwitchSession(a.sessionName, a.priority, a.sessions, a.claude)
+	case kindProject:
+		return OpenProject(a.projectPath)
+	}
+	return nil
+}
+
+// jumpNext finds the next Claude pane needing attention and switches to it.
+// Priority: waiting > idle. Cycles through panes across all sessions,
+// starting after the current pane.
+func jumpNext() error {
+	sessions, pt, err := FetchState()
+	if err != nil {
+		return err
+	}
+	current, _ := FetchCurrentTarget()
+	claude := detectAllClaude(sessions, pt)
+
+	// Flatten all panes with Claude status.
+	type candidate struct {
+		paneID   string
+		activity Activity
+	}
+	var all []candidate
+	currentIdx := -1
+
+	for _, sess := range sessions {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				cs, ok := claude[pane.ID]
+				if !ok || !cs.Running {
+					continue
+				}
+				if sess.Name == current.Session && win.Index == current.Window && pane.Index == current.Pane {
+					currentIdx = len(all)
+				}
+				all = append(all, candidate{paneID: pane.ID, activity: cs.Activity})
+			}
+		}
+	}
+
+	if len(all) == 0 {
+		return fmt.Errorf("no claude sessions found")
+	}
+
+	// Find next waiting pane (cycling from current position).
+	start := currentIdx + 1
+	for _, target := range []Activity{ActivityWaitingInput, ActivityIdle} {
+		for i := 0; i < len(all); i++ {
+			idx := (start + i) % len(all)
+			if all[idx].activity == target {
+				return SwitchToPane(all[idx].paneID)
+			}
+		}
+	}
+
+	return fmt.Errorf("no waiting or idle claude sessions")
 }
 
 // detectAllClaude runs Claude detection for all panes concurrently.
