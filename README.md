@@ -1,38 +1,31 @@
 # cms
 
-tmux session switcher and dashboard with Claude and Codex pane detection.
+`cms` is a tmux session picker and dashboard with Claude and Codex awareness.
 
-## Development
-
-Run the normal test suite:
+## Commands
 
 ```bash
-go test ./...
+cms
+cms dash
+cms find
+cms switch
+cms open
+cms next
+cms config init
 ```
 
-Write the default config file to `$XDG_CONFIG_HOME/cms/config.toml` or `~/.config/cms/config.toml`:
+## Config
+
+Write the default config:
 
 ```bash
 cms config init
 ```
 
-Print canned dashboard and finder render output from the UI harness:
+This writes to:
 
-```bash
-CMS_RENDER_HARNESS=1 go test -run 'TestRenderHarness(Dashboard|Finder)' -v
-```
-
-Print live dashboard and finder render output from the current tmux state:
-
-```bash
-CMS_LIVE_HARNESS=1 go test -run TestRenderHarnessLive -v
-```
-
-These harness tests live in `ui_harness_test.go` and are intended for UI debugging and regression checks.
-
-## Config
-
-`cms` reads config from `~/.config/cms/config.toml`.
+- `$XDG_CONFIG_HOME/cms/config.toml`, or
+- `~/.config/cms/config.toml`
 
 Current user-facing config:
 
@@ -51,9 +44,23 @@ search_paths = [
 ]
 ```
 
-Notes:
+## Development
 
-- `search_submodules = true` includes Git submodule checkouts where `.git` is a file
-- `attached_last` controls whether the currently attached tmux session is pushed to the end of finder session results
-- `last_session_first` promotes tmux's last session to the front of finder session results when available
-- Additional UI/theme settings exist in code defaults but are not exposed in the user config yet
+Run tests:
+
+```bash
+go test ./...
+```
+
+Run the dev build:
+
+```bash
+make dev
+```
+
+Render harness:
+
+```bash
+CMS_RENDER_HARNESS=1 go test -run 'TestRenderHarness(Dashboard|Finder)' -v
+CMS_LIVE_HARNESS=1 go test -run TestRenderHarnessLive -v
+```
