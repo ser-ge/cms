@@ -101,6 +101,8 @@ func parseClaudePane(content string, status *AgentStatus) {
 			}
 		}
 	}
+
+	normalizeParsedAgentStatus(status)
 }
 
 // detectActivity determines what Claude is doing based on pane content.

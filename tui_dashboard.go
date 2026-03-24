@@ -134,6 +134,7 @@ type dashboardModel struct {
 	width   int
 	height  int
 	frame   int // tick counter for spinner animation
+	spinning bool
 }
 
 const idleThreshold = 10
@@ -154,7 +155,7 @@ func newDashboardModel() dashboardModel {
 type spinnerTickMsg struct{}
 
 func spinnerTickCmd() tea.Cmd {
-	return tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(450*time.Millisecond, func(time.Time) tea.Msg {
 		return spinnerTickMsg{}
 	})
 }
@@ -184,8 +185,10 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	case spinnerTickMsg:
 		if m.hasWorking() {
 			m.frame++
+			m.spinning = true
 			return m, spinnerTickCmd()
 		}
+		m.spinning = false
 		return m, nil
 
 	case stateMsg:
@@ -196,8 +199,12 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		m.loading = false
 		m.applyHysteresis()
 		m.rebuildItems()
-		if m.hasWorking() {
+		if m.hasWorking() && !m.spinning {
+			m.spinning = true
 			return m, spinnerTickCmd()
+		}
+		if !m.hasWorking() {
+			m.spinning = false
 		}
 		return m, nil
 
@@ -215,8 +222,12 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		}
 		m.applyHysteresis()
 		m.rebuildItems()
-		if m.hasWorking() {
+		if m.hasWorking() && !m.spinning {
+			m.spinning = true
 			return m, spinnerTickCmd()
+		}
+		if !m.hasWorking() {
+			m.spinning = false
 		}
 		return m, nil
 
@@ -577,13 +588,12 @@ const numPaneCols = 6
 
 type paneColumns struct {
 	indicator string
-	paneIdx   int
 	cols      [numPaneCols]string // plain text for width calculation
 	styled    [numPaneCols]string // styled text for rendering
 }
 
 func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
-	pc := paneColumns{paneIdx: entry.pane.Index}
+	pc := paneColumns{}
 
 	// Indicator.
 	pc.indicator = "  "
@@ -599,7 +609,7 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 		case ActivityWaitingInput:
 			pc.indicator = waitingStyle.Render("?") + " "
 		case ActivityIdle:
-			pc.indicator = dimStyle.Render("●") + " "
+			pc.indicator = idleStyle.Render("●") + " "
 		default:
 			pc.indicator = dimStyle.Render("·") + " "
 		}
@@ -683,7 +693,7 @@ func renderPaneLine(pc paneColumns, widths [numPaneCols]int) string {
 		}
 		parts = append(parts, cell)
 	}
-	return fmt.Sprintf("   %s%d │ %s", pc.indicator, pc.paneIdx, strings.Join(parts, " │ "))
+	return fmt.Sprintf("   %s%s", pc.indicator, strings.Join(parts, " │ "))
 }
 
 func renderAgentActivity(cs AgentStatus) (string, string) {

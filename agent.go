@@ -210,3 +210,12 @@ func shouldHoldWorking(status AgentStatus) bool {
 	spec, ok := providerSpecFor(status.Provider)
 	return ok && spec.holdWorking
 }
+
+func normalizeParsedAgentStatus(status *AgentStatus) {
+	if status == nil || !status.Running {
+		return
+	}
+	if status.Activity == ActivityUnknown {
+		status.Activity = ActivityIdle
+	}
+}

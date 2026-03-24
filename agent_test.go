@@ -180,6 +180,24 @@ func TestParseCodexPaneChoiceUINearPromptIsWaiting(t *testing.T) {
 	}
 }
 
+func TestParseClaudePaneUnknownDefaultsToIdle(t *testing.T) {
+	status := AgentStatus{Running: true, Provider: ProviderClaude}
+	parseClaudePane("older output only\nno prompt visible", &status)
+
+	if status.Activity != ActivityIdle {
+		t.Fatalf("activity = %v, want %v", status.Activity, ActivityIdle)
+	}
+}
+
+func TestParseCodexPaneUnknownDefaultsToIdle(t *testing.T) {
+	status := AgentStatus{Running: true, Provider: ProviderCodex}
+	parseCodexPane("older output only\nno prompt visible", &status)
+
+	if status.Activity != ActivityIdle {
+		t.Fatalf("activity = %v, want %v", status.Activity, ActivityIdle)
+	}
+}
+
 func TestAgentSummaryMixedProviders(t *testing.T) {
 	initStyles(DefaultColors())
 

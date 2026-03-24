@@ -205,20 +205,20 @@ func agentSummary(sess Session, agents map[string]AgentStatus) string {
 func renderProviderSummary(provider Provider, s providerSummary) string {
 	label := providerAccent(provider).Render(provider.String())
 	var states []string
-	if s.waiting > 0 {
-		states = append(states, waitingStyle.Render(fmt.Sprintf("❓%d", s.waiting)))
+	if s.idle > 0 {
+		states = append(states, idleStyle.Render(fmt.Sprintf("● %d", s.idle)))
 	}
 	if s.working > 0 {
 		states = append(states, workingStyle.Render(fmt.Sprintf("⚡%d", s.working)))
 	}
-	if s.idle > 0 {
-		states = append(states, idleStyle.Render(fmt.Sprintf("●%d", s.idle)))
+	if s.waiting > 0 {
+		states = append(states, waitingStyle.Render(fmt.Sprintf("❓%d", s.waiting)))
 	}
 	state := joinParts(states)
 	if s.hasCtx {
-		return fmt.Sprintf("%s %d %s %s", label, s.total, state, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+		return fmt.Sprintf("%s %s %s", label, state, contextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
 	}
-	return fmt.Sprintf("%s %d %s", label, s.total, state)
+	return fmt.Sprintf("%s %s", label, state)
 }
 
 func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {

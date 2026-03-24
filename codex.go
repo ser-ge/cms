@@ -116,6 +116,8 @@ func parseCodexPane(content string, status *AgentStatus) {
 			}
 		}
 	}
+
+	normalizeParsedAgentStatus(status)
 }
 
 func detectCodexActivity(lines []string) Activity {

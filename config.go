@@ -66,7 +66,7 @@ func DefaultColors() ColorsConfig {
 			Current:  "2",
 			Working:  "208",
 			Waiting:  "1",
-			Idle:     "240",
+			Idle:     "12",
 			MoveSrc:  "5",
 			CtxLow:   "2",
 			CtxMid:   "3",
