@@ -10,6 +10,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// providerStyles holds provider-specific lipgloss styles.
+type providerStyles struct {
+	accent, plan, accept, danger, safe lipgloss.Style
+}
+
 // Styles — initialized from config via initStyles().
 var (
 	sessionStyle    lipgloss.Style
@@ -26,16 +31,7 @@ var (
 	footerRuleStyle lipgloss.Style
 	attachLabel     string
 
-	claudeAccentStyle lipgloss.Style
-	codexAccentStyle  lipgloss.Style
-	claudePlanStyle   lipgloss.Style
-	claudeAcceptStyle lipgloss.Style
-	claudeDangerStyle lipgloss.Style
-	claudeSafeStyle   lipgloss.Style
-	codexPlanStyle    lipgloss.Style
-	codexAcceptStyle  lipgloss.Style
-	codexDangerStyle  lipgloss.Style
-	codexSafeStyle    lipgloss.Style
+	providerStyleMap map[Provider]providerStyles
 
 	ctxLowStyle  lipgloss.Style
 	ctxMidStyle  lipgloss.Style
@@ -65,16 +61,22 @@ func initStyles(cfg Config) {
 	footerRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.FooterRule)).Faint(true)
 	attachLabel = dimStyle.Render(" (attached)")
 
-	claudeAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Accent)).Bold(true)
-	codexAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Accent)).Bold(true)
-	claudePlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Plan))
-	claudeAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Accept))
-	claudeDangerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Danger)).Bold(true)
-	claudeSafeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Claude.Safe))
-	codexPlanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Plan))
-	codexAcceptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Accept))
-	codexDangerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Danger)).Bold(true)
-	codexSafeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Codex.Safe))
+	providerStyleMap = map[Provider]providerStyles{}
+	for _, pc := range []struct {
+		provider Provider
+		cfg      ProviderColorsConfig
+	}{
+		{ProviderClaude, c.Claude},
+		{ProviderCodex, c.Codex},
+	} {
+		providerStyleMap[pc.provider] = providerStyles{
+			accent: lipgloss.NewStyle().Foreground(lipgloss.Color(pc.cfg.Accent)).Bold(true),
+			plan:   lipgloss.NewStyle().Foreground(lipgloss.Color(pc.cfg.Plan)),
+			accept: lipgloss.NewStyle().Foreground(lipgloss.Color(pc.cfg.Accept)),
+			danger: lipgloss.NewStyle().Foreground(lipgloss.Color(pc.cfg.Danger)).Bold(true),
+			safe:   lipgloss.NewStyle().Foreground(lipgloss.Color(pc.cfg.Safe)),
+		}
+	}
 
 	ctxLowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxLow))
 	ctxMidStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.CtxMid))
@@ -783,46 +785,28 @@ func renderMode(status AgentStatus) string {
 }
 
 func providerAccent(provider Provider) lipgloss.Style {
-	switch provider {
-	case ProviderClaude:
-		return claudeAccentStyle
-	case ProviderCodex:
-		return codexAccentStyle
-	default:
-		return dimStyle
+	if ps, ok := providerStyleMap[provider]; ok {
+		return ps.accent
 	}
+	return dimStyle
 }
 
 func modeStyle(status AgentStatus) lipgloss.Style {
-	switch status.Provider {
-	case ProviderCodex:
-		switch status.Mode {
-		case ModePlan:
-			return codexPlanStyle
-		case ModeAcceptEdits:
-			return codexAcceptStyle
-		case ModeReadOnly, ModeWorkspaceWrite:
-			return codexSafeStyle
-		case ModeBypassPermissions, ModeDangerFullAccess:
-			return codexDangerStyle
-		default:
-			return codexAccentStyle
-		}
-	case ProviderClaude:
-		switch status.Mode {
-		case ModePlan:
-			return claudePlanStyle
-		case ModeAcceptEdits:
-			return claudeAcceptStyle
-		case ModeBypassPermissions, ModeDangerFullAccess:
-			return claudeDangerStyle
-		case ModeReadOnly, ModeWorkspaceWrite:
-			return claudeSafeStyle
-		default:
-			return claudeAccentStyle
-		}
-	default:
+	ps, ok := providerStyleMap[status.Provider]
+	if !ok {
 		return dimStyle
+	}
+	switch status.Mode {
+	case ModePlan:
+		return ps.plan
+	case ModeAcceptEdits:
+		return ps.accept
+	case ModeBypassPermissions, ModeDangerFullAccess:
+		return ps.danger
+	case ModeReadOnly, ModeWorkspaceWrite:
+		return ps.safe
+	default:
+		return ps.accent
 	}
 }
 

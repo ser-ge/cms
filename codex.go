@@ -27,32 +27,6 @@ var (
 	codexFooterRe   = regexp.MustCompile(`(?i)(enter to (approve|select)|esc to (deny|cancel)|↑/↓ to navigate)`)
 )
 
-// DetectCodex checks if Codex is running in the given pane.
-func DetectCodex(pane Pane, pt procTable) AgentStatus {
-	status := AgentStatus{Provider: ProviderCodex}
-
-	found, args := findCodexInTree(pt, pane.PID)
-	if !found {
-		return status
-	}
-	status.Running = true
-	status.Args = args
-
-	content, err := capturePaneBottom(pane.ID)
-	if err != nil {
-		return status
-	}
-
-	parseCodexPane(content, &status)
-	return status
-}
-
-func findCodexInTree(pt procTable, panePID int) (bool, string) {
-	return findProcessInTree(pt, panePID, func(p procEntry) bool {
-		return strings.Contains(p.comm, "codex")
-	}, extractArgsAfterBinary)
-}
-
 func parseCodexPane(content string, status *AgentStatus) {
 	lines := strings.Split(content, "\n")
 	status.Activity = detectCodexActivity(lines)

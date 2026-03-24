@@ -212,56 +212,46 @@ func LoadConfig() Config {
 	return cfg
 }
 
+func defaultStr(field *string, def string) {
+	if *field == "" {
+		*field = def
+	}
+}
+
+func defaultSlice[T any](field *[]T, def []T) {
+	if len(*field) == 0 {
+		*field = def
+	}
+}
+
+func defaultInt(field *int, def int) {
+	if *field == 0 {
+		*field = def
+	}
+}
+
 func (c *Config) normalize() {
-	defIcons := DefaultIcons()
-	if len(c.Icons.WorkingFrames) == 0 {
-		c.Icons.WorkingFrames = defIcons.WorkingFrames
-	}
-	if c.Icons.Waiting == "" {
-		c.Icons.Waiting = defIcons.Waiting
-	}
-	if c.Icons.Idle == "" {
-		c.Icons.Idle = defIcons.Idle
-	}
-	if c.Icons.Unknown == "" {
-		c.Icons.Unknown = defIcons.Unknown
-	}
-	if c.Icons.ColumnSeparator == "" {
-		c.Icons.ColumnSeparator = defIcons.ColumnSeparator
-	}
-	if c.Icons.FooterSeparator == "" {
-		c.Icons.FooterSeparator = defIcons.FooterSeparator
-	}
+	di := DefaultIcons()
+	defaultSlice(&c.Icons.WorkingFrames, di.WorkingFrames)
+	defaultStr(&c.Icons.Waiting, di.Waiting)
+	defaultStr(&c.Icons.Idle, di.Idle)
+	defaultStr(&c.Icons.Unknown, di.Unknown)
+	defaultStr(&c.Icons.ColumnSeparator, di.ColumnSeparator)
+	defaultStr(&c.Icons.FooterSeparator, di.FooterSeparator)
 
-	defDash := DefaultDashboardConfig()
-	if len(c.Dashboard.Columns) == 0 {
-		c.Dashboard.Columns = defDash.Columns
-	}
-	if c.Dashboard.WindowHeaders == "" {
-		c.Dashboard.WindowHeaders = defDash.WindowHeaders
-	}
+	dd := DefaultDashboardConfig()
+	defaultSlice(&c.Dashboard.Columns, dd.Columns)
+	defaultStr(&c.Dashboard.WindowHeaders, dd.WindowHeaders)
 
-	defFinder := DefaultFinderConfig()
-	if len(c.Finder.ProviderOrder) == 0 {
-		c.Finder.ProviderOrder = defFinder.ProviderOrder
-	}
-	if len(c.Finder.StateOrder) == 0 {
-		c.Finder.StateOrder = defFinder.StateOrder
-	}
+	df := DefaultFinderConfig()
+	defaultSlice(&c.Finder.ProviderOrder, df.ProviderOrder)
+	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
 
-	defGeneral := DefaultGeneralConfig()
-	if len(c.General.SearchPaths) == 0 {
-		c.General.SearchPaths = defGeneral.SearchPaths
-	}
-	if len(c.General.SwitchPriority) == 0 {
-		c.General.SwitchPriority = defGeneral.SwitchPriority
-	}
-	if c.General.EscapeChord == "" {
-		c.General.EscapeChord = defGeneral.EscapeChord
-	}
-	if c.General.EscapeChordMs == 0 {
-		c.General.EscapeChordMs = defGeneral.EscapeChordMs
-	}
+	dg := DefaultGeneralConfig()
+	defaultSlice(&c.General.SearchPaths, dg.SearchPaths)
+	defaultSlice(&c.General.SwitchPriority, dg.SwitchPriority)
+	defaultStr(&c.General.EscapeChord, dg.EscapeChord)
+	defaultInt(&c.General.EscapeChordMs, dg.EscapeChordMs)
 }
 
 func configPath() string {

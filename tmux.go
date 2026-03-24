@@ -290,7 +290,7 @@ func resolveCommand(pt procTable, panePID int, tmuxCmd string) string {
 	}
 
 	// Is the pane PID a shell?
-	if !isShell(entry.comm) {
+	if !isShellCommand(entry.comm) {
 		return entry.comm
 	}
 
@@ -308,10 +308,3 @@ func resolveCommand(pt procTable, panePID int, tmuxCmd string) string {
 	return tmuxCmd
 }
 
-func isShell(comm string) bool {
-	switch comm {
-	case "fish", "bash", "zsh", "sh", "dash", "tcsh", "ksh":
-		return true
-	}
-	return false
-}

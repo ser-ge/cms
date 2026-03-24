@@ -77,7 +77,7 @@ type AgentStatus struct {
 
 type providerSpec struct {
 	provider    Provider
-	detect      func(Pane, procTable) AgentStatus
+	procMatch   func(procEntry) bool
 	parse       func(string, *AgentStatus)
 	holdWorking bool
 }
@@ -85,13 +85,13 @@ type providerSpec struct {
 var providerSpecs = []providerSpec{
 	{
 		provider:    ProviderClaude,
-		detect:      DetectClaude,
+		procMatch:   func(p procEntry) bool { return strings.Contains(p.comm, "claude") },
 		parse:       parseClaudePane,
 		holdWorking: true,
 	},
 	{
 		provider:    ProviderCodex,
-		detect:      DetectCodex,
+		procMatch:   func(p procEntry) bool { return strings.Contains(p.comm, "codex") },
 		parse:       parseCodexPane,
 		holdWorking: false,
 	},
@@ -100,9 +100,17 @@ var providerSpecs = []providerSpec{
 // DetectAgent checks known providers in a pane and returns the normalized status.
 func DetectAgent(pane Pane, pt procTable) AgentStatus {
 	for _, spec := range providerSpecs {
-		if status := spec.detect(pane, pt); status.Running {
+		found, args := findProcessInTree(pt, pane.PID, spec.procMatch, extractArgsAfterBinary)
+		if !found {
+			continue
+		}
+		status := AgentStatus{Provider: spec.provider, Running: true, Args: args}
+		content, err := capturePaneBottom(pane.ID)
+		if err != nil {
 			return status
 		}
+		spec.parse(content, &status)
+		return status
 	}
 	return AgentStatus{}
 }
@@ -131,6 +139,11 @@ func detectAllAgents(sessions []Session, pt procTable) map[string]AgentStatus {
 	}
 	wg.Wait()
 	return results
+}
+
+// capturePaneBottom captures the visible content of a tmux pane.
+func capturePaneBottom(paneID string) (string, error) {
+	return runTmux("capture-pane", "-t", paneID, "-p", "-J")
 }
 
 // findProcessInTree walks a pane's process tree and returns the first matching descendant.

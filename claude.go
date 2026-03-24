@@ -25,44 +25,7 @@ var (
 	choiceNavRe = regexp.MustCompile(`(Enter to select.*↑/↓ to navigate|Esc to cancel.*Tab to amend)`)
 )
 
-// DetectClaude checks if Claude Code is running in the given pane.
-// It reuses an existing procTable to avoid calling `ps` multiple times.
-func DetectClaude(pane Pane, pt procTable) AgentStatus {
-	status := AgentStatus{Provider: ProviderClaude}
-
-	// Step 1: Check the process tree for a "claude" descendant.
-	found, args := findClaudeInTree(pt, pane.PID)
-	if !found {
-		return status
-	}
-	status.Running = true
-	status.Args = args
-
-	// Step 2: Capture the visible pane content and parse everything.
-	content, err := capturePaneBottom(pane.ID)
-	if err != nil {
-		return status
-	}
-
-	parseClaudePane(content, &status)
-
-	return status
-}
-
-// findClaudeInTree walks the process tree from the given PID using
-// a pre-built procTable. No subprocess spawned.
-func findClaudeInTree(pt procTable, panePID int) (bool, string) {
-	return findProcessInTree(pt, panePID, func(p procEntry) bool {
-		return strings.Contains(p.comm, "claude")
-	}, extractArgsAfterBinary)
-}
-
-// capturePaneBottom captures the visible content of a tmux pane.
-func capturePaneBottom(paneID string) (string, error) {
-	return runTmux("capture-pane", "-t", paneID, "-p", "-J")
-}
-
-// parsePane extracts Claude activity, model info, and mode from captured pane content.
+// parseClaudePane extracts Claude activity, model info, and mode from captured pane content.
 func parseClaudePane(content string, status *AgentStatus) {
 	lines := strings.Split(content, "\n")
 

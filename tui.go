@@ -1,8 +1,6 @@
 package main
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -132,25 +130,6 @@ func (m rootModel) switchTo(s screen) (tea.Model, tea.Cmd) {
 func (m *rootModel) initFinder() tea.Cmd {
 	m.finder = newFinderModel(m.cfg, m.watcher, finderAll, m.width, m.height)
 	return m.finder.Init()
-}
-
-// pinBottom pads content so that the footer line is pinned to the terminal bottom.
-func pinBottom(content, footer string, height int) string {
-	if height <= 0 {
-		return content + footer
-	}
-	// Total output must be exactly `height` lines.
-	// Content lines + pad lines + 1 footer line = height.
-	contentHeight := strings.Count(content, "\n")
-	// Strip trailing newline from content so we control spacing exactly.
-	content = strings.TrimRight(content, "\n")
-	contentHeight = strings.Count(content, "\n") + 1 // lines = newlines + 1
-
-	pad := height - contentHeight - 1 // -1 for footer
-	if pad < 0 {
-		pad = 0
-	}
-	return content + "\n" + strings.Repeat("\n", pad) + footer
 }
 
 // Shared message types.
