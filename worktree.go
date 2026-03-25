@@ -2,42 +2,193 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
-// WorktreeConfig holds per-repo worktree settings from .wtp.yml or cms config.
+// tomlUnmarshal wraps toml.Unmarshal, ignoring errors for convenience
+// when loading optional config files.
+func tomlUnmarshal(data []byte, v any) {
+	toml.Unmarshal(data, v) //nolint:errcheck
+}
+
+// WorktreeConfig holds worktree settings. Loaded from user config
+// (~/.config/cms/config.toml [worktree]) and per-repo project config
+// (.cms.toml [worktree]). Project config overrides user config.
 type WorktreeConfig struct {
-	BaseDir string          `toml:"base_dir" yaml:"base_dir"`
-	Hooks   []WorktreeHook  `toml:"hooks" yaml:"-"`
-	YAMLRaw *wtpYAMLConfig  // parsed from .wtp.yml if present
+	BaseDir    string         `toml:"base_dir"`
+	Hooks      []WorktreeHook `toml:"hooks"`       // post-create
+	PreRemove  []WorktreeHook `toml:"pre_remove"`
+	PreCommit  []WorktreeHook `toml:"pre_commit"`
+	PostCommit []WorktreeHook `toml:"post_commit"`
+	PreMerge   []WorktreeHook `toml:"pre_merge"`
+	PostMerge  []WorktreeHook `toml:"post_merge"`
+	AutoOpen   bool           `toml:"auto_open"`
+	CommitCmd  string         `toml:"commit_cmd"` // LLM commit message command (e.g. "llm -m claude-haiku")
 }
 
-type wtpYAMLConfig struct {
-	Version  string `yaml:"version"`
-	Defaults struct {
-		BaseDir string `yaml:"base_dir"`
-	} `yaml:"defaults"`
-	Hooks struct {
-		PostCreate []WorktreeHook `yaml:"post_create"`
-	} `yaml:"hooks"`
+// ProjectConfig is the per-repo config loaded from .cms.toml at the repo root.
+// Currently only holds worktree settings; extensible for future repo-level config.
+type ProjectConfig struct {
+	Worktree WorktreeConfig `toml:"worktree"`
 }
 
-// WorktreeHook defines a post-create action.
+// WorktreeHook is a shell command that runs at a lifecycle point.
 type WorktreeHook struct {
-	Type    string            `toml:"type" yaml:"type"`       // "copy", "symlink", "command"
-	From    string            `toml:"from" yaml:"from"`       // source (relative to main worktree)
-	To      string            `toml:"to" yaml:"to"`           // dest (relative to new worktree)
-	Command string            `toml:"command" yaml:"command"`
-	Env     map[string]string `toml:"env" yaml:"env"`
+	Command string            `toml:"command"`
+	Env     map[string]string `toml:"env"`
+}
+
+// sanitizeBranch replaces characters that break filesystem paths.
+// "feature/auth" → "feature-auth", "bug\fix" → "bug-fix"
+func sanitizeBranch(branch string) string {
+	s := strings.NewReplacer("/", "-", "\\", "-").Replace(branch)
+	// Collapse multiple dashes.
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-")
+}
+
+// resolveWorktreeSymbol expands special symbols:
+//
+//	"@" → current branch (from cwd)
+//	"-" → previous branch (from git reflog)
+//	"^" → default branch (main/master)
+func resolveWorktreeSymbol(repoRoot, symbol string) (string, error) {
+	switch symbol {
+	case "@":
+		branch, err := gitCmd(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve @: %w", err)
+		}
+		return branch, nil
+	case "-":
+		// git rev-parse --abbrev-ref @{-1} gives the previous branch.
+		branch, err := gitCmd(repoRoot, "rev-parse", "--abbrev-ref", "@{-1}")
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve -: no previous branch")
+		}
+		return branch, nil
+	case "^":
+		branch, err := defaultBranch(repoRoot)
+		if err != nil {
+			return "", err
+		}
+		return branch, nil
+	default:
+		return symbol, nil
+	}
+}
+
+// defaultBranch returns the default branch name (main, master, etc).
+func defaultBranch(repoRoot string) (string, error) {
+	// Try remote HEAD first.
+	ref, err := gitCmd(repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err == nil {
+		return strings.TrimPrefix(ref, "refs/remotes/origin/"), nil
+	}
+	// Fallback: check common names.
+	for _, name := range []string{"main", "master"} {
+		if _, err := gitCmd(repoRoot, "show-ref", "--verify", "--quiet", "refs/heads/"+name); err == nil {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("cannot determine default branch")
+}
+
+// isBranchIntegrated checks if a branch has been merged into the target branch.
+// Uses multiple strategies (inspired by Worktrunk):
+//  1. Same commit as target
+//  2. Branch is ancestor of target
+//  3. No diff between branch and target (tree comparison)
+func isBranchIntegrated(repoRoot, branch, target string) (bool, string) {
+	branchSHA, err := gitCmd(repoRoot, "rev-parse", branch)
+	if err != nil {
+		return false, ""
+	}
+	targetSHA, err := gitCmd(repoRoot, "rev-parse", target)
+	if err != nil {
+		return false, ""
+	}
+
+	// Same commit.
+	if branchSHA == targetSHA {
+		return true, "same commit as " + target
+	}
+
+	// Branch is ancestor of target.
+	if _, err := gitCmd(repoRoot, "merge-base", "--is-ancestor", branch, target); err == nil {
+		return true, "ancestor of " + target
+	}
+
+	// Check if merging branch into target would add nothing.
+	// git merge-tree finds the merge result; if it produces no diff, branch is already integrated.
+	// Simpler: compare the tree of target with a trial merge.
+	// Use cherry: if no commits are unique to branch vs target, it's integrated.
+	cherry, err := gitCmd(repoRoot, "cherry", target, branch)
+	if err == nil && strings.TrimSpace(cherry) == "" {
+		return true, "no unique commits vs " + target
+	}
+
+	return false, ""
+}
+
+// loadProjectConfig reads .cms.toml from the repo root.
+// Returns a zero ProjectConfig if the file doesn't exist.
+func loadProjectConfig(repoRoot string) ProjectConfig {
+	var proj ProjectConfig
+	path := filepath.Join(repoRoot, ".cms.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return proj
+	}
+	tomlUnmarshal(data, &proj)
+	return proj
+}
+
+// resolveWorktreeConfig merges user config (from ~/.config/cms/config.toml)
+// with per-repo project config (from .cms.toml). Project overrides user:
+// if the project sets hooks, they replace user hooks entirely.
+// Scalars (base_dir, commit_cmd) use project value if non-empty.
+func resolveWorktreeConfig(repoRoot string, userCfg *WorktreeConfig) WorktreeConfig {
+	proj := loadProjectConfig(repoRoot)
+	merged := *userCfg
+
+	p := proj.Worktree
+	if p.BaseDir != "" {
+		merged.BaseDir = p.BaseDir
+	}
+	if p.CommitCmd != "" {
+		merged.CommitCmd = p.CommitCmd
+	}
+	if len(p.Hooks) > 0 {
+		merged.Hooks = p.Hooks
+	}
+	if len(p.PreRemove) > 0 {
+		merged.PreRemove = p.PreRemove
+	}
+	if len(p.PreCommit) > 0 {
+		merged.PreCommit = p.PreCommit
+	}
+	if len(p.PostCommit) > 0 {
+		merged.PostCommit = p.PostCommit
+	}
+	if len(p.PreMerge) > 0 {
+		merged.PreMerge = p.PreMerge
+	}
+	if len(p.PostMerge) > 0 {
+		merged.PostMerge = p.PostMerge
+	}
+
+	return merged
 }
 
 // resolveWorktreeBaseDir returns the absolute base directory for worktrees.
-// Checks .wtp.yml first, then cms config, then defaults to "../worktrees".
 func resolveWorktreeBaseDir(repoRoot string, cfg *WorktreeConfig) string {
 	baseDir := "../worktrees"
 	if cfg != nil && cfg.BaseDir != "" {
@@ -47,114 +198,6 @@ func resolveWorktreeBaseDir(repoRoot string, cfg *WorktreeConfig) string {
 		baseDir = filepath.Join(repoRoot, baseDir)
 	}
 	return filepath.Clean(baseDir)
-}
-
-// resolveWorktreeHooks returns hooks from .wtp.yml if present, else from cms config.
-func resolveWorktreeHooks(repoRoot string, cfg *WorktreeConfig) []WorktreeHook {
-	// Try .wtp.yml first.
-	wtpCfg, err := loadWTPConfig(repoRoot)
-	if err == nil && wtpCfg != nil {
-		return wtpCfg.Hooks.PostCreate
-	}
-	if cfg != nil {
-		return cfg.Hooks
-	}
-	return nil
-}
-
-// loadWTPConfig reads .wtp.yml from repo root if it exists.
-func loadWTPConfig(repoRoot string) (*wtpYAMLConfig, error) {
-	path := filepath.Join(repoRoot, ".wtp.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	cfg := &wtpYAMLConfig{}
-	if err := yamlUnmarshal(data, cfg); err != nil {
-		return nil, err
-	}
-	return cfg, nil
-}
-
-// yamlUnmarshal is a minimal YAML parser for .wtp.yml. We only need a few
-// fields so we avoid pulling in a full YAML dependency. Handles the subset
-// of YAML that .wtp.yml uses: scalars, maps, and sequences of maps.
-func yamlUnmarshal(data []byte, cfg *wtpYAMLConfig) error {
-	lines := strings.Split(string(data), "\n")
-	var section string    // "defaults", "hooks", "post_create"
-	var currentHook *WorktreeHook
-
-	flushHook := func() {
-		if currentHook != nil {
-			cfg.Hooks.PostCreate = append(cfg.Hooks.PostCreate, *currentHook)
-			currentHook = nil
-		}
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-
-		// Top-level keys.
-		if indent == 0 {
-			flushHook()
-			if strings.HasPrefix(trimmed, "version:") {
-				cfg.Version = unquote(strings.TrimPrefix(trimmed, "version:"))
-			} else if trimmed == "defaults:" {
-				section = "defaults"
-			} else if trimmed == "hooks:" {
-				section = "hooks"
-			} else {
-				section = ""
-			}
-			continue
-		}
-
-		switch section {
-		case "defaults":
-			if strings.HasPrefix(trimmed, "base_dir:") {
-				cfg.Defaults.BaseDir = unquote(strings.TrimPrefix(trimmed, "base_dir:"))
-			}
-		case "hooks":
-			if trimmed == "post_create:" {
-				section = "post_create"
-			}
-		case "post_create":
-			if strings.HasPrefix(trimmed, "- type:") {
-				flushHook()
-				currentHook = &WorktreeHook{
-					Type: unquote(strings.TrimPrefix(trimmed, "- type:")),
-				}
-			} else if currentHook != nil {
-				kv := strings.SplitN(trimmed, ":", 2)
-				if len(kv) == 2 {
-					k := strings.TrimSpace(strings.TrimPrefix(kv[0], "- "))
-					v := unquote(kv[1])
-					switch k {
-					case "from":
-						currentHook.From = v
-					case "to":
-						currentHook.To = v
-					case "command":
-						currentHook.Command = v
-					}
-				}
-			}
-		}
-	}
-	flushHook()
-	return nil
-}
-
-func unquote(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') {
-		s = s[1 : len(s)-1]
-	}
-	return s
 }
 
 // CreateWorktreeOpts configures worktree creation.
@@ -232,112 +275,31 @@ func ResolveBranch(repoRoot, branch string) (local bool, remote string, err erro
 	return false, refs[0], nil
 }
 
-// RunPostCreateHooks executes hooks after worktree creation.
-func RunPostCreateHooks(mainWorktree, newWorktree string, hooks []WorktreeHook) error {
+// RunHooks executes hooks in order. Each hook is a shell command run in the
+// target worktree with CMS_WORKTREE_PATH and CMS_REPO_ROOT env vars set.
+func RunHooks(label, mainWorktree, targetWorktree string, hooks []WorktreeHook) error {
 	for i, h := range hooks {
-		switch h.Type {
-		case "copy":
-			src := resolvePath(mainWorktree, h.From)
-			dst := resolvePath(newWorktree, h.To)
-			if dst == "" {
-				dst = resolvePath(newWorktree, h.From)
-			}
-			if err := copyPath(src, dst); err != nil {
-				return fmt.Errorf("hook %d (copy %s): %w", i+1, h.From, err)
-			}
-		case "symlink":
-			src := resolvePath(mainWorktree, h.From)
-			dst := resolvePath(newWorktree, h.To)
-			if dst == "" {
-				dst = resolvePath(newWorktree, h.From)
-			}
-			if _, err := os.Lstat(src); err != nil {
-				return fmt.Errorf("hook %d (symlink %s): source not found", i+1, h.From)
-			}
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				return err
-			}
-			if err := os.Symlink(src, dst); err != nil {
-				return fmt.Errorf("hook %d (symlink %s): %w", i+1, h.From, err)
-			}
-		case "command":
-			cmd := exec.Command("sh", "-c", h.Command)
-			cmd.Dir = newWorktree
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Env = append(os.Environ(),
-				"GIT_WTP_WORKTREE_PATH="+newWorktree,
-				"GIT_WTP_REPO_ROOT="+mainWorktree,
-			)
-			for k, v := range h.Env {
-				cmd.Env = append(cmd.Env, k+"="+v)
-			}
-			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("hook %d (command %q): %w", i+1, h.Command, err)
-			}
-		default:
-			return fmt.Errorf("hook %d: unknown type %q", i+1, h.Type)
+		cmd := exec.Command("sh", "-c", h.Command)
+		cmd.Dir = targetWorktree
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Env = append(os.Environ(),
+			"CMS_WORKTREE_PATH="+targetWorktree,
+			"CMS_REPO_ROOT="+mainWorktree,
+		)
+		for k, v := range h.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("%s hook %d (%q): %w", label, i+1, h.Command, err)
 		}
 	}
 	return nil
 }
 
-func resolvePath(base, rel string) string {
-	if rel == "" {
-		return ""
-	}
-	if filepath.IsAbs(rel) {
-		return rel
-	}
-	return filepath.Join(base, rel)
-}
-
-// copyPath copies a file or directory recursively.
-func copyPath(src, dst string) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	if info.IsDir() {
-		return copyDir(src, dst)
-	}
-	return copyFile(src, dst, info.Mode())
-}
-
-func copyFile(src, dst string, mode fs.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
-}
-
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		return copyFile(path, target, info.Mode())
-	})
+// RunPostCreateHooks executes hooks after worktree creation.
+func RunPostCreateHooks(mainWorktree, newWorktree string, hooks []WorktreeHook) error {
+	return RunHooks("post-create", mainWorktree, newWorktree, hooks)
 }
 
 // findRepoRoot resolves the git repo root from the current directory.
