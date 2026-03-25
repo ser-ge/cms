@@ -163,23 +163,45 @@ echo '{"tool_name":"Edit"}' | cms hook pre-tool-use
 echo '{}' | cms hook stop
 ```
 
+## Architecture
+
+```
+main.go / debuglog.go              CLI entry + debug wiring
+
+internal/
+  proc/         Process table + IsShellCommand
+  config/       Config types + TOML loading
+  git/          Git info, worktree listing
+  tmux/         Session/Window/Pane types, tmux commands, control mode
+  agent/        Provider-neutral detection, Claude + Codex parsing
+  attention/    Attention queue + tmux pane persistence
+  hook/         Claude Code hook socket listener
+  session/      Session CRUD, smart switching, OpenProject
+  project/      Git repo discovery from search paths
+  worktree/     Worktree create/remove/merge workflow
+  watcher/      State coordination: events, pane tracking, polling
+  tui/          All UI: app router, dashboard, finder, queue, picker, styles
+  debug/        Package-level Logf var
+```
+
+Layers (import downward only):
+
+- **Presentation** (`tui`) — renders state, emits `tea.Cmd` via `actions.go`, never calls tmux/session directly
+- **Business** (`watcher`, `session`, `project`, `worktree`) — coordinates state, manages tmux sessions
+- **Domain** (`agent`, `attention`, `hook`) — detection logic, attention queue, hook events
+- **Infrastructure** (`tmux`, `git`, `proc`, `config`, `debug`) — I/O boundaries, no internal deps
+
 ## Development
 
-Run tests:
-
 ```bash
-go test ./...
+go test ./...                        # run all tests
+go build -o /dev/null ./...          # validate build (don't write binary — interferes with tmux)
+go vet ./internal/... .              # lint
 ```
 
-Run the dev build:
+Render harness (visual debugging):
 
 ```bash
-make dev
-```
-
-Render harness:
-
-```bash
-CMS_RENDER_HARNESS=1 go test -run 'TestRenderHarness(Dashboard|Finder)' -v
-CMS_LIVE_HARNESS=1 go test -run TestRenderHarnessLive -v
+CMS_RENDER_HARNESS=1 go test ./internal/tui/ -run 'TestRenderHarness(Dashboard|Finder)' -v
+CMS_LIVE_HARNESS=1 go test ./internal/tui/ -run TestRenderHarnessLive -v
 ```

@@ -3,29 +3,36 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/serge/cms/internal/agent"
+	"github.com/serge/cms/internal/config"
+	"github.com/serge/cms/internal/hook"
+	"github.com/serge/cms/internal/session"
+	"github.com/serge/cms/internal/tmux"
+	"github.com/serge/cms/internal/tui"
+	"github.com/serge/cms/internal/watcher"
+	"github.com/serge/cms/internal/worktree"
 )
 
 type jumpCandidate struct {
 	paneID   string
-	activity Activity
+	activity agent.Activity
 }
 
 func main() {
 	initDebugLogger()
-	cfg := LoadConfig()
-	initStyles(cfg)
+	cfg := config.Load()
+	tui.InitStyles(cfg)
 
-	initial := screenFinder
-	fk := finderAll
+	initial := tui.ScreenFinder
+	fk := tui.FinderAll
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "config":
 			if len(os.Args) > 2 && os.Args[2] == "init" {
-				path, err := WriteDefaultConfigFile()
+				path, err := config.WriteDefaultConfigFile()
 				if err != nil {
 					if err == os.ErrExist {
 						fmt.Fprintf(os.Stderr, "error: config already exists at %s\n", path)
@@ -40,17 +47,17 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error: usage: cms config init")
 			os.Exit(1)
 		case "dash", "d", "dashboard":
-			initial = screenDashboard
+			initial = tui.ScreenDashboard
 		case "find", "f":
-			initial = screenFinder
+			initial = tui.ScreenFinder
 		case "switch", "s":
-			initial = screenFinder
-			fk = finderSessions
+			initial = tui.ScreenFinder
+			fk = tui.FinderSessions
 		case "open", "o":
-			initial = screenFinder
-			fk = finderProjects
+			initial = tui.ScreenFinder
+			fk = tui.FinderProjects
 		case "queue", "q":
-			initial = screenQueue
+			initial = tui.ScreenQueue
 		case "next", "n":
 			if err := jumpNext(); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -58,16 +65,16 @@ func main() {
 			}
 			return
 		case "hook":
-			if err := runHookCmd(os.Args[2:]); err != nil {
+			if err := hook.RunCmd(os.Args[2:]); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
 			return
 		case "hook-setup":
-			runHookSetup()
+			hook.RunSetup()
 			return
 		case "worktree", "wt":
-			if err := runWorktreeCmd(os.Args[2:]); err != nil {
+			if err := worktree.RunCmd(os.Args[2:]); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -77,7 +84,7 @@ func main() {
 			if len(os.Args) > 2 {
 				name = os.Args[2]
 			}
-			if err := RefreshWorktrees(name); err != nil {
+			if err := session.RefreshWorktrees(name); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -85,35 +92,41 @@ func main() {
 		}
 	}
 
-	watcher := NewWatcher()
-	watcher.ApplyConfig(cfg.General)
-	m := newRootModel(initial, fk, cfg, watcher)
+	w := watcher.New()
+	w.ApplyConfig(cfg.General)
+	m := tui.NewRootModel(initial, fk, cfg, w)
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	watcher.Start(p.Send)
+	w.Start(p.Send)
 	result, err := p.Run()
-	watcher.Stop()
+	w.Stop()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	if rm, ok := result.(rootModel); ok && rm.postAction != nil {
-		if err := executePostAction(rm.postAction); err != nil {
+	if rm, ok := result.(tui.RootModel); ok && rm.PostAction() != nil {
+		if err := executePostAction(rm.PostAction()); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 	}
 }
 
-func executePostAction(a *postAction) error {
+func executePostAction(a *tui.PostAction) error {
 	// Direct pane switch (from dashboard).
-	if a.paneID != "" {
-		return SwitchToPane(a.paneID)
+	if a.PaneID != "" {
+		return session.SwitchToPane(a.PaneID)
 	}
-	switch a.kind {
-	case kindSession:
-		return SmartSwitchSession(a.sessionName, a.priority, a.sessions, a.agents)
-	case kindProject:
-		return OpenProject(a.projectPath)
+	switch a.Kind {
+	case tui.KindSession:
+		// Fetch fresh state for smart switch priority resolution.
+		sessions, pt, err := tmux.FetchState()
+		if err != nil {
+			return session.Switch(a.SessionName)
+		}
+		agents := agent.DetectAll(sessions, pt)
+		return session.SmartSwitch(a.SessionName, a.Priority, sessions, agents)
+	case tui.KindProject:
+		return session.OpenProject(a.ProjectPath)
 	}
 	return nil
 }
@@ -122,12 +135,12 @@ func executePostAction(a *postAction) error {
 // Priority: waiting > idle. Cycles through panes across all sessions,
 // starting after the current pane.
 func jumpNext() error {
-	sessions, pt, err := FetchState()
+	sessions, pt, err := tmux.FetchState()
 	if err != nil {
 		return err
 	}
-	current, _ := FetchCurrentTarget()
-	agents := detectAllAgents(sessions, pt)
+	current, _ := tmux.FetchCurrentTarget()
+	agents := agent.DetectAll(sessions, pt)
 
 	// Flatten all panes with agent status.
 	var all []jumpCandidate
@@ -153,7 +166,7 @@ func jumpNext() error {
 	}
 
 	if paneID := selectNextPane(all, currentIdx); paneID != "" {
-		return SwitchToPane(paneID)
+		return session.SwitchToPane(paneID)
 	}
 
 	return fmt.Errorf("no waiting or idle agent sessions")
@@ -161,7 +174,7 @@ func jumpNext() error {
 
 func selectNextPane(all []jumpCandidate, currentIdx int) string {
 	start := currentIdx + 1
-	for _, target := range []Activity{ActivityWaitingInput, ActivityCompleted, ActivityIdle} {
+	for _, target := range []agent.Activity{agent.ActivityWaitingInput, agent.ActivityCompleted, agent.ActivityIdle} {
 		for i := 0; i < len(all); i++ {
 			idx := (start + i) % len(all)
 			if all[idx].activity == target {
@@ -170,15 +183,4 @@ func selectNextPane(all []jumpCandidate, currentIdx int) string {
 		}
 	}
 	return ""
-}
-
-func shortenHome(path string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	if strings.HasPrefix(path, home) {
-		return filepath.Join("~", path[len(home):])
-	}
-	return path
 }

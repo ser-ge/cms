@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"sync"
+
+	"github.com/serge/cms/internal/debug"
 )
 
 var (
@@ -29,6 +31,7 @@ func initDebugLogger() {
 			return
 		}
 		debugLogger = log.New(f, "", log.LstdFlags|log.Lmicroseconds)
+		debug.Logf = debugLogger.Printf
 		debugLogger.Printf("debug logging enabled")
 	})
 }
