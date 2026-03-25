@@ -29,10 +29,12 @@ type rootModel struct {
 }
 
 func newRootModel(initial screen, fk finderKind, cfg Config, watcher *Watcher) rootModel {
+	dash := newDashboardModel(cfg)
+	dash.watcher = watcher
 	m := rootModel{
 		screen:     initial,
 		initial:    initial,
-		dashboard:  newDashboardModel(cfg),
+		dashboard:  dash,
 		finderKind: fk,
 		watcher:    watcher,
 		cfg:        cfg,

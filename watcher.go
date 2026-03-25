@@ -38,7 +38,7 @@ type attentionUpdateMsg struct{}
 
 // Watcher bridges tmux events to bubbletea messages.
 // It manages the control mode connection, debounced output handling,
-// and slow polls for process table and git status.
+// hook listener, and slow polls for process table and git status.
 type Watcher struct {
 	ctrl *CtrlClient
 	send func(tea.Msg)
@@ -53,6 +53,11 @@ type Watcher struct {
 	// Debouncing: coalesce rapid %output events per pane.
 	outputTimers map[string]*time.Timer
 
+	// Hook integration: when hooks report for a pane, suppress observer updates.
+	hookSeen     map[string]time.Time // paneID → last hook event time
+	hookCh       chan HookEvent       // receives events from hook listener
+	hookListener *HookListener
+
 	// Cached state for finder to read synchronously.
 	sessions []Session
 	agents   map[string]AgentStatus
@@ -63,7 +68,6 @@ type Watcher struct {
 	activitySince map[string]time.Time // paneID → when current activity started
 	Attention     AttentionQueue
 
-
 	// Lifecycle.
 	stopCh chan struct{}
 }
@@ -73,6 +77,7 @@ const (
 	liveRecheckInterval   = 250 * time.Millisecond
 	liveOutputGracePeriod = 350 * time.Millisecond
 	optimisticWorkingHold = 2 * time.Second
+	hookStaleTimeout      = 30 * time.Second // observer resumes if hooks go silent
 )
 
 // NewWatcher creates a Watcher.
@@ -83,6 +88,8 @@ func NewWatcher() *Watcher {
 		lastLiveRecheck: map[string]time.Time{},
 		workingUntil:    map[string]time.Time{},
 		outputTimers:    map[string]*time.Timer{},
+		hookSeen:        map[string]time.Time{},
+		hookCh:          make(chan HookEvent, 64),
 		activitySince:   map[string]time.Time{},
 		stopCh:          make(chan struct{}),
 	}
@@ -112,6 +119,9 @@ func (w *Watcher) Stop() {
 
 	if w.ctrl != nil {
 		w.ctrl.Stop()
+	}
+	if w.hookListener != nil {
+		w.hookListener.Stop()
 	}
 }
 
@@ -209,6 +219,55 @@ func (w *Watcher) trackTransitions(prev, next map[string]AgentStatus) {
 }
 
 
+// applyAgentUpdate is the single convergence point for all agent status updates,
+// whether from the tmux observer or hook listener. It handles transition tracking,
+// cache updates, and TUI notification.
+func (w *Watcher) applyAgentUpdate(updates map[string]AgentStatus) {
+	if len(updates) == 0 {
+		return
+	}
+
+	w.stateMu.RLock()
+	prevSnapshot := make(map[string]AgentStatus, len(updates))
+	for id := range updates {
+		if prev, ok := w.agents[id]; ok {
+			prevSnapshot[id] = prev
+		}
+	}
+	w.stateMu.RUnlock()
+
+	w.stateMu.Lock()
+	w.agents = applyAgentUpdates(w.agents, updates)
+	w.stateMu.Unlock()
+
+	w.trackTransitions(prevSnapshot, updates)
+	w.send(agentUpdateMsg{updates: updates})
+}
+
+// hookActiveFor returns true if hooks have reported for this pane recently enough
+// that the observer should defer to hook data.
+func (w *Watcher) hookActiveFor(paneID string) bool {
+	lastSeen, ok := w.hookSeen[paneID]
+	if !ok {
+		return false
+	}
+	return time.Since(lastSeen) < hookStaleTimeout
+}
+
+// HookStats returns debug info about hook state.
+func (w *Watcher) HookStats() (activeCount int, listening bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := time.Now()
+	for _, t := range w.hookSeen {
+		if now.Sub(t) < hookStaleTimeout {
+			activeCount++
+		}
+	}
+	listening = w.hookListener != nil
+	return
+}
+
 // bootstrap fetches the initial state and starts the event + poll goroutines.
 // If tmux isn't running yet, it sends an empty stateMsg so the TUI can still
 // show the finder (projects from disk). Control mode is started if available.
@@ -256,6 +315,15 @@ func (w *Watcher) bootstrap() {
 	} else {
 		debugf("watcher: control unavailable err=%v", err)
 	}
+
+	// Start hook listener for Claude Code hook events.
+	hl, err := NewHookListener(HookSocketPath(), w.hookCh)
+	if err != nil {
+		debugf("watcher: hook listener unavailable err=%v", err)
+	} else {
+		w.hookListener = hl
+	}
+	go w.runHookLoop()
 
 	// Always run process + git polls regardless of control mode.
 	go w.runProcessPoll()
@@ -389,6 +457,15 @@ func (w *Watcher) recheckPane(paneID, source string) {
 	default:
 	}
 
+	// Skip observer recheck if hooks are active for this pane.
+	w.mu.Lock()
+	hookActive := w.hookActiveFor(paneID)
+	w.mu.Unlock()
+	if hookActive {
+		debugf("watcher: %s recheck pane=%s skipped (hook active)", source, paneID)
+		return
+	}
+
 	content, err := capturePaneBottom(paneID)
 	if err != nil {
 		debugf("watcher: %s recheck capture failed pane=%s err=%v", source, paneID, err)
@@ -425,23 +502,10 @@ func (w *Watcher) recheckPane(paneID, source string) {
 	// activity, model, context, mode — not process-tree fields).
 	status.Args = prev.Args
 	status.Provider = prev.Provider
+	status.Source = SourceObserver
 	debugf("watcher: %s recheck pane=%s provider=%s activity=%s mode=%q ctx=%d capture_lines=%d", source, paneID, status.Provider.String(), status.Activity.String(), status.ModeLabel, status.ContextPct, len(strings.Split(content, "\n")))
 
-	updates := map[string]AgentStatus{paneID: status}
-
-	// Track transitions before updating cache.
-	w.stateMu.RLock()
-	prevSnapshot := map[string]AgentStatus{paneID: prev}
-	w.stateMu.RUnlock()
-
-
-	// Update cache.
-	w.stateMu.Lock()
-	w.agents = applyAgentUpdates(w.agents, updates)
-	w.stateMu.Unlock()
-
-	w.trackTransitions(prevSnapshot, updates)
-	w.send(agentUpdateMsg{updates: updates})
+	w.applyAgentUpdate(map[string]AgentStatus{paneID: status})
 }
 
 // refreshFullState fetches complete tmux + agent state and emits a stateMsg.
@@ -455,13 +519,20 @@ func (w *Watcher) refreshFullState() {
 	agents := detectAllAgents(sessions, pt)
 	debugf("watcher: full refresh sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 
-	// Track transitions against previous state.
+	// Preserve hook-sourced agent state — don't overwrite with observer data.
+	w.mu.Lock()
 	w.stateMu.RLock()
 	prevAgents := w.agents
+	for paneID := range agents {
+		if w.hookActiveFor(paneID) {
+			if prev, ok := prevAgents[paneID]; ok && prev.Source == SourceHook {
+				agents[paneID] = prev
+			}
+		}
+	}
 	w.stateMu.RUnlock()
 
 	// Update agent pane tracking.
-	w.mu.Lock()
 	w.agentPanes = map[string]bool{}
 	for id := range agents {
 		w.agentPanes[id] = true
@@ -534,6 +605,7 @@ func (w *Watcher) pollProcesses() {
 					delete(w.lastOutput, pane.ID)
 					delete(w.lastLiveRecheck, pane.ID)
 					delete(w.workingUntil, pane.ID)
+					delete(w.hookSeen, pane.ID)
 					if t, ok := w.outputTimers[pane.ID]; ok {
 						t.Stop()
 						delete(w.outputTimers, pane.ID)
@@ -544,10 +616,16 @@ func (w *Watcher) pollProcesses() {
 				}
 
 				if status.Running {
+					// Skip observer status update if hooks are active for this pane.
+					if w.hookActiveFor(pane.ID) {
+						debugf("watcher: process poll pane=%s skipped (hook active)", pane.ID)
+						continue
+					}
 					prev := cachedAgents[pane.ID]
 					lastOut := w.lastOutput[pane.ID]
 					workingUntil := w.workingUntil[pane.ID]
 					status.Activity = heldActivity("poll", prev, status, lastOut, workingUntil, time.Now())
+					status.Source = SourceObserver
 					debugf("watcher: process poll pane=%s provider=%s activity=%s mode=%q", pane.ID, status.Provider.String(), status.Activity.String(), status.ModeLabel)
 					updates[pane.ID] = status
 				}
@@ -557,13 +635,7 @@ func (w *Watcher) pollProcesses() {
 	w.mu.Unlock()
 
 	if len(updates) > 0 {
-		w.trackTransitions(cachedAgents, updates)
-
-		w.stateMu.Lock()
-		w.agents = applyAgentUpdates(w.agents, updates)
-		w.stateMu.Unlock()
-
-		w.send(agentUpdateMsg{updates: updates})
+		w.applyAgentUpdate(updates)
 	}
 }
 
@@ -584,6 +656,91 @@ func heldActivity(source string, prev AgentStatus, status AgentStatus, lastOut, 
 	}
 
 	return activity
+}
+
+// runHookLoop reads hook events from the hook channel and applies them as
+// authoritative agent status updates.
+func (w *Watcher) runHookLoop() {
+	for {
+		select {
+		case <-w.stopCh:
+			return
+		case ev, ok := <-w.hookCh:
+			if !ok {
+				return
+			}
+			w.handleHookEvent(ev)
+		}
+	}
+}
+
+// handleHookEvent translates a hook event into an agent status update.
+func (w *Watcher) handleHookEvent(ev HookEvent) {
+	paneID := ev.PaneID
+	if paneID == "" {
+		debugf("watcher: hook event %s has no pane ID, skipping", ev.Kind)
+		return
+	}
+
+	w.mu.Lock()
+	w.hookSeen[paneID] = time.Now()
+	w.agentPanes[paneID] = true
+	w.mu.Unlock()
+
+	// Read current state for this pane to merge with.
+	w.stateMu.RLock()
+	existing, has := w.agents[paneID]
+	w.stateMu.RUnlock()
+
+	status := existing
+	if has {
+		status.Source = SourceHook
+	} else {
+		status = AgentStatus{
+			Running:  true,
+			Provider: ProviderClaude,
+			Source:   SourceHook,
+		}
+	}
+
+	switch ev.Kind {
+	case HookSessionStart:
+		status.Running = true
+		status.Activity = ActivityIdle
+		status.SessionID = ev.SessionID
+		debugf("watcher: hook session-start pane=%s session=%s", paneID, ev.SessionID)
+
+	case HookStop:
+		status.Activity = ActivityIdle
+		status.ToolName = ""
+		debugf("watcher: hook stop pane=%s", paneID)
+
+	case HookSessionEnd:
+		debugf("watcher: hook session-end pane=%s", paneID)
+		w.mu.Lock()
+		delete(w.hookSeen, paneID)
+		delete(w.agentPanes, paneID)
+		w.mu.Unlock()
+		w.applyAgentUpdate(map[string]AgentStatus{paneID: {Running: false}})
+		return
+
+	case HookNotification:
+		status.Activity = ActivityWaitingInput
+		status.Notification = ev.Message
+		debugf("watcher: hook notification pane=%s msg=%q", paneID, ev.Message)
+
+	case HookPromptSubmit:
+		status.Activity = ActivityWorking
+		status.Notification = ""
+		debugf("watcher: hook prompt-submit pane=%s", paneID)
+
+	case HookPreToolUse:
+		status.Activity = ActivityWorking
+		status.ToolName = ev.ToolName
+		debugf("watcher: hook pre-tool-use pane=%s tool=%s", paneID, ev.ToolName)
+	}
+
+	w.applyAgentUpdate(map[string]AgentStatus{paneID: status})
 }
 
 // runGitPoll periodically re-checks git status for all pane working dirs.

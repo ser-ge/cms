@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -157,6 +158,7 @@ type dashboardModel struct {
 	frame    int // tick counter for spinner animation
 	spinning bool
 	cfg      DashboardConfig
+	watcher  *Watcher // optional, for debug stats
 }
 
 const idleThreshold = 10
@@ -592,6 +594,20 @@ func (m dashboardModel) View() string {
 		help = moveSrcStyle.Render(" MOVE: j/k navigate  enter: drop here  esc: cancel")
 	} else {
 		help = helpStyle.Render(" j/k: navigate  enter: jump  m: move  x: kill  /: find  q: quit")
+	}
+
+	// In debug mode, append hook status indicator.
+	if os.Getenv("CMS_DEBUG") != "" && m.watcher != nil {
+		hookCount, hookListening := m.watcher.HookStats()
+		var tag string
+		if !hookListening {
+			tag = dimStyle.Render(" [hooks: off]")
+		} else if hookCount > 0 {
+			tag = workingStyle.Render(fmt.Sprintf(" [hooks: %d active]", hookCount))
+		} else {
+			tag = dimStyle.Render(" [hooks: listening]")
+		}
+		help += tag
 	}
 
 	return renderDashboardViewport(lines, selectedLine, help, m.width, m.height, m.cfg)

@@ -57,6 +57,15 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "hook":
+			if err := runHookCmd(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "hook-setup":
+			runHookSetup()
+			return
 		case "refresh":
 			var name string
 			if len(os.Args) > 2 {

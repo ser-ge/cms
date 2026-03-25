@@ -1,9 +1,6 @@
 package main
 
-import (
-	"strings"
-	"sync"
-)
+import "strings"
 
 // Provider identifies the agent runtime in a tmux pane.
 type Provider int
@@ -61,6 +58,14 @@ const (
 	ModeDangerFullAccess
 )
 
+// StatusSource identifies where an AgentStatus update originated.
+type StatusSource int
+
+const (
+	SourceObserver StatusSource = iota // tmux capture-pane heuristics
+	SourceHook                         // Claude Code hook (authoritative)
+)
+
 // AgentStatus is the provider-neutral runtime state for a pane.
 type AgentStatus struct {
 	Running    bool
@@ -73,167 +78,49 @@ type AgentStatus struct {
 	Mode       AgentModeKind
 	ModeLabel  string
 	Args       string
-}
+	Source     StatusSource
 
-type providerSpec struct {
-	provider    Provider
-	procMatch   func(procEntry) bool
-	parse       func(string, *AgentStatus)
-	holdWorking bool
-}
-
-var providerSpecs = []providerSpec{
-	{
-		provider:    ProviderClaude,
-		procMatch:   func(p procEntry) bool { return strings.Contains(p.comm, "claude") },
-		parse:       parseClaudePane,
-		holdWorking: true,
-	},
-	{
-		provider:    ProviderCodex,
-		procMatch:   func(p procEntry) bool { return strings.Contains(p.comm, "codex") },
-		parse:       parseCodexPane,
-		holdWorking: false,
-	},
-}
-
-// DetectAgent checks known providers in a pane and returns the normalized status.
-func DetectAgent(pane Pane, pt procTable) AgentStatus {
-	for _, spec := range providerSpecs {
-		found, args := findProcessInTree(pt, pane.PID, spec.procMatch, extractArgsAfterBinary)
-		if !found {
-			continue
-		}
-		status := AgentStatus{Provider: spec.provider, Running: true, Args: args}
-		content, err := capturePaneBottom(pane.ID)
-		if err != nil {
-			return status
-		}
-		spec.parse(content, &status)
-		return status
-	}
-	return AgentStatus{}
-}
-
-// detectAllAgents runs provider detection for all panes concurrently.
-func detectAllAgents(sessions []Session, pt procTable) map[string]AgentStatus {
-	var mu sync.Mutex
-	results := map[string]AgentStatus{}
-	var wg sync.WaitGroup
-
-	for _, sess := range sessions {
-		for _, win := range sess.Windows {
-			for _, pane := range win.Panes {
-				wg.Add(1)
-				go func(p Pane) {
-					defer wg.Done()
-					status := DetectAgent(p, pt)
-					if status.Running {
-						mu.Lock()
-						results[p.ID] = status
-						mu.Unlock()
-					}
-				}(pane)
-			}
-		}
-	}
-	wg.Wait()
-	return results
-}
-
-// capturePaneBottom captures the visible content of a tmux pane.
-func capturePaneBottom(paneID string) (string, error) {
-	return runTmux("capture-pane", "-t", paneID, "-p", "-J")
-}
-
-// findProcessInTree walks a pane's process tree and returns the first matching descendant.
-func findProcessInTree(pt procTable, panePID int, match func(procEntry) bool, extractArgs func(string) string) (bool, string) {
-	queue := []int{panePID}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-
-		for _, childPID := range pt.children[current] {
-			child := pt.procs[childPID]
-			if match(child) {
-				if extractArgs == nil {
-					return true, ""
-				}
-				return true, extractArgs(child.args)
-			}
-			queue = append(queue, childPID)
-		}
-	}
-	return false, ""
-}
-
-func isShellCommand(cmd string) bool {
-	switch cmd {
-	case "fish", "bash", "zsh", "sh", "dash", "tcsh", "ksh":
-		return true
-	default:
-		return false
-	}
-}
-
-func joinParts(parts []string) string {
-	return strings.Join(parts, " · ")
-}
-
-// extractArgsAfterBinary strips the binary name from a full command line
-// and returns just the arguments.
-func extractArgsAfterBinary(fullArgs string) string {
-	parts := strings.Fields(fullArgs)
-	if len(parts) <= 1 {
-		return ""
-	}
-	return strings.Join(parts[1:], " ")
+	// Hook-enriched fields (only populated via SourceHook).
+	SessionID    string // Claude Code session ID
+	ToolName     string // current tool being executed
+	Notification string // last notification message
 }
 
 // applyAgentUpdates merges incremental agent status updates into an existing map.
+// Hook-sourced updates take precedence over observer-sourced updates.
 func applyAgentUpdates(dst map[string]AgentStatus, updates map[string]AgentStatus) map[string]AgentStatus {
 	if dst == nil {
 		dst = make(map[string]AgentStatus, len(updates))
 	}
 	for id, status := range updates {
-		if status.Running {
-			dst[id] = status
-		} else {
+		if !status.Running {
 			delete(dst, id)
+			continue
+		}
+		existing, has := dst[id]
+		if has && existing.Source == SourceHook && status.Source == SourceObserver {
+			// Don't overwrite hook data with observer data.
+			// Merge only fields that observer knows better (model, context, mode from status line).
+			if status.Model != "" {
+				existing.Model = status.Model
+			}
+			if status.ContextSet {
+				existing.ContextPct = status.ContextPct
+				existing.ContextSet = true
+			}
+			if status.Branch != "" {
+				existing.Branch = status.Branch
+			}
+			if status.ModeLabel != "" {
+				existing.Mode = status.Mode
+				existing.ModeLabel = status.ModeLabel
+			}
+			dst[id] = existing
+		} else {
+			dst[id] = status
 		}
 	}
 	return dst
-}
-
-func knownProviders() []Provider {
-	providers := make([]Provider, 0, len(providerSpecs))
-	for _, spec := range providerSpecs {
-		providers = append(providers, spec.provider)
-	}
-	return providers
-}
-
-func providerSpecFor(provider Provider) (providerSpec, bool) {
-	for _, spec := range providerSpecs {
-		if spec.provider == provider {
-			return spec, true
-		}
-	}
-	return providerSpec{}, false
-}
-
-func reparseAgentStatus(content string, status *AgentStatus) bool {
-	spec, ok := providerSpecFor(status.Provider)
-	if !ok || spec.parse == nil {
-		return false
-	}
-	spec.parse(content, status)
-	return true
-}
-
-func shouldHoldWorking(status AgentStatus) bool {
-	spec, ok := providerSpecFor(status.Provider)
-	return ok && spec.holdWorking
 }
 
 func normalizeParsedAgentStatus(status *AgentStatus) {
@@ -243,4 +130,8 @@ func normalizeParsedAgentStatus(status *AgentStatus) {
 	if status.Activity == ActivityUnknown {
 		status.Activity = ActivityIdle
 	}
+}
+
+func joinParts(parts []string) string {
+	return strings.Join(parts, " · ")
 }
