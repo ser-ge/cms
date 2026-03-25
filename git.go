@@ -212,6 +212,9 @@ func gitCmd(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.Output()
 	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			return "", fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))
+		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
