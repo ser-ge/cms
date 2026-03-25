@@ -138,16 +138,22 @@ func isBranchIntegrated(repoRoot, branch, target string) (bool, string) {
 	return false, ""
 }
 
-// loadProjectConfig reads .cms.toml from the repo root.
-// Returns a zero ProjectConfig if the file doesn't exist.
-func loadProjectConfig(repoRoot string) ProjectConfig {
+// loadProjectConfig reads .cms.toml. Searches repoRoot first, then
+// worktreeDir (for bare repos where the checkout is separate from the root).
+func loadProjectConfig(repoRoot, worktreeDir string) ProjectConfig {
 	var proj ProjectConfig
-	path := filepath.Join(repoRoot, ".cms.toml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return proj
+
+	for _, dir := range []string{repoRoot, worktreeDir} {
+		if dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, ".cms.toml")
+		if data, err := os.ReadFile(path); err == nil {
+			tomlUnmarshal(data, &proj)
+			return proj
+		}
 	}
-	tomlUnmarshal(data, &proj)
+
 	return proj
 }
 
@@ -155,8 +161,9 @@ func loadProjectConfig(repoRoot string) ProjectConfig {
 // with per-repo project config (from .cms.toml). Project overrides user:
 // if the project sets hooks, they replace user hooks entirely.
 // Scalars (base_dir, commit_cmd) use project value if non-empty.
-func resolveWorktreeConfig(repoRoot string, userCfg *WorktreeConfig) WorktreeConfig {
-	proj := loadProjectConfig(repoRoot)
+// worktreeDir is the current worktree checkout (may differ from repoRoot for bare repos).
+func resolveWorktreeConfig(repoRoot, worktreeDir string, userCfg *WorktreeConfig) WorktreeConfig {
+	proj := loadProjectConfig(repoRoot, worktreeDir)
 	merged := *userCfg
 
 	p := proj.Worktree
@@ -302,13 +309,28 @@ func RunPostCreateHooks(mainWorktree, newWorktree string, hooks []WorktreeHook) 
 	return RunHooks("post-create", mainWorktree, newWorktree, hooks)
 }
 
-// findRepoRoot resolves the git repo root from the current directory.
+// findRepoRoot resolves the canonical repo root from any directory —
+// whether inside the main worktree, a linked worktree, or a bare repo.
+// Always returns the main worktree root (where .cms.toml lives and
+// base_dir resolves from), not the linked worktree you happen to be in.
 func findRepoRoot(dir string) (string, error) {
-	root, err := gitCmd(dir, "rev-parse", "--show-toplevel")
+	// --git-common-dir gives the shared git dir across all worktrees.
+	// For a normal repo:     "/path/to/repo/.git"
+	// For a linked worktree: "/path/to/main-repo/.git"
+	// For a bare repo:       "/path/to/bare-repo"
+	commonDir, err := gitCmd(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return "", fmt.Errorf("not a git repository")
 	}
-	return root, nil
+
+	// If common dir ends with .git, the repo root is its parent (normal repo).
+	// Otherwise it IS the repo root (bare repo).
+	// Note: --is-bare-repository lies when called from a linked worktree of
+	// a bare repo (returns false), so we check the path instead.
+	if filepath.Base(commonDir) == ".git" {
+		return filepath.Dir(commonDir), nil
+	}
+	return commonDir, nil
 }
 
 // findMainWorktree returns the path of the main worktree for a repo.

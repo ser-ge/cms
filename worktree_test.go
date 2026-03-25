@@ -12,7 +12,7 @@ import (
 
 func TestLoadProjectConfig_Missing(t *testing.T) {
 	dir := t.TempDir()
-	cfg := loadProjectConfig(dir)
+	cfg := loadProjectConfig(dir, dir)
 	if cfg.Worktree.BaseDir != "" {
 		t.Errorf("expected empty base_dir, got %q", cfg.Worktree.BaseDir)
 	}
@@ -38,7 +38,7 @@ command = "npm install"
 command = "cleanup.sh"
 `), 0o644)
 
-	cfg := loadProjectConfig(dir)
+	cfg := loadProjectConfig(dir, dir)
 	if cfg.Worktree.BaseDir != "../wt" {
 		t.Errorf("base_dir = %q, want %q", cfg.Worktree.BaseDir, "../wt")
 	}
@@ -74,7 +74,7 @@ command = "project-hook"
 		Hooks:     []WorktreeHook{{Command: "user-hook"}},
 	}
 
-	merged := resolveWorktreeConfig(dir, userCfg)
+	merged := resolveWorktreeConfig(dir, dir, userCfg)
 	if merged.BaseDir != "../project-wt" {
 		t.Errorf("base_dir should be project value, got %q", merged.BaseDir)
 	}
@@ -95,7 +95,7 @@ func TestResolveWorktreeConfig_UserFallback(t *testing.T) {
 		Hooks:     []WorktreeHook{{Command: "user-hook"}},
 	}
 
-	merged := resolveWorktreeConfig(dir, userCfg)
+	merged := resolveWorktreeConfig(dir, dir, userCfg)
 	if merged.BaseDir != "../user-wt" {
 		t.Errorf("base_dir should fall back to user, got %q", merged.BaseDir)
 	}
@@ -120,7 +120,7 @@ command = "project-hook"
 		Hooks:   []WorktreeHook{{Command: "user-hook"}},
 	}
 
-	merged := resolveWorktreeConfig(dir, userCfg)
+	merged := resolveWorktreeConfig(dir, dir, userCfg)
 	if merged.BaseDir != "../user-wt" {
 		t.Errorf("base_dir should stay as user value, got %q", merged.BaseDir)
 	}
@@ -348,6 +348,39 @@ func TestFindRepoRoot_NotRepo(t *testing.T) {
 	_, err := findRepoRoot(dir)
 	if err == nil {
 		t.Error("expected error for non-repo dir")
+	}
+}
+
+func TestFindRepoRoot_FromLinkedWorktree(t *testing.T) {
+	repo := initTestRepo(t)
+	wtPath := filepath.Join(t.TempDir(), "linked")
+	CreateWorktree(repo, wtPath, "linked", CreateWorktreeOpts{NewBranch: true})
+	defer RemoveWorktree(repo, wtPath, true)
+
+	// findRepoRoot from inside the linked worktree should return the main repo root.
+	root, err := findRepoRoot(wtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoReal, _ := filepath.EvalSymlinks(repo)
+	rootReal, _ := filepath.EvalSymlinks(root)
+	if rootReal != repoReal {
+		t.Errorf("from linked worktree: got %q, want main repo %q", rootReal, repoReal)
+	}
+}
+
+func TestFindRepoRoot_BareRepo(t *testing.T) {
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+
+	root, err := findRepoRoot(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bareReal, _ := filepath.EvalSymlinks(bare)
+	rootReal, _ := filepath.EvalSymlinks(root)
+	if rootReal != bareReal {
+		t.Errorf("bare repo: got %q, want %q", rootReal, bareReal)
 	}
 }
 

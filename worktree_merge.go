@@ -64,7 +64,7 @@ func worktreeMerge(args []string) error {
 	}
 
 	cfg := LoadConfig()
-	resolved := resolveWorktreeConfig(root, &cfg.Worktree)
+	resolved := resolveWorktreeConfig(root, cwd, &cfg.Worktree)
 	wtCfg := &resolved
 	mainWt, _ := findMainWorktree(root)
 

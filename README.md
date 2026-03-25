@@ -105,17 +105,18 @@ The diff is piped to the command with a prompt asking for a concise commit messa
 
 #### `cms wt rm`
 
-Removes a worktree with safety checks.
+Removes worktree + branch + tmux window (same cleanup as `merge`).
 
 ```bash
-cms wt rm feature-auth              # remove worktree only
-cms wt rm --with-branch feature     # also delete the branch (if merged)
-cms wt rm -f --with-branch feature  # force delete even if not merged
+cms wt rm feature-auth              # remove worktree, delete branch (if merged), kill tmux window
+cms wt rm --keep-branch feature     # remove worktree but keep the branch
+cms wt rm -f feature                # force: skip integration check, delete unmerged branch
 ```
 
 Safety features:
 - **Agent-aware**: blocks removal if Claude or Codex agents are running in any tmux pane inside the worktree. Use `--force` to override.
-- **Safe branch deletion**: `--with-branch` checks if the branch is integrated into the default branch (same commit, ancestor, or no unique commits via `git cherry`). Skips deletion with a warning if not merged.
+- **Safe branch deletion**: by default, checks if the branch is integrated into the default branch (same commit, ancestor, or no unique commits via `git cherry`). Skips deletion with a warning if not merged. Use `--force` to delete anyway.
+- **Tmux cleanup**: kills the tmux window associated with the removed worktree.
 - **Self-protection**: refuses to remove the worktree you're currently inside.
 - **Main protection**: refuses to remove the main worktree.
 
@@ -148,7 +149,7 @@ Each hook is a shell command. `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` env vars a
 
 [worktree]
 base_dir = "../worktrees"
-commit_cmd = "llm -m claude-haiku"
+# commit_cmd = "llm -m claude-haiku"
 
 [[worktree.hooks]]
 command = "cp $CMS_REPO_ROOT/.env .env"

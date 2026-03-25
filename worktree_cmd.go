@@ -124,7 +124,7 @@ func worktreeAdd(args []string) error {
 
 	// Merge user config with per-repo .cms.toml.
 	cfg := LoadConfig()
-	wtCfg := resolveWorktreeConfig(root, &cfg.Worktree)
+	wtCfg := resolveWorktreeConfig(root, cwd, &cfg.Worktree)
 	if path == "" {
 		baseDir := resolveWorktreeBaseDir(root, &wtCfg)
 		// Sanitize branch for path: feature/auth → feature-auth
@@ -182,21 +182,21 @@ func worktreeOpenTmuxWindow(branch, wtPath string) {
 
 func worktreeRemove(args []string) error {
 	force := false
-	withBranch := false
+	keepBranch := false
 	positional := []string{}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--force", "-f":
 			force = true
-		case "--with-branch":
-			withBranch = true
+		case "--keep-branch":
+			keepBranch = true
 		default:
 			positional = append(positional, args[i])
 		}
 	}
 
 	if len(positional) == 0 {
-		return fmt.Errorf("usage: cms worktree remove [-f] [--with-branch] <branch-or-path>")
+		return fmt.Errorf("usage: cms worktree remove [-f] [--keep-branch] <branch-or-path>")
 	}
 
 	cwd, err := os.Getwd()
@@ -250,7 +250,7 @@ func worktreeRemove(args []string) error {
 
 	// Run pre-remove hooks.
 	cfg := LoadConfig()
-	wtCfg := resolveWorktreeConfig(root, &cfg.Worktree)
+	wtCfg := resolveWorktreeConfig(root, cwd, &cfg.Worktree)
 	mainWt, _ := findMainWorktree(root)
 	if len(wtCfg.PreRemove) > 0 {
 		fmt.Fprintf(os.Stderr, "running %d pre-remove hooks\n", len(wtCfg.PreRemove))
@@ -264,8 +264,8 @@ func worktreeRemove(args []string) error {
 		return fmt.Errorf("git worktree remove failed: %w", err)
 	}
 
-	if withBranch && found.Branch != "" {
-		// Safe branch deletion: check integration before deleting.
+	// Delete branch (same as merge: always delete unless --keep-branch).
+	if !keepBranch && found.Branch != "" {
 		if !force {
 			defBranch, err := defaultBranch(root)
 			if err == nil && defBranch != "" {
@@ -273,7 +273,7 @@ func worktreeRemove(args []string) error {
 				if !integrated {
 					fmt.Fprintf(os.Stderr, "warning: branch %s is not merged into %s, skipping deletion\n", found.Branch, defBranch)
 					fmt.Fprintf(os.Stderr, "  use --force to delete anyway\n")
-					return nil
+					goto cleanup
 				}
 				fmt.Fprintf(os.Stderr, "branch %s is safe to delete (%s)\n", found.Branch, reason)
 			}
@@ -283,6 +283,10 @@ func worktreeRemove(args []string) error {
 			fmt.Fprintf(os.Stderr, "warning: branch delete failed: %v\n", err)
 		}
 	}
+
+cleanup:
+	// Kill tmux window for the removed worktree.
+	cleanupTmuxWindow(found.Path)
 
 	return nil
 }
