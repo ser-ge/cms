@@ -99,7 +99,7 @@ func worktreeMerge(args []string) error {
 	}
 
 	// Check for uncommitted changes.
-	status, _ := gitCmd(root, "status", "--porcelain")
+	status, _ := gitCmd(cwd, "status", "--porcelain")
 	hasChanges := strings.TrimSpace(status) != ""
 
 	// Find the current worktree info.
@@ -132,7 +132,7 @@ func worktreeMerge(args []string) error {
 			return fmt.Errorf("uncommitted changes present; commit them first or use --squash")
 		}
 		fmt.Fprintf(os.Stderr, "staging uncommitted changes\n")
-		if _, err := gitCmd(root, "add", "-A"); err != nil {
+		if _, err := gitCmd(cwd, "add", "-A"); err != nil {
 			return fmt.Errorf("git add failed: %w", err)
 		}
 	}
@@ -147,7 +147,7 @@ func worktreeMerge(args []string) error {
 
 	// Step 3: Squash if requested.
 	if opts.Squash {
-		if err := squashCommits(root, target, currentBranch, opts, wtCfg); err != nil {
+		if err := squashCommits(cwd, target, currentBranch, opts, wtCfg); err != nil {
 			return err
 		}
 	}
@@ -162,7 +162,7 @@ func worktreeMerge(args []string) error {
 
 	// Step 5: Rebase onto target.
 	fmt.Fprintf(os.Stderr, "rebasing onto %s\n", target)
-	if _, err := gitCmd(root, "rebase", target); err != nil {
+	if _, err := gitCmd(cwd, "rebase", target); err != nil {
 		return fmt.Errorf("rebase failed: %w\nresolve conflicts and run: git rebase --continue", err)
 	}
 
@@ -253,23 +253,23 @@ func worktreeMerge(args []string) error {
 }
 
 // squashCommits squashes all branch commits into a single commit.
-func squashCommits(repoRoot, target, branch string, opts MergeOpts, wtCfg *WorktreeConfig) error {
+func squashCommits(wtDir, target, branch string, opts MergeOpts, wtCfg *WorktreeConfig) error {
 	// Find merge base.
-	mergeBase, err := gitCmd(repoRoot, "merge-base", target, branch)
+	mergeBase, err := gitCmd(wtDir, "merge-base", target, branch)
 	if err != nil {
 		return fmt.Errorf("cannot find merge base between %s and %s: %w", target, branch, err)
 	}
 
 	// Soft reset to merge base (keeps all changes staged).
 	fmt.Fprintf(os.Stderr, "squashing commits since %s\n", mergeBase[:8])
-	if _, err := gitCmd(repoRoot, "reset", "--soft", mergeBase); err != nil {
+	if _, err := gitCmd(wtDir, "reset", "--soft", mergeBase); err != nil {
 		return fmt.Errorf("git reset --soft failed: %w", err)
 	}
 
 	// Determine commit message.
 	message := opts.Message
 	if message == "" {
-		message = generateCommitMessage(repoRoot, target, branch, wtCfg)
+		message = generateCommitMessage(wtDir, target, branch, wtCfg)
 	}
 
 	// Commit.
@@ -278,10 +278,10 @@ func squashCommits(repoRoot, target, branch string, opts MergeOpts, wtCfg *Workt
 		commitArgs = append(commitArgs, "-m", message)
 	} else if !opts.NoEdit {
 		// Open editor for message.
-		return commitInteractive(repoRoot)
+		return commitInteractive(wtDir)
 	}
 
-	if _, err := gitCmd(repoRoot, commitArgs...); err != nil {
+	if _, err := gitCmd(wtDir, commitArgs...); err != nil {
 		return fmt.Errorf("squash commit failed: %w", err)
 	}
 
@@ -289,10 +289,10 @@ func squashCommits(repoRoot, target, branch string, opts MergeOpts, wtCfg *Workt
 }
 
 // generateCommitMessage creates a commit message, optionally via LLM.
-func generateCommitMessage(repoRoot, target, branch string, wtCfg *WorktreeConfig) string {
+func generateCommitMessage(wtDir, target, branch string, wtCfg *WorktreeConfig) string {
 	// Try LLM generation if configured.
 	if wtCfg.CommitCmd != "" {
-		msg := generateCommitMessageLLM(repoRoot, wtCfg.CommitCmd)
+		msg := generateCommitMessageLLM(wtDir, wtCfg.CommitCmd)
 		if msg != "" {
 			return msg
 		}
@@ -300,7 +300,7 @@ func generateCommitMessage(repoRoot, target, branch string, wtCfg *WorktreeConfi
 	}
 
 	// Default message: summarize the branch.
-	diffStat, _ := gitCmd(repoRoot, "diff", "--stat", "HEAD~1")
+	diffStat, _ := gitCmd(wtDir, "diff", "--stat", "HEAD~1")
 	subject := fmt.Sprintf("Merge branch '%s'", branch)
 	if diffStat != "" {
 		return subject + "\n\n" + diffStat
@@ -309,20 +309,20 @@ func generateCommitMessage(repoRoot, target, branch string, wtCfg *WorktreeConfi
 }
 
 // generateCommitMessageLLM pipes the staged diff to an LLM command and returns its output.
-func generateCommitMessageLLM(repoRoot, llmCmd string) string {
+func generateCommitMessageLLM(wtDir, llmCmd string) string {
 	// Get the staged diff.
-	diff, err := gitCmd(repoRoot, "diff", "--cached", "--stat")
+	diff, err := gitCmd(wtDir, "diff", "--cached", "--stat")
 	if err != nil || diff == "" {
-		diff, _ = gitCmd(repoRoot, "diff", "HEAD~1", "--stat")
+		diff, _ = gitCmd(wtDir, "diff", "HEAD~1", "--stat")
 	}
 	if diff == "" {
 		return ""
 	}
 
 	// Get detailed diff for context (limit to avoid token overload).
-	detailedDiff, _ := gitCmd(repoRoot, "diff", "--cached")
+	detailedDiff, _ := gitCmd(wtDir, "diff", "--cached")
 	if detailedDiff == "" {
-		detailedDiff, _ = gitCmd(repoRoot, "diff", "HEAD~1")
+		detailedDiff, _ = gitCmd(wtDir, "diff", "HEAD~1")
 	}
 
 	// Truncate large diffs.
@@ -336,7 +336,7 @@ func generateCommitMessageLLM(repoRoot, llmCmd string) string {
 		diff, detailedDiff)
 
 	cmd := exec.Command("sh", "-c", llmCmd)
-	cmd.Dir = repoRoot
+	cmd.Dir = wtDir
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stderr = os.Stderr
 
@@ -349,8 +349,8 @@ func generateCommitMessageLLM(repoRoot, llmCmd string) string {
 }
 
 // commitInteractive opens the user's editor for a commit message.
-func commitInteractive(repoRoot string) error {
-	cmd := exec.Command("git", "-C", repoRoot, "commit")
+func commitInteractive(wtDir string) error {
+	cmd := exec.Command("git", "-C", wtDir, "commit")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
