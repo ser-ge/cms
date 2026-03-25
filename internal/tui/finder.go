@@ -524,6 +524,14 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.rebuildPicker()
 		return m, nil
 
+	case markRemovedMsg:
+		// Reload marks after deletion.
+		return m, loadMarksCmd(m.sessData)
+
+	case sessionKilledMsg, paneKilledMsg:
+		// Watcher will send a StateMsg to refresh, nothing to do here.
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -538,6 +546,28 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.picker, cmd = m.picker.Update(msg)
+
+	// Handle normal-mode actions (e.g. x to close).
+	if m.picker.action != PickerNoAction && m.picker.chosen >= 0 && m.picker.chosen < len(m.entries) {
+		entry := m.entries[m.picker.chosen]
+		action := m.picker.action
+		m.picker.action = PickerNoAction
+		m.picker.chosen = -1
+
+		if action == PickerActionDelete {
+			switch entry.kind {
+			case KindSession:
+				cmd = killSessionCmd(entry.sessionName)
+			case KindPane, KindQueue, KindWindow:
+				if entry.paneID != "" {
+					cmd = killPaneCmd(entry.paneID)
+				}
+			case KindMark:
+				cmd = removeMarkCmd(entry.markLabel)
+			}
+		}
+		return m, cmd
+	}
 
 	if m.picker.done {
 		if m.picker.chosen >= 0 && m.picker.chosen < len(m.entries) {

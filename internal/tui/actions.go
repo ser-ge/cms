@@ -5,6 +5,7 @@ import (
 
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/attention"
+	"github.com/serge/cms/internal/mark"
 	"github.com/serge/cms/internal/session"
 	"github.com/serge/cms/internal/tmux"
 )
@@ -14,9 +15,11 @@ import (
 type paneKilledMsg struct{ PaneID string }
 type paneMovedMsg struct{ SrcID, DstID string }
 type paneSwitchedMsg struct{ PaneID string }
+type sessionKilledMsg struct{ Name string }
 type sessionSwitchedMsg struct{ Name string }
 type projectOpenedMsg struct{ Path string }
 type attentionMarkedSeenMsg struct{ PaneID string }
+type markRemovedMsg struct{ Label string }
 
 // Action command factories — each returns a tea.Cmd that performs the
 // operation and sends a result message back to the TUI.
@@ -53,6 +56,20 @@ func openProjectCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		session.OpenProject(path)
 		return projectOpenedMsg{Path: path}
+	}
+}
+
+func killSessionCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		session.Kill(name)
+		return sessionKilledMsg{Name: name}
+	}
+}
+
+func removeMarkCmd(label string) tea.Cmd {
+	return func() tea.Msg {
+		mark.Remove(label)
+		return markRemovedMsg{Label: label}
 	}
 }
 

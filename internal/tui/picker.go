@@ -37,6 +37,14 @@ const (
 	pickerNormal                   // vim-style navigation with j/k
 )
 
+// PickerAction is a normal-mode command the parent should handle.
+type PickerAction int
+
+const (
+	PickerNoAction PickerAction = iota
+	PickerActionDelete          // x: delete/close the selected item
+)
+
 type pickerModel struct {
 	items   []PickerItem
 	matches []fzfMatch // current fuzzy matches (nil = show all)
@@ -52,8 +60,10 @@ type pickerModel struct {
 	width         int
 	height        int
 	title         string
-	chosen        int // index into items of chosen item, -1 if none
+	chosen        int          // index into items of chosen item, -1 if none
+	action        PickerAction // normal-mode action for parent to handle
 	done          bool
+	confirm       string // non-empty = showing "y/n" confirmation prompt
 	slab          *util.Slab // reusable memory for fzf algo
 }
 
@@ -130,6 +140,19 @@ func (m pickerModel) Update(msg tea.Msg) (pickerModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Confirmation prompt intercepts all keys.
+		if m.confirm != "" {
+			switch msg.String() {
+			case "y", "Y":
+				m.chosen = m.selectedItem()
+				m.action = PickerActionDelete
+				m.confirm = ""
+			default:
+				m.confirm = ""
+			}
+			return m, nil
+		}
+
 		// Global keys (both modes).
 		switch msg.String() {
 		case "enter":
@@ -252,6 +275,11 @@ func (m pickerModel) updateNormal(msg tea.KeyMsg) (pickerModel, tea.Cmd) {
 		m.mode = pickerInsert
 		m.input.Focus()
 		return m, textinput.Blink
+	case "x":
+		if m.selectedItem() >= 0 {
+			m.confirm = "close? y/n"
+		}
+		return m, nil
 	case "esc", "q":
 		m.done = true
 		m.chosen = m.selectedItem()
@@ -442,10 +470,12 @@ func (m pickerModel) View() string {
 	b.WriteString("  " + m.input.View() + "\n")
 	count := pickerCountStyle.Render(fmt.Sprintf("  %d/%d", len(visible), len(m.items)))
 	var help string
-	if m.mode == pickerInsert {
+	if m.confirm != "" {
+		help = pickerConfirmStyle.Render("  " + m.confirm)
+	} else if m.mode == pickerInsert {
 		help = pickerCountStyle.Render("  esc: select mode  enter: switch  ctrl+c: quit")
 	} else {
-		help = pickerCountStyle.Render("  j/k: navigate  i,/: filter  enter: switch  esc,q: back")
+		help = pickerCountStyle.Render("  j/k: navigate  i,/: filter  x: close  enter: switch  esc,q: back")
 	}
 	b.WriteString(count + help + "\n")
 

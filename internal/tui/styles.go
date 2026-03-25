@@ -47,6 +47,7 @@ var (
 	pickerMatchStyle    lipgloss.Style
 	pickerTitleStyle    lipgloss.Style
 	pickerCountStyle    lipgloss.Style
+	pickerConfirmStyle  lipgloss.Style
 )
 
 // InitStyles initializes all shared styles from a loaded config.
@@ -94,6 +95,7 @@ func InitStyles(cfg config.Config) {
 	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working)).Bold(true)
 	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Shared.Session))
 	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
+	pickerConfirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting)).Bold(true)
 
 	workingFramesUI = append([]string(nil), cfg.Icons.WorkingFrames...)
 	waitingIndicator = cfg.Icons.Waiting
