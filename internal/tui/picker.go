@@ -455,10 +455,9 @@ func (m pickerModel) View() string {
 		line := " " + icon + title + desc
 
 		if isSelected {
-			// Pad to full width so background highlight extends across.
-			visible := lipgloss.Width(line)
-			if visible < m.width {
-				line += strings.Repeat(" ", m.width-visible)
+			lineW := lipgloss.Width(line)
+			if lineW < m.width {
+				line += strings.Repeat(" ", m.width-lineW)
 			}
 			line = pickerSelectedStyle.Render(line)
 		}

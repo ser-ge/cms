@@ -88,10 +88,79 @@ type DashboardConfig struct {
 	ShowContextPercentage bool     `toml:"show_context_percentage"`
 }
 
+// PickerSortConfig controls sort behavior for a single picker type.
+// nil booleans inherit from FinderConfig defaults.
+type PickerSortConfig struct {
+	DemoteCurrent *bool `toml:"demote_current"`
+	PromoteRecent *bool `toml:"promote_recent"`
+	PromoteOpen   *bool `toml:"promote_open"` // promote items with active agent/window activity
+}
+
 type FinderConfig struct {
 	ProviderOrder         []string `toml:"provider_order"`
 	StateOrder            []string `toml:"state_order"`
 	ShowContextPercentage bool     `toml:"show_context_percentage"`
+
+	// What appears in bare `cms` and in what order.
+	Include []string `toml:"include"`
+
+	// Global sort defaults (per-picker sections override).
+	DemoteCurrent bool `toml:"demote_current"`
+	PromoteRecent bool `toml:"promote_recent"`
+	PromoteOpen   bool `toml:"promote_open"` // promote items that are open (have tmux session/window)
+
+	// Per-picker overrides.
+	Sessions  PickerSortConfig `toml:"sessions"`
+	Projects  PickerSortConfig `toml:"projects"`
+	Worktrees PickerSortConfig `toml:"worktrees"`
+	Windows   PickerSortConfig `toml:"windows"`
+	Panes     PickerSortConfig `toml:"panes"`
+	Marks     PickerSortConfig `toml:"marks"`
+}
+
+// ShouldDemoteCurrent returns whether the given picker type should push
+// the active/current item to the bottom.
+func (f FinderConfig) ShouldDemoteCurrent(pickerType string) bool {
+	if psc := f.pickerSort(pickerType); psc.DemoteCurrent != nil {
+		return *psc.DemoteCurrent
+	}
+	return f.DemoteCurrent
+}
+
+// ShouldPromoteRecent returns whether the given picker type should promote
+// the most recently visited item to the top.
+func (f FinderConfig) ShouldPromoteRecent(pickerType string) bool {
+	if psc := f.pickerSort(pickerType); psc.PromoteRecent != nil {
+		return *psc.PromoteRecent
+	}
+	return f.PromoteRecent
+}
+
+// ShouldPromoteOpen returns whether items that are "open" (have a tmux
+// session or window) should be promoted above unopened items.
+func (f FinderConfig) ShouldPromoteOpen(pickerType string) bool {
+	if psc := f.pickerSort(pickerType); psc.PromoteOpen != nil {
+		return *psc.PromoteOpen
+	}
+	return f.PromoteOpen
+}
+
+func (f FinderConfig) pickerSort(pickerType string) PickerSortConfig {
+	switch pickerType {
+	case "sessions":
+		return f.Sessions
+	case "projects":
+		return f.Projects
+	case "worktrees":
+		return f.Worktrees
+	case "windows":
+		return f.Windows
+	case "panes":
+		return f.Panes
+	case "marks":
+		return f.Marks
+	}
+	return PickerSortConfig{}
 }
 
 // WorktreeConfig holds worktree settings. Loaded from user config
@@ -179,11 +248,17 @@ func DefaultDashboardConfig() DashboardConfig {
 	}
 }
 
+func boolPtr(b bool) *bool { return &b }
+
 func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
 		ProviderOrder:         []string{"claude", "codex"},
 		StateOrder:            []string{"idle", "working", "waiting"},
 		ShowContextPercentage: true,
+		Include:               []string{"sessions", "queue", "worktrees", "marks", "projects"},
+		DemoteCurrent:         true,
+		PromoteRecent:         false,
+		Sessions:              PickerSortConfig{PromoteRecent: boolPtr(true)},
 	}
 }
 
@@ -278,6 +353,15 @@ func (c *Config) normalize() {
 	df := DefaultFinderConfig()
 	defaultSlice(&c.Finder.ProviderOrder, df.ProviderOrder)
 	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
+	defaultSlice(&c.Finder.Include, df.Include)
+
+	// Migrate legacy fields to new finder sort config.
+	if c.General.LastSessionFirst && c.Finder.Sessions.PromoteRecent == nil {
+		c.Finder.Sessions.PromoteRecent = boolPtr(true)
+	}
+	if c.General.AttachedLast && c.Finder.Sessions.DemoteCurrent == nil {
+		c.Finder.Sessions.DemoteCurrent = boolPtr(true)
+	}
 
 	dg := DefaultGeneralConfig()
 	defaultSlice(&c.General.SearchPaths, dg.SearchPaths)

@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -219,6 +221,11 @@ func scanWorktreesCmd(sessions []tmux.Session, agents map[string]agent.AgentStat
 	return func() tea.Msg {
 		_, _, current := w.CachedState()
 		cwd := currentPaneWorkingDir(sessions, current)
+		if cwd == "" {
+			// Fallback to process working directory (e.g. at startup before
+			// watcher has populated current target).
+			cwd, _ = os.Getwd()
+		}
 		if cwd == "" {
 			return worktreesScannedMsg{}
 		}
@@ -617,99 +624,238 @@ func (m *finderModel) rebuildPicker() {
 	var items []PickerItem
 	var entries []finderEntry
 
-	// Sessions: preserve tmux order, with optional last-session promotion and
-	// attached-session demotion controlled by config.
-	if (m.kind == FinderAll || m.kind == FinderSessions) && len(m.sessions) > 0 {
-		// Build index pairs so we can sort sessions + entries together.
-		type indexedSession struct {
-			idx         int
-			attached    bool
-			lastSession bool
-		}
-		ordered := make([]indexedSession, len(m.sessions))
-		lastSessionName := m.lastSessionName
-		for i := range m.sessions {
-			name := m.sessIdx[i].sessionName
-			var attached bool
-			for _, sess := range m.sessData {
-				if sess.Name == name {
-					attached = sess.Attached
-					break
-				}
-			}
-			ordered[i] = indexedSession{
-				idx:         i,
-				attached:    attached,
-				lastSession: lastSessionName != "" && name == lastSessionName,
-			}
-		}
+	// Determine which sections to include.
+	// Dedicated modes show their single type; FinderAll uses config include order.
+	sections := m.sectionsForKind()
 
-		// Sort: optionally promote the tmux last session and optionally demote attached.
-		sort.SliceStable(ordered, func(a, b int) bool {
-			if ordered[a].lastSession != ordered[b].lastSession {
-				return ordered[a].lastSession
-			}
-			if m.cfg.General.AttachedLast && ordered[a].attached != ordered[b].attached {
-				return !ordered[a].attached // unattached before attached
-			}
-			return false
-		})
-
-		for _, o := range ordered {
-			items = append(items, m.sessions[o.idx])
-			entries = append(entries, m.sessIdx[o.idx])
-		}
-	}
-
-	// Queue items (between sessions and projects in FinderAll).
-	if (m.kind == FinderAll || m.kind == FinderQueue) && len(m.queueItems) > 0 {
-		items = append(items, m.queueItems...)
-		entries = append(entries, m.queueIdx...)
-	}
-
-	// Worktree items.
-	if (m.kind == FinderAll || m.kind == FinderWorktrees) && len(m.worktreeItems) > 0 {
-		items = append(items, m.worktreeItems...)
-		entries = append(entries, m.worktreeIdx...)
-	}
-
-	// Mark items.
-	if (m.kind == FinderAll || m.kind == FinderMarks) && len(m.markItems) > 0 {
-		items = append(items, m.markItems...)
-		entries = append(entries, m.markIdx...)
-	}
-
-	// Window items (only in dedicated window mode — too noisy for FinderAll).
-	if m.kind == FinderWindows && len(m.windowItems) > 0 {
-		items = append(items, m.windowItems...)
-		entries = append(entries, m.windowIdx...)
-	}
-
-	// Pane items (only in dedicated pane mode — too noisy for FinderAll).
-	if m.kind == FinderPanes && len(m.paneItems) > 0 {
-		items = append(items, m.paneItems...)
-		entries = append(entries, m.paneIdx...)
-	}
-
-	// Projects, excluding those that already have an active session.
-	if m.kind == FinderAll || m.kind == FinderProjects {
-		activeNames := map[string]bool{}
-		for _, e := range m.sessIdx {
-			activeNames[normalizeName(e.sessionName)] = true
-		}
-		for i, p := range m.projects {
-			normName := normalizeName(p.Title)
-			if activeNames[normName] {
-				continue
-			}
-			items = append(items, p)
-			entries = append(entries, m.projIdx[i])
-		}
+	for _, section := range sections {
+		si, se := m.sectionItems(section)
+		items = append(items, si...)
+		entries = append(entries, se...)
 	}
 
 	m.entries = entries
-
 	m.picker = m.picker.resetWith(items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
+}
+
+// sectionsForKind returns which item type sections to include.
+func (m *finderModel) sectionsForKind() []string {
+	switch m.kind {
+	case FinderSessions:
+		return []string{"sessions"}
+	case FinderProjects:
+		return []string{"projects"}
+	case FinderQueue:
+		return []string{"queue"}
+	case FinderWorktrees:
+		return []string{"worktrees"}
+	case FinderPanes:
+		return []string{"panes"}
+	case FinderWindows:
+		return []string{"windows"}
+	case FinderMarks:
+		return []string{"marks"}
+	default:
+		return m.cfg.Finder.Include
+	}
+}
+
+// sectionItems returns sorted picker items + entries for a given section name.
+func (m *finderModel) sectionItems(section string) ([]PickerItem, []finderEntry) {
+	switch section {
+	case "sessions":
+		return m.sortedSectionItems(m.sessions, m.sessIdx, "sessions", m.sessionIsCurrent, m.sessionIsRecent)
+	case "queue":
+		// Queue has its own urgency sort — no generic reordering.
+		return m.queueItems, m.queueIdx
+	case "worktrees":
+		items, idx := m.worktreeItemsWithOpenStatus()
+		return m.sortedSectionItems(items, idx, "worktrees", m.worktreeIsCurrent, nil)
+	case "marks":
+		return m.sortedSectionItems(m.markItems, m.markIdx, "marks", nil, nil)
+	case "windows":
+		return m.sortedSectionItems(m.windowItems, m.windowIdx, "windows", m.windowIsCurrent, nil)
+	case "panes":
+		return m.sortedSectionItems(m.paneItems, m.paneIdx, "panes", m.paneIsCurrent, nil)
+	case "projects":
+		return m.filteredProjectItems()
+	}
+	return nil, nil
+}
+
+// sortedSectionItems applies generic demote_current/promote_recent sorting.
+type currentFn func(int) bool
+type recentFn func(int) bool
+
+func (m *finderModel) sortedSectionItems(
+	items []PickerItem, idx []finderEntry, pickerType string,
+	isCurrent currentFn, isRecent recentFn,
+) ([]PickerItem, []finderEntry) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	demote := m.cfg.Finder.ShouldDemoteCurrent(pickerType)
+	promote := m.cfg.Finder.ShouldPromoteRecent(pickerType)
+	promoteOpen := m.cfg.Finder.ShouldPromoteOpen(pickerType)
+
+	if !demote && !promote && !promoteOpen {
+		return items, idx
+	}
+
+	// Build index list and stable-sort.
+	order := make([]int, len(items))
+	for i := range order {
+		order[i] = i
+	}
+
+	sort.SliceStable(order, func(a, b int) bool {
+		ia, ib := order[a], order[b]
+		// Open items first (Active == true means open).
+		if promoteOpen {
+			oa, ob := items[ia].Active, items[ib].Active
+			if oa != ob {
+				return oa
+			}
+		}
+		if promote && isRecent != nil {
+			ra, rb := isRecent(ia), isRecent(ib)
+			if ra != rb {
+				return ra
+			}
+		}
+		if demote && isCurrent != nil {
+			ca, cb := isCurrent(ia), isCurrent(ib)
+			if ca != cb {
+				return !ca // non-current before current
+			}
+		}
+		return false
+	})
+
+	sortedItems := make([]PickerItem, len(items))
+	sortedIdx := make([]finderEntry, len(idx))
+	for i, o := range order {
+		sortedItems[i] = items[o]
+		sortedIdx[i] = idx[o]
+	}
+	return sortedItems, sortedIdx
+}
+
+// --- "is current" predicates per item type ---
+
+func (m *finderModel) sessionIsCurrent(i int) bool {
+	name := m.sessIdx[i].sessionName
+	for _, sess := range m.sessData {
+		if sess.Name == name {
+			return sess.Attached
+		}
+	}
+	return false
+}
+
+func (m *finderModel) sessionIsRecent(i int) bool {
+	return m.lastSessionName != "" && m.sessIdx[i].sessionName == m.lastSessionName
+}
+
+func (m *finderModel) worktreeIsCurrent(i int) bool {
+	_, _, current := m.watcher.CachedState()
+	cwd := currentPaneWorkingDir(m.sessData, current)
+	return cwd != "" && strings.HasPrefix(cwd, m.worktreeIdx[i].worktreePath)
+}
+
+func (m *finderModel) windowIsCurrent(i int) bool {
+	return m.windowItems[i].Active
+}
+
+func (m *finderModel) paneIsCurrent(i int) bool {
+	return m.paneItems[i].Active
+}
+
+// worktreeItemsWithOpenStatus returns worktree items with Active set to true
+// for worktrees that have a tmux window open. With promote_open, open
+// worktrees sort first via the Active field in sortedSectionItems.
+func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry) {
+	if len(m.worktreeItems) == 0 {
+		return nil, nil
+	}
+
+	promoteOpen := m.cfg.Finder.ShouldPromoteOpen("worktrees")
+	if !promoteOpen {
+		return m.worktreeItems, m.worktreeIdx
+	}
+
+	// Build set of worktree paths that have tmux panes inside them.
+	openPaths := map[string]bool{}
+	for _, sess := range m.sessData {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				openPaths[pane.WorkingDir] = true
+			}
+		}
+	}
+
+	items := make([]PickerItem, len(m.worktreeItems))
+	copy(items, m.worktreeItems)
+	for i := range items {
+		wtPath := m.worktreeIdx[i].worktreePath
+		for openDir := range openPaths {
+			if strings.HasPrefix(openDir, wtPath) {
+				items[i].Active = true
+				break
+			}
+		}
+	}
+	return items, m.worktreeIdx
+}
+
+// filteredProjectItems returns projects. With promote_open, projects that
+// already have a tmux session are marked Active and sorted first.
+// Without promote_open, those projects are excluded (legacy behavior).
+func (m *finderModel) filteredProjectItems() ([]PickerItem, []finderEntry) {
+	activeNames := map[string]bool{}
+	for _, e := range m.sessIdx {
+		activeNames[normalizeName(e.sessionName)] = true
+	}
+
+	promoteOpen := m.cfg.Finder.ShouldPromoteOpen("projects")
+
+	var items []PickerItem
+	var entries []finderEntry
+	for i, p := range m.projects {
+		isOpen := activeNames[normalizeName(p.Title)]
+		if isOpen && !promoteOpen {
+			// Legacy: exclude projects that already have a session.
+			continue
+		}
+		item := p
+		if isOpen {
+			item.Active = true
+		}
+		items = append(items, item)
+		entries = append(entries, m.projIdx[i])
+	}
+
+	// With promote_open, sort open projects first.
+	if promoteOpen && len(items) > 0 {
+		order := make([]int, len(items))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(a, b int) bool {
+			return items[order[a]].Active && !items[order[b]].Active
+		})
+		sorted := make([]PickerItem, len(items))
+		sortedE := make([]finderEntry, len(entries))
+		for i, o := range order {
+			sorted[i] = items[o]
+			sortedE[i] = entries[o]
+		}
+		items = sorted
+		entries = sortedE
+	}
+
+	return items, entries
 }
 
 // buildWindowItems populates window picker items from session data.
@@ -835,8 +981,17 @@ func (m *finderModel) buildQueueItems() {
 					elapsed = now.Sub(since)
 				}
 
+				// Title: session/branch combined.
 				title := sess.Name
-				desc := buildQueueDescription(pane, cs, elapsed, hasSince)
+				if pane.Git.IsRepo && pane.Git.Branch != "" {
+					b := pane.Git.Branch
+					if pane.Git.Dirty {
+						b += "*"
+					}
+					title += "/" + b
+				}
+
+				desc := buildQueueDescription(cs, elapsed, hasSince)
 
 				filterVal := sess.Name
 				if pane.Git.Branch != "" {
@@ -899,46 +1054,64 @@ func (m *finderModel) buildQueueItems() {
 
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].sortKey != items[j].sortKey {
-			return items[i].sortKey > items[j].sortKey
+			return items[i].sortKey < items[j].sortKey
 		}
-		return items[i].sortTime > items[j].sortTime
+		return items[i].sortTime < items[j].sortTime
 	})
+
+	// Pad titles to uniform width so description columns align.
+	maxTitle := 0
+	for _, qi := range items {
+		if w := len(qi.item.Title); w > maxTitle {
+			maxTitle = w
+		}
+	}
 
 	m.queueItems = make([]PickerItem, len(items))
 	m.queueIdx = make([]finderEntry, len(items))
 	for i, qi := range items {
+		qi.item.Title = fmt.Sprintf("%-*s", maxTitle, qi.item.Title)
 		m.queueItems[i] = qi.item
 		m.queueIdx[i] = qi.entry
 	}
 	m.hasQueue = true
 }
 
-func buildQueueDescription(pane tmux.Pane, cs agent.AgentStatus, elapsed time.Duration, hasSince bool) string {
-	var parts []string
+// buildQueueDescription returns a fixed-width columnar description.
+// Columns: provider  context%  activity  duration
+func buildQueueDescription(cs agent.AgentStatus, elapsed time.Duration, hasSince bool) string {
+	const (
+		providerW = 6 // "claude"
+		contextW  = 4 // "100%"
+		activityW = 9 // "completed"
+		durationW = 4 // "999m"
+	)
 
-	if pane.Git.IsRepo && pane.Git.Branch != "" {
-		b := pane.Git.Branch
-		if pane.Git.Dirty {
-			b += "*"
-		}
-		parts = append(parts, b)
-	}
-
+	provider := ""
 	if cs.Provider != agent.ProviderUnknown {
-		parts = append(parts, cs.Provider.String())
+		provider = cs.Provider.String()
 	}
 
+	context := ""
 	if cs.ContextSet {
-		parts = append(parts, fmt.Sprintf("%d%%", cs.ContextPct))
+		context = fmt.Sprintf("%d%%", cs.ContextPct)
 	}
 
+	// Activity is ANSI-styled — pad after rendering based on plain text width.
+	activity := RenderActivity(cs.Activity)
+	activity += strings.Repeat(" ", max(0, activityW-len(cs.Activity.String())))
+
+	duration := ""
 	if hasSince {
-		parts = append(parts, RenderActivity(cs.Activity)+" "+formatDuration(elapsed))
-	} else {
-		parts = append(parts, RenderActivity(cs.Activity))
+		duration = formatDuration(elapsed)
 	}
 
-	return JoinParts(parts)
+	return fmt.Sprintf("%-*s  %*s  %s  %*s",
+		providerW, provider,
+		contextW, context,
+		activity,
+		durationW, duration,
+	)
 }
 
 func formatDuration(d time.Duration) string {
