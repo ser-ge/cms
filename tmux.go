@@ -86,7 +86,11 @@ func runTmux(args ...string) (string, error) {
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
+		msg := fmt.Sprintf("tmux %s: %s", strings.Join(args, " "), err)
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			msg += " (" + strings.TrimSpace(string(ee.Stderr)) + ")"
+		}
+		return "", fmt.Errorf("%s", msg)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
