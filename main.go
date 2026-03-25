@@ -66,6 +66,8 @@ func main() {
 			fk = tui.FinderWorktrees
 		case "panes":
 			fk = tui.FinderPanes
+		case "windows":
+			fk = tui.FinderWindows
 
 		// Views.
 		case "dash":

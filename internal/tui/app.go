@@ -24,7 +24,8 @@ const (
 	FinderSessions                   // sessions only
 	FinderProjects                   // projects only
 	FinderWorktrees                  // worktrees only (current repo)
-	FinderPanes                      // panes only (current session)
+	FinderPanes                      // panes only
+	FinderWindows                    // windows only
 	FinderQueue                      // attention queue (urgency-sorted)
 	FinderMarks                      // marks only
 )
@@ -38,6 +39,7 @@ const (
 	KindWorktree
 	KindPane
 	KindMark
+	KindWindow
 	KindQueue
 )
 

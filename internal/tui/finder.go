@@ -47,6 +47,8 @@ type finderModel struct {
 	worktreeIdx   []finderEntry
 	paneItems     []PickerItem
 	paneIdx       []finderEntry
+	windowItems   []PickerItem
+	windowIdx     []finderEntry
 	markItems     []PickerItem
 	markIdx       []finderEntry
 	hasSess       bool
@@ -54,6 +56,7 @@ type finderModel struct {
 	hasQueue      bool
 	hasWorktree   bool
 	hasPane       bool
+	hasWindow     bool
 	hasMark       bool
 
 	kind            FinderKind
@@ -82,7 +85,9 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 	}
 
 	// Pre-populate sessions from watcher cache if this mode needs them.
-	needsSessions := kind == FinderAll || kind == FinderSessions || kind == FinderQueue
+	// Most modes need session data: queue reads agents, panes flatten sessions,
+	// worktrees need the current pane's working dir. Only projects mode skips.
+	needsSessions := kind != FinderProjects
 	if needsSessions {
 		sessions, agents, _ := w.CachedState()
 		if len(sessions) > 0 {
@@ -101,12 +106,14 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 		m.hasQueue = true
 		m.hasWorktree = true
 		m.hasPane = true
+		m.hasWindow = true
 		m.hasMark = true
 	case FinderProjects:
 		m.hasSess = true
 		m.hasQueue = true
 		m.hasWorktree = true
 		m.hasPane = true
+		m.hasWindow = true
 		m.hasMark = true
 	case FinderQueue:
 		m.hasProj = true
@@ -114,12 +121,14 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 		m.hasQueue = true
 		m.hasWorktree = true
 		m.hasPane = true
+		m.hasWindow = true
 		m.hasMark = true
 	case FinderWorktrees:
 		m.hasSess = true
 		m.hasProj = true
 		m.hasQueue = true
 		m.hasPane = true
+		m.hasWindow = true
 		m.hasMark = true
 		// Worktrees loaded async via Init.
 	case FinderPanes:
@@ -127,21 +136,33 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 		m.hasProj = true
 		m.hasQueue = true
 		m.hasWorktree = true
+		m.hasWindow = true
 		m.hasMark = true
 		m.buildPaneItems()
 		m.hasPane = true
+	case FinderWindows:
+		m.hasSess = true
+		m.hasProj = true
+		m.hasQueue = true
+		m.hasWorktree = true
+		m.hasPane = true
+		m.hasMark = true
+		m.buildWindowItems()
+		m.hasWindow = true
 	case FinderMarks:
 		m.hasSess = true
 		m.hasProj = true
 		m.hasQueue = true
 		m.hasWorktree = true
 		m.hasPane = true
+		m.hasWindow = true
 		// Marks loaded async via Init.
 	case FinderAll:
 		m.buildQueueItems()
 		m.hasQueue = true
 		m.buildPaneItems()
 		m.hasPane = true
+		m.hasWindow = true
 		// Worktrees and marks loaded async via Init.
 	}
 
@@ -156,7 +177,7 @@ func (m finderModel) Init() tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch m.kind {
-	case FinderSessions, FinderQueue, FinderPanes:
+	case FinderSessions, FinderQueue, FinderPanes, FinderWindows:
 		// No async work needed.
 	case FinderWorktrees:
 		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher))
@@ -386,6 +407,9 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.sessData = msg.Sessions
 		m.agentData = msg.Agents
 		m.buildSessionItems(msg.Agents)
+		m.buildQueueItems()
+		m.buildPaneItems()
+		m.buildWindowItems()
 		m.hasSess = true
 		m.rebuildPicker()
 		return m, nil
@@ -395,6 +419,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		debug.Logf("finder: agent update panes=%d", len(msg.Updates))
 		m.agentData = agent.ApplyUpdates(m.agentData, msg.Updates)
 		m.buildSessionItems(m.agentData)
+		m.buildQueueItems()
 		m.rebuildPicker()
 		return m, nil
 
@@ -507,7 +532,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		return m, nil
 	}
 
-	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasMark {
+	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasWindow && !m.hasMark {
 		return m, nil
 	}
 
@@ -526,7 +551,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 						cmd = markAttentionSeenCmd(&m.watcher.Attention, entry.paneID)
 					}
 					m.action = &PostAction{PaneID: entry.paneID}
-				case KindPane, KindMark:
+				case KindPane, KindMark, KindWindow:
 					m.action = &PostAction{PaneID: entry.paneID}
 				case KindWorktree:
 					m.action = &PostAction{
@@ -624,6 +649,12 @@ func (m *finderModel) rebuildPicker() {
 		entries = append(entries, m.markIdx...)
 	}
 
+	// Window items (only in dedicated window mode — too noisy for FinderAll).
+	if m.kind == FinderWindows && len(m.windowItems) > 0 {
+		items = append(items, m.windowItems...)
+		entries = append(entries, m.windowIdx...)
+	}
+
 	// Pane items (only in dedicated pane mode — too noisy for FinderAll).
 	if m.kind == FinderPanes && len(m.paneItems) > 0 {
 		items = append(items, m.paneItems...)
@@ -649,6 +680,52 @@ func (m *finderModel) rebuildPicker() {
 	m.entries = entries
 
 	m.picker = m.picker.resetWith(items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
+}
+
+// buildWindowItems populates window picker items from session data.
+func (m *finderModel) buildWindowItems() {
+	m.windowItems = nil
+	m.windowIdx = nil
+	for _, sess := range m.sessData {
+		for _, win := range sess.Windows {
+			title := fmt.Sprintf("%s:%s", sess.Name, win.Name)
+			desc := fmt.Sprintf("%d panes", len(win.Panes))
+
+			// Summarize agent activity in this window.
+			var agentParts []string
+			for _, pane := range win.Panes {
+				if cs, ok := m.agentData[pane.ID]; ok && cs.Running {
+					agentParts = append(agentParts, cs.Provider.String()+" "+RenderActivity(cs.Activity))
+				}
+			}
+			if len(agentParts) > 0 {
+				desc += " · " + JoinParts(agentParts)
+			}
+
+			// Use first pane's working dir for context.
+			if len(win.Panes) > 0 {
+				desc += " · " + ShortenHome(win.Panes[0].WorkingDir)
+			}
+
+			// Target the first pane in the window for switching.
+			var paneID string
+			if len(win.Panes) > 0 {
+				paneID = win.Panes[0].ID
+			}
+
+			m.windowItems = append(m.windowItems, PickerItem{
+				Title:       title,
+				Description: desc,
+				FilterValue: sess.Name + " " + win.Name,
+				Active:      win.Active && sess.Attached,
+			})
+			m.windowIdx = append(m.windowIdx, finderEntry{
+				kind:   KindWindow,
+				paneID: paneID,
+			})
+		}
+	}
+	m.hasWindow = true
 }
 
 // buildPaneItems populates pane picker items from session data.
@@ -848,7 +925,7 @@ func formatDuration(d time.Duration) string {
 }
 
 func (m finderModel) View() string {
-	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasMark {
+	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasWindow && !m.hasMark {
 		return "  Loading...\n"
 	}
 	if m.kind == FinderQueue && len(m.queueItems) == 0 {
