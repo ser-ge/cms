@@ -14,6 +14,7 @@ const (
 	ScreenDashboard Screen = iota
 	ScreenFinder
 	ScreenQueue
+	ScreenNewWorktree
 )
 
 // FinderKind controls what the finder shows.
@@ -31,6 +32,7 @@ type ItemKind int
 const (
 	KindSession ItemKind = iota
 	KindProject
+	KindWorktree
 )
 
 // PostAction is an action to execute after the TUI exits.
@@ -41,6 +43,7 @@ type PostAction struct {
 	ProjectPath string
 	PaneID      string // direct pane switch (dashboard)
 	Priority    []string
+	BranchName  string // new worktree branch name
 }
 
 // ErrMsg wraps an error for delivery to the TUI.
@@ -50,17 +53,18 @@ type ErrMsg struct {
 
 // RootModel is the top-level bubbletea model that delegates to sub-screens.
 type RootModel struct {
-	screen     Screen
-	initial    Screen // the screen we started on
-	dashboard  dashboardModel
-	finder     finderModel
-	queue      queueModel
-	finderKind FinderKind
-	watcher    *watcher.Watcher
-	cfg        config.Config
-	width      int
-	height     int
-	postAction *PostAction // action to execute after TUI exits
+	screen      Screen
+	initial     Screen // the screen we started on
+	dashboard   dashboardModel
+	finder      finderModel
+	queue       queueModel
+	newWorktree newWorktreeModel
+	finderKind  FinderKind
+	watcher     *watcher.Watcher
+	cfg         config.Config
+	width       int
+	height      int
+	postAction  *PostAction // action to execute after TUI exits
 }
 
 // PostAction returns the action to execute after TUI exits (if any).
@@ -86,6 +90,9 @@ func NewRootModel(initial Screen, fk FinderKind, cfg config.Config, w *watcher.W
 	if initial == ScreenQueue {
 		m.queue = newQueueModel(cfg, w, 0, 0)
 	}
+	if initial == ScreenNewWorktree {
+		m.newWorktree = newNewWorktreeModel(cfg)
+	}
 	return m
 }
 
@@ -98,6 +105,8 @@ func (m RootModel) Init() tea.Cmd {
 		return m.finder.Init()
 	case ScreenQueue:
 		return m.queue.Init()
+	case ScreenNewWorktree:
+		return m.newWorktree.Init()
 	}
 	return nil
 }
@@ -140,6 +149,8 @@ func (m RootModel) View() string {
 		return m.finder.View()
 	case ScreenQueue:
 		return m.queue.View()
+	case ScreenNewWorktree:
+		return m.newWorktree.View()
 	}
 	return ""
 }
@@ -182,6 +193,16 @@ func (m RootModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.switchTo(ScreenDashboard)
 		}
+	case ScreenNewWorktree:
+		m.newWorktree, cmd = m.newWorktree.Update(msg)
+		if m.newWorktree.done {
+			if m.newWorktree.action != nil {
+				m.postAction = m.newWorktree.action
+				return m, tea.Quit
+			}
+			// Cancelled — quit (standalone screen).
+			return m, tea.Quit
+		}
 	}
 	return m, cmd
 }
@@ -195,8 +216,15 @@ func (m RootModel) switchTo(s Screen) (tea.Model, tea.Cmd) {
 		return m, m.initFinder()
 	case ScreenQueue:
 		return m, m.initQueue()
+	case ScreenNewWorktree:
+		return m, m.initNewWorktree()
 	}
 	return m, nil
+}
+
+func (m *RootModel) initNewWorktree() tea.Cmd {
+	m.newWorktree = newNewWorktreeModel(m.cfg)
+	return m.newWorktree.Init()
 }
 
 func (m *RootModel) initFinder() tea.Cmd {

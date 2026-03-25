@@ -181,9 +181,10 @@ func ResolveWorktreeBaseDir(repoRoot string, cfg *config.WorktreeConfig) string 
 
 // CreateWorktreeOpts configures worktree creation.
 type CreateWorktreeOpts struct {
-	NewBranch bool   // create a new branch (-b)
-	Track     string // remote ref to track (e.g. "origin/feature")
-	Force     bool
+	NewBranch  bool   // create a new branch (-b)
+	Track      string // remote ref to track (e.g. "origin/feature")
+	StartPoint string // commit/branch to start from (e.g. "main")
+	Force      bool
 }
 
 // CreateWorktree creates a git worktree at the given path for the given branch.
@@ -196,6 +197,8 @@ func CreateWorktree(repoRoot, path, branch string, opts CreateWorktreeOpts) erro
 		args = append(args, "-b", branch)
 		if opts.Track != "" {
 			args = append(args, "--track", path, opts.Track)
+		} else if opts.StartPoint != "" {
+			args = append(args, path, opts.StartPoint)
 		} else {
 			args = append(args, path)
 		}

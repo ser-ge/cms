@@ -99,7 +99,8 @@ type FinderConfig struct {
 // (.cms.toml [worktree]). Project config overrides user config.
 type WorktreeConfig struct {
 	BaseDir    string         `toml:"base_dir"`
-	Hooks      []WorktreeHook `toml:"hooks"`       // post-create
+	BaseBranch string         `toml:"base_branch"` // branch to fork from (default: auto-detect main/master)
+	Hooks      []WorktreeHook `toml:"hooks"`        // post-create
 	PreRemove  []WorktreeHook `toml:"pre_remove"`
 	PreCommit  []WorktreeHook `toml:"pre_commit"`
 	PostCommit []WorktreeHook `toml:"post_commit"`

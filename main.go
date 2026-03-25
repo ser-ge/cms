@@ -58,6 +58,8 @@ func main() {
 			fk = tui.FinderProjects
 		case "queue", "q":
 			initial = tui.ScreenQueue
+		case "new":
+			initial = tui.ScreenNewWorktree
 		case "next", "n":
 			if err := jumpNext(); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -127,7 +129,67 @@ func executePostAction(a *tui.PostAction) error {
 		return session.SmartSwitch(a.SessionName, a.Priority, sessions, agents)
 	case tui.KindProject:
 		return session.OpenProject(a.ProjectPath)
+	case tui.KindWorktree:
+		return createWorktree(a.BranchName)
 	}
+	return nil
+}
+
+// createWorktree creates a new worktree for the given branch name, using the
+// configured base branch and base directory. Opens a tmux window for it.
+func createWorktree(branch string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	root, err := worktree.FindRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+
+	cfg := config.Load()
+	wtCfg := worktree.ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
+
+	// Resolve base branch: config > auto-detect.
+	baseBranch := wtCfg.BaseBranch
+	if baseBranch == "" {
+		baseBranch, err = worktree.DefaultBranch(root)
+		if err != nil {
+			return fmt.Errorf("cannot determine base branch: %w", err)
+		}
+	}
+
+	baseDir := worktree.ResolveWorktreeBaseDir(root, &wtCfg)
+	path := fmt.Sprintf("%s/%s", baseDir, worktree.SanitizeBranch(branch))
+
+	fmt.Fprintf(os.Stderr, "creating worktree at %s for branch %s (from %s)\n",
+		worktree.ShortenHome(path), branch, baseBranch)
+
+	if err := worktree.CreateWorktree(root, path, branch, worktree.CreateWorktreeOpts{
+		NewBranch:  true,
+		StartPoint: baseBranch,
+	}); err != nil {
+		return fmt.Errorf("git worktree add failed: %w", err)
+	}
+
+	// Run post-create hooks.
+	mainWt, _ := worktree.FindMainWorktree(root)
+	if len(wtCfg.Hooks) > 0 {
+		fmt.Fprintf(os.Stderr, "running %d post-create hooks\n", len(wtCfg.Hooks))
+		if err := worktree.RunPostCreateHooks(mainWt, path, wtCfg.Hooks); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: hook failed: %v\n", err)
+		}
+	}
+
+	// Open tmux window and switch to it.
+	if os.Getenv("TMUX") != "" {
+		windowName := worktree.SanitizeBranch(branch)
+		target, err := tmux.FetchCurrentTarget()
+		if err == nil {
+			tmux.Run("new-window", "-t", target.Session, "-n", windowName, "-c", path)
+		}
+	}
+
 	return nil
 }
 
