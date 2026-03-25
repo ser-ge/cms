@@ -66,6 +66,12 @@ func main() {
 		case "hook-setup":
 			runHookSetup()
 			return
+		case "worktree", "wt":
+			if err := runWorktreeCmd(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "refresh":
 			var name string
 			if len(os.Args) > 2 {

@@ -16,6 +16,7 @@ type Config struct {
 	Icons     IconsConfig     `toml:"icons"`
 	Dashboard DashboardConfig `toml:"dashboard"`
 	Finder    FinderConfig    `toml:"finder"`
+	Worktree  WorktreeConfig  `toml:"worktree"`
 }
 
 // ColorsConfig holds shared UI colors and provider-specific accents.
