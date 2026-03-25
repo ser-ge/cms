@@ -2,10 +2,46 @@
 
 Tmux session picker and dashboard with Claude/Codex agent awareness.
 
+## CLI Surface
+
+```
+# Default (finder — universal fuzzy switcher)
+cms                              Finder (sessions + projects + worktrees + marks)
+cms -s  / cms sessions           Sessions only
+cms -p  / cms projects           Projects only
+cms -q  / cms queue              Attention queue (urgency-sorted agent panes)
+cms -m  / cms marks              Marks only
+cms worktrees                    Worktrees only (current repo)
+cms panes                        Panes only (all sessions)
+
+# Views
+cms dash                         Dashboard (session/pane grid with agent status)
+
+# Navigation (headless)
+cms next                         Jump to next waiting/idle agent pane
+cms mark <label> [pane]          Mark current pane (or specified pane) with label
+cms jump <label>                 Switch to marked pane
+
+# Worktree operations (top-level)
+cms go <branch> [path]           Switch to worktree (create if needed)
+cms add [--no-open] <branch> [path]  Create worktree
+cms rm <branch>                  Remove worktree
+cms merge [flags] [branch]       Merge worktree
+cms ls                           Worktree table (paths, branches, merge status)
+
+# Config
+cms config init                  Write default config file
+cms hook-setup                   Print Claude Code hook config
+
+# Internal (hidden)
+cms internal hook <event>        Forward Claude Code hook event
+cms internal refresh [name]      Refresh worktrees for tmux session
+```
+
 ## File Tree
 
 ```
-main.go                           CLI entry: flag parsing, command dispatch
+main.go                           CLI entry: flag parsing, command dispatch, headless cmds
 debuglog.go                       Debug logger init, wires debug.Logf
 
 internal/
@@ -43,6 +79,9 @@ internal/
     hook.go                       Kind, Event, Listener (Claude Code hook socket)
     cmd.go                        RunCmd, RunSetup (hook CLI subcommands)
 
+  mark/
+    mark.go                       Mark, Load, Save, Set, Remove, Resolve (pane bookmarks)
+
   session/
     session.go                    Create, Kill, Switch, SmartSwitch, SwitchToPane, OpenProject
 
@@ -50,8 +89,8 @@ internal/
     project.go                    Scan, Project (git repo discovery from search paths)
 
   worktree/
-    worktree.go                   CreateWorktree, RemoveWorktree, DeleteBranch, hooks
-    cmd.go                        RunCmd (worktree CLI dispatch: add/rm/list/merge)
+    worktree.go                   CreateWorktree, AddWorktree, RemoveWorktree, DeleteBranch, hooks
+    cmd.go                        RunCmd, RunAdd, RunRemove, RunList (worktree CLI dispatch)
     merge.go                      Merge, SquashCommits, commit message generation
 
   watcher/
@@ -68,8 +107,7 @@ internal/
     actions.go                    tea.Cmd factories bridging views to session/tmux ops
     app.go                        RootModel, Screen enum, FinderKind, PostAction
     dashboard.go                  dashboardModel (session/pane grid with agent status)
-    finder.go                     finderModel (fuzzy session/project picker)
-    queue.go                      queueModel (attention queue sorted by urgency)
+    finder.go                     finderModel (universal fuzzy picker: sessions/projects/worktrees/panes/marks/queue)
     newworktree.go                newWorktreeModel (text input for quick worktree creation)
 ```
 
@@ -85,6 +123,7 @@ Business        watcher/*        Coordinates state; sends bubbletea messages to 
 Domain          agent/*          Agent detection, status types, parsing
                 attention/*      Attention queue logic + persistence
                 hook/*           Hook socket listener + event types
+                mark/*           Named pane bookmarks (file-backed)
 Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
                 git/*            Git I/O (branch info, worktrees)
                 proc/*           Process table (ps parsing)
@@ -96,7 +135,7 @@ Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
 
 - **Layers only import downward.** tui imports watcher/agent/tmux types but never session directly. watcher imports tmux/agent/hook/attention but never tui. Infrastructure has no internal deps (except proc/git used by tmux).
 - **`proc` breaks the tmux-agent cycle.** `IsShellCommand` and process table types live in proc, imported by both tmux and agent without circular dependency.
-- **Views never call infrastructure.** Dashboard/finder/queue emit intents via `actions.go` tea.Cmd factories. Actions call session/tmux and return result messages. This prevents the implicit feedback loop where views trigger tmux mutations and hope watcher notices.
+- **Views never call infrastructure.** Dashboard/finder emit intents via `actions.go` tea.Cmd factories. Actions call session/tmux and return result messages. This prevents the implicit feedback loop where views trigger tmux mutations and hope watcher notices.
 - **`CachedState()` returns deep copies.** Watcher holds canonical state under mutex; views get snapshots they can freely read without data races.
 - **Watcher is a thin coordinator.** Decomposed into 5 files: events (message types), watcher (lifecycle), pane_tracker (debounce/transitions), proc_poller, git_poller. Each file has a single responsibility.
 - **Hysteresis lives in watcher, not views.** Activity transition logic (Working hold windows, Completed decay timers) is domain logic in `pane_tracker.go`, not presentation logic.
@@ -104,8 +143,10 @@ Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
 - **Shared styles in one place.** All lipgloss styles live in `tui/styles.go`, initialized once by `InitStyles(cfg)`. No view imports another view for styles.
 - **Config types are centralized.** `WorktreeConfig`, `ProjectConfig`, `WorktreeHook` live in the config package alongside all other config types, even though worktree operations use them.
 - **`debug.Logf` is a package-level var.** Set by main after init. Internal packages call `debug.Logf(...)` without importing the logger implementation.
-- **PostAction is the exit contract between TUI and main.** Screens that trigger tmux mutations (switch, open, worktree create) set a `PostAction` and quit. `main.go:executePostAction()` handles the actual infra calls after bubbletea's alt screen is torn down. New `ItemKind` values extend this: `KindSession`, `KindProject`, `KindWorktree`.
+- **PostAction is the exit contract between TUI and main.** Screens that trigger tmux mutations (switch, open, worktree create) set a `PostAction` and quit. `main.go:executePostAction()` handles the actual infra calls after bubbletea's alt screen is torn down. New `ItemKind` values extend this: `KindSession`, `KindProject`, `KindWorktree`, `KindPane`, `KindMark`, `KindQueue`.
 - **New TUI screens follow the done/action pattern.** Each sub-model exposes `done bool` and `action *PostAction`. When `done` is true, `updateActive` in app.go checks `action`: non-nil means quit-with-action, nil means cancelled. See `newWorktreeModel` as the minimal example.
 - **`CreateWorktreeOpts.StartPoint` vs `Track`.** Use `StartPoint` for local base branches (e.g. `main`). Use `Track` only when checking out a remote branch that needs upstream tracking. Don't assume `origin/<branch>` exists.
 - **`WorktreeConfig.BaseBranch`** is configurable in `[worktree]` (user or project config). Empty means auto-detect via `DefaultBranch()` (origin/HEAD → main → master).
+- **Finder is the universal switcher.** FinderKind controls which item types appear. Queue, worktree, pane, and mark items are all finder modes (not separate screens). Queue urgency sorting lives in `finder.go:buildQueueItems()`.
+- **Marks are file-backed.** Stored as JSON at `~/.config/cms/marks.json`. Pane IDs are globally addressable in tmux; session/window stored for display only.
 - **Use `go build -o /dev/null ./...` for validation.** The cms binary manages tmux; writing it to disk can interfere with the running session.

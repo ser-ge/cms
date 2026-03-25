@@ -13,7 +13,6 @@ type Screen int
 const (
 	ScreenDashboard Screen = iota
 	ScreenFinder
-	ScreenQueue
 	ScreenNewWorktree
 )
 
@@ -21,29 +20,38 @@ const (
 type FinderKind int
 
 const (
-	FinderAll      FinderKind = iota // sessions + projects
-	FinderSessions                   // sessions only (cms switch)
-	FinderProjects                   // projects only (cms open)
+	FinderAll      FinderKind = iota // sessions + projects + worktrees + marks
+	FinderSessions                   // sessions only
+	FinderProjects                   // projects only
+	FinderWorktrees                  // worktrees only (current repo)
+	FinderPanes                      // panes only (current session)
+	FinderQueue                      // attention queue (urgency-sorted)
+	FinderMarks                      // marks only
 )
 
 // ItemKind distinguishes session entries from project entries.
 type ItemKind int
 
 const (
-	KindSession ItemKind = iota
+	KindSession  ItemKind = iota
 	KindProject
 	KindWorktree
+	KindPane
+	KindMark
+	KindQueue
 )
 
 // PostAction is an action to execute after the TUI exits.
 // Used when the action must happen outside bubbletea (e.g. tmux attach).
 type PostAction struct {
-	Kind        ItemKind
-	SessionName string
-	ProjectPath string
-	PaneID      string // direct pane switch (dashboard)
-	Priority    []string
-	BranchName  string // new worktree branch name
+	Kind           ItemKind
+	SessionName    string
+	ProjectPath    string
+	PaneID         string // direct pane switch (dashboard, queue, pane, mark)
+	WorktreePath   string // for KindWorktree (switch to existing)
+	WorktreeBranch string // for KindWorktree (switch to existing)
+	BranchName     string // for KindWorktree (create new, from cms new)
+	Priority       []string
 }
 
 // ErrMsg wraps an error for delivery to the TUI.
@@ -57,7 +65,6 @@ type RootModel struct {
 	initial     Screen // the screen we started on
 	dashboard   dashboardModel
 	finder      finderModel
-	queue       queueModel
 	newWorktree newWorktreeModel
 	finderKind  FinderKind
 	watcher     *watcher.Watcher
@@ -87,9 +94,6 @@ func NewRootModel(initial Screen, fk FinderKind, cfg config.Config, w *watcher.W
 	if initial == ScreenFinder {
 		m.finder = newFinderModel(cfg, w, fk, 0, 0)
 	}
-	if initial == ScreenQueue {
-		m.queue = newQueueModel(cfg, w, 0, 0)
-	}
 	if initial == ScreenNewWorktree {
 		m.newWorktree = newNewWorktreeModel(cfg)
 	}
@@ -103,8 +107,6 @@ func (m RootModel) Init() tea.Cmd {
 		return m.dashboard.Init()
 	case ScreenFinder:
 		return m.finder.Init()
-	case ScreenQueue:
-		return m.queue.Init()
 	case ScreenNewWorktree:
 		return m.newWorktree.Init()
 	}
@@ -130,7 +132,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "/":
 				return m.switchTo(ScreenFinder)
 			case "a":
-				return m.switchTo(ScreenQueue)
+				return m.switchToFinder(FinderQueue)
 			case "q":
 				return m, tea.Quit
 			}
@@ -147,8 +149,6 @@ func (m RootModel) View() string {
 		return m.dashboard.View()
 	case ScreenFinder:
 		return m.finder.View()
-	case ScreenQueue:
-		return m.queue.View()
 	case ScreenNewWorktree:
 		return m.newWorktree.View()
 	}
@@ -180,19 +180,6 @@ func (m RootModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.switchTo(ScreenDashboard)
 		}
-	case ScreenQueue:
-		m.queue, cmd = m.queue.Update(msg)
-		if m.queue.done {
-			if m.queue.action != nil {
-				m.postAction = m.queue.action
-				return m, tea.Quit
-			}
-			// Started as standalone queue with no action (esc) — just quit.
-			if m.initial == ScreenQueue {
-				return m, tea.Quit
-			}
-			return m.switchTo(ScreenDashboard)
-		}
 	case ScreenNewWorktree:
 		m.newWorktree, cmd = m.newWorktree.Update(msg)
 		if m.newWorktree.done {
@@ -214,8 +201,6 @@ func (m RootModel) switchTo(s Screen) (tea.Model, tea.Cmd) {
 		return m, m.dashboard.Init()
 	case ScreenFinder:
 		return m, m.initFinder()
-	case ScreenQueue:
-		return m, m.initQueue()
 	case ScreenNewWorktree:
 		return m, m.initNewWorktree()
 	}
@@ -232,7 +217,8 @@ func (m *RootModel) initFinder() tea.Cmd {
 	return m.finder.Init()
 }
 
-func (m *RootModel) initQueue() tea.Cmd {
-	m.queue = newQueueModel(m.cfg, m.watcher, m.width, m.height)
-	return m.queue.Init()
+func (m RootModel) switchToFinder(kind FinderKind) (tea.Model, tea.Cmd) {
+	m.screen = ScreenFinder
+	m.finder = newFinderModel(m.cfg, m.watcher, kind, m.width, m.height)
+	return m, m.finder.Init()
 }

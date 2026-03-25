@@ -3,21 +3,31 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/serge/cms/internal/agent"
+	"github.com/serge/cms/internal/attention"
 	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/debug"
+	"github.com/serge/cms/internal/git"
+	"github.com/serge/cms/internal/mark"
 	"github.com/serge/cms/internal/project"
 	"github.com/serge/cms/internal/tmux"
 	"github.com/serge/cms/internal/watcher"
+	"github.com/serge/cms/internal/worktree"
 )
 
 type finderEntry struct {
-	kind        ItemKind
-	sessionName string // for KindSession
-	projectPath string // for KindProject
+	kind           ItemKind
+	sessionName    string // KindSession
+	projectPath    string // KindProject
+	worktreePath   string // KindWorktree
+	worktreeBranch string // KindWorktree
+	paneID         string // KindPane, KindQueue, KindMark
+	markLabel      string // KindMark
+	unseen         bool   // KindQueue (for markAttentionSeen)
 }
 
 type finderModel struct {
@@ -29,10 +39,22 @@ type finderModel struct {
 	agentData map[string]agent.AgentStatus
 	sessions  []PickerItem
 	sessIdx   []finderEntry
-	projects  []PickerItem
-	projIdx   []finderEntry
-	hasSess   bool
-	hasProj   bool
+	projects      []PickerItem
+	projIdx       []finderEntry
+	queueItems    []PickerItem
+	queueIdx      []finderEntry
+	worktreeItems []PickerItem
+	worktreeIdx   []finderEntry
+	paneItems     []PickerItem
+	paneIdx       []finderEntry
+	markItems     []PickerItem
+	markIdx       []finderEntry
+	hasSess       bool
+	hasProj       bool
+	hasQueue      bool
+	hasWorktree   bool
+	hasPane       bool
+	hasMark       bool
 
 	kind            FinderKind
 	done            bool
@@ -60,7 +82,8 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 	}
 
 	// Pre-populate sessions from watcher cache if this mode needs them.
-	if kind != FinderProjects {
+	needsSessions := kind == FinderAll || kind == FinderSessions || kind == FinderQueue
+	if needsSessions {
 		sessions, agents, _ := w.CachedState()
 		if len(sessions) > 0 {
 			m.sessData = sessions
@@ -70,16 +93,59 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 		}
 	}
 
-	// For projects-only mode, mark sessions as "done" so we don't wait for them.
-	if kind == FinderProjects {
-		m.hasSess = true
-	}
-	// For sessions-only mode, mark projects as "done" so we don't wait for them.
-	if kind == FinderSessions {
+	// Mark data sources as "done" when this mode doesn't need them.
+	// For FinderAll, we load everything.
+	switch kind {
+	case FinderSessions:
 		m.hasProj = true
+		m.hasQueue = true
+		m.hasWorktree = true
+		m.hasPane = true
+		m.hasMark = true
+	case FinderProjects:
+		m.hasSess = true
+		m.hasQueue = true
+		m.hasWorktree = true
+		m.hasPane = true
+		m.hasMark = true
+	case FinderQueue:
+		m.hasProj = true
+		m.buildQueueItems()
+		m.hasQueue = true
+		m.hasWorktree = true
+		m.hasPane = true
+		m.hasMark = true
+	case FinderWorktrees:
+		m.hasSess = true
+		m.hasProj = true
+		m.hasQueue = true
+		m.hasPane = true
+		m.hasMark = true
+		// Worktrees loaded async via Init.
+	case FinderPanes:
+		m.hasSess = true
+		m.hasProj = true
+		m.hasQueue = true
+		m.hasWorktree = true
+		m.hasMark = true
+		m.buildPaneItems()
+		m.hasPane = true
+	case FinderMarks:
+		m.hasSess = true
+		m.hasProj = true
+		m.hasQueue = true
+		m.hasWorktree = true
+		m.hasPane = true
+		// Marks loaded async via Init.
+	case FinderAll:
+		m.buildQueueItems()
+		m.hasQueue = true
+		m.buildPaneItems()
+		m.hasPane = true
+		// Worktrees and marks loaded async via Init.
 	}
 
-	if m.hasSess || m.hasProj {
+	if m.hasSess || m.hasProj || m.hasQueue || m.hasWorktree || m.hasPane || m.hasMark {
 		m.rebuildPicker()
 	}
 
@@ -87,11 +153,27 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 }
 
 func (m finderModel) Init() tea.Cmd {
-	if m.kind == FinderSessions {
-		return nil // sessions already loaded from cache
+	var cmds []tea.Cmd
+
+	switch m.kind {
+	case FinderSessions, FinderQueue, FinderPanes:
+		// No async work needed.
+	case FinderWorktrees:
+		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher))
+	case FinderMarks:
+		cmds = append(cmds, loadMarksCmd(m.sessData))
+	case FinderAll:
+		cmds = append(cmds, scanProjectsCmd(m.cfg))
+		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher))
+		cmds = append(cmds, loadMarksCmd(m.sessData))
+	case FinderProjects:
+		cmds = append(cmds, scanProjectsCmd(m.cfg))
 	}
-	// Scan projects from disk (async).
-	return scanProjectsCmd(m.cfg)
+
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // --- Messages ---
@@ -104,6 +186,62 @@ func scanProjectsCmd(cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
 		return projectsScannedMsg{project.Scan(cfg)}
 	}
+}
+
+type worktreesScannedMsg struct {
+	worktrees []git.Worktree
+	repoRoot  string
+}
+
+// scanWorktreesCmd discovers worktrees for the current pane's repo.
+func scanWorktreesCmd(sessions []tmux.Session, agents map[string]agent.AgentStatus, w *watcher.Watcher) tea.Cmd {
+	return func() tea.Msg {
+		_, _, current := w.CachedState()
+		cwd := currentPaneWorkingDir(sessions, current)
+		if cwd == "" {
+			return worktreesScannedMsg{}
+		}
+		root, err := worktree.FindRepoRoot(cwd)
+		if err != nil {
+			return worktreesScannedMsg{}
+		}
+		wts, err := git.ListWorktrees(root)
+		if err != nil {
+			return worktreesScannedMsg{}
+		}
+		return worktreesScannedMsg{worktrees: wts, repoRoot: root}
+	}
+}
+
+type marksLoadedMsg struct {
+	marks map[string]mark.Mark
+}
+
+func loadMarksCmd(sessions []tmux.Session) tea.Cmd {
+	return func() tea.Msg {
+		marks, _ := mark.Load()
+		return marksLoadedMsg{marks: marks}
+	}
+}
+
+// currentPaneWorkingDir resolves the working directory of the current pane.
+func currentPaneWorkingDir(sessions []tmux.Session, current tmux.CurrentTarget) string {
+	for _, sess := range sessions {
+		if sess.Name != current.Session {
+			continue
+		}
+		for _, win := range sess.Windows {
+			if win.Index != current.Window {
+				continue
+			}
+			for _, pane := range win.Panes {
+				if pane.Index == current.Pane {
+					return pane.WorkingDir
+				}
+			}
+		}
+	}
+	return ""
 }
 
 type providerSummary struct {
@@ -260,6 +398,11 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.rebuildPicker()
 		return m, nil
 
+	case watcher.AttentionUpdateMsg:
+		m.buildQueueItems()
+		m.rebuildPicker()
+		return m, nil
+
 	case watcher.FocusChangedMsg:
 		// User switched session -- refresh cached last session name.
 		if m.cfg.General.LastSessionFirst {
@@ -294,6 +437,68 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.rebuildPicker()
 		return m, nil
 
+	case worktreesScannedMsg:
+		m.worktreeItems = nil
+		m.worktreeIdx = nil
+		defBranch := ""
+		if msg.repoRoot != "" {
+			defBranch, _ = worktree.DefaultBranch(msg.repoRoot)
+		}
+		for _, wt := range msg.worktrees {
+			if wt.IsBare {
+				continue
+			}
+			branch := wt.Branch
+			if branch == "" {
+				branch = "(detached)"
+			}
+			desc := ShortenHome(wt.Path)
+			if !wt.IsMain && defBranch != "" && wt.Branch != "" && wt.Branch != defBranch {
+				if integrated, reason := worktree.IsBranchIntegrated(msg.repoRoot, wt.Branch, defBranch); integrated {
+					desc += " [merged: " + reason + "]"
+				}
+			}
+			m.worktreeItems = append(m.worktreeItems, PickerItem{
+				Title:       branch,
+				Description: desc,
+				FilterValue: branch + " " + wt.Path,
+				Active:      wt.IsMain,
+			})
+			m.worktreeIdx = append(m.worktreeIdx, finderEntry{
+				kind:           KindWorktree,
+				worktreePath:   wt.Path,
+				worktreeBranch: wt.Branch,
+			})
+		}
+		m.hasWorktree = true
+		m.rebuildPicker()
+		return m, nil
+
+	case marksLoadedMsg:
+		m.markItems = nil
+		m.markIdx = nil
+		for label, mk := range msg.marks {
+			alive := mark.IsAlive(mk, m.sessData)
+			desc := mk.Session + ":" + mk.Window
+			if !alive {
+				desc += " (dead)"
+			}
+			m.markItems = append(m.markItems, PickerItem{
+				Title:       label,
+				Description: desc,
+				FilterValue: label + " " + mk.Session + " " + mk.Window,
+				Active:      alive,
+			})
+			m.markIdx = append(m.markIdx, finderEntry{
+				kind:      KindMark,
+				paneID:    mk.PaneID,
+				markLabel: label,
+			})
+		}
+		m.hasMark = true
+		m.rebuildPicker()
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -302,7 +507,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		return m, nil
 	}
 
-	if !m.hasSess && !m.hasProj {
+	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasMark {
 		return m, nil
 	}
 
@@ -315,11 +520,27 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 
 			// Check if Enter was pressed (item was explicitly selected).
 			if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "enter" {
-				m.action = &PostAction{
-					Kind:        entry.kind,
-					SessionName: entry.sessionName,
-					ProjectPath: entry.projectPath,
-					Priority:    m.cfg.General.SwitchPriority,
+				switch entry.kind {
+				case KindQueue:
+					if entry.unseen {
+						cmd = markAttentionSeenCmd(&m.watcher.Attention, entry.paneID)
+					}
+					m.action = &PostAction{PaneID: entry.paneID}
+				case KindPane, KindMark:
+					m.action = &PostAction{PaneID: entry.paneID}
+				case KindWorktree:
+					m.action = &PostAction{
+						Kind:           entry.kind,
+						WorktreePath:   entry.worktreePath,
+						WorktreeBranch: entry.worktreeBranch,
+					}
+				default:
+					m.action = &PostAction{
+						Kind:        entry.kind,
+						SessionName: entry.sessionName,
+						ProjectPath: entry.projectPath,
+						Priority:    m.cfg.General.SwitchPriority,
+					}
 				}
 			}
 
@@ -343,7 +564,7 @@ func (m *finderModel) rebuildPicker() {
 
 	// Sessions: preserve tmux order, with optional last-session promotion and
 	// attached-session demotion controlled by config.
-	if m.kind != FinderProjects && len(m.sessions) > 0 {
+	if (m.kind == FinderAll || m.kind == FinderSessions) && len(m.sessions) > 0 {
 		// Build index pairs so we can sort sessions + entries together.
 		type indexedSession struct {
 			idx         int
@@ -385,8 +606,32 @@ func (m *finderModel) rebuildPicker() {
 		}
 	}
 
+	// Queue items (between sessions and projects in FinderAll).
+	if (m.kind == FinderAll || m.kind == FinderQueue) && len(m.queueItems) > 0 {
+		items = append(items, m.queueItems...)
+		entries = append(entries, m.queueIdx...)
+	}
+
+	// Worktree items.
+	if (m.kind == FinderAll || m.kind == FinderWorktrees) && len(m.worktreeItems) > 0 {
+		items = append(items, m.worktreeItems...)
+		entries = append(entries, m.worktreeIdx...)
+	}
+
+	// Mark items.
+	if (m.kind == FinderAll || m.kind == FinderMarks) && len(m.markItems) > 0 {
+		items = append(items, m.markItems...)
+		entries = append(entries, m.markIdx...)
+	}
+
+	// Pane items (only in dedicated pane mode — too noisy for FinderAll).
+	if m.kind == FinderPanes && len(m.paneItems) > 0 {
+		items = append(items, m.paneItems...)
+		entries = append(entries, m.paneIdx...)
+	}
+
 	// Projects, excluding those that already have an active session.
-	if m.kind != FinderSessions {
+	if m.kind == FinderAll || m.kind == FinderProjects {
 		activeNames := map[string]bool{}
 		for _, e := range m.sessIdx {
 			activeNames[normalizeName(e.sessionName)] = true
@@ -406,9 +651,208 @@ func (m *finderModel) rebuildPicker() {
 	m.picker = m.picker.resetWith(items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
 }
 
+// buildPaneItems populates pane picker items from session data.
+func (m *finderModel) buildPaneItems() {
+	m.paneItems = nil
+	m.paneIdx = nil
+	for _, sess := range m.sessData {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				title := fmt.Sprintf("%s:%s.%d", sess.Name, win.Name, pane.Index)
+				desc := ShortenHome(pane.WorkingDir)
+				if cs, ok := m.agentData[pane.ID]; ok && cs.Running {
+					desc += " · " + cs.Provider.String() + " " + RenderActivity(cs.Activity)
+				} else if pane.Command != "" {
+					desc += " · " + pane.Command
+				}
+				m.paneItems = append(m.paneItems, PickerItem{
+					Title:       title,
+					Description: desc,
+					FilterValue: sess.Name + " " + win.Name + " " + pane.Command + " " + pane.WorkingDir,
+					Active:      pane.Active,
+				})
+				m.paneIdx = append(m.paneIdx, finderEntry{
+					kind:   KindPane,
+					paneID: pane.ID,
+				})
+			}
+		}
+	}
+	m.hasPane = true
+}
+
+// buildQueueItems constructs urgency-sorted agent pane items for the queue view.
+// Ported from the former queueModel.rebuildPicker().
+func (m *finderModel) buildQueueItems() {
+	m.queueItems = nil
+	m.queueIdx = nil
+
+	actSince := m.watcher.ActivitySince()
+	attnEvents := m.watcher.Attention.Snapshot()
+
+	// Build unseen lookup: paneID -> most urgent reason.
+	unseenReason := map[string]attention.Reason{}
+	unseenSet := map[string]bool{}
+	for _, ev := range attnEvents {
+		if ev.Seen {
+			continue
+		}
+		unseenSet[ev.PaneID] = true
+		if prev, ok := unseenReason[ev.PaneID]; !ok || ev.Reason < prev {
+			unseenReason[ev.PaneID] = ev.Reason
+		}
+	}
+
+	type queueItem struct {
+		item     PickerItem
+		entry    finderEntry
+		sortKey  int
+		sortTime int64
+	}
+
+	var items []queueItem
+	now := time.Now()
+
+	for _, sess := range m.sessData {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				cs, ok := m.agentData[pane.ID]
+				if !ok || !cs.Running {
+					continue
+				}
+
+				since := actSince[pane.ID]
+				elapsed := time.Duration(0)
+				hasSince := !since.IsZero()
+				if hasSince {
+					elapsed = now.Sub(since)
+				}
+
+				title := sess.Name
+				desc := buildQueueDescription(pane, cs, elapsed, hasSince)
+
+				filterVal := sess.Name
+				if pane.Git.Branch != "" {
+					filterVal += " " + pane.Git.Branch
+				}
+				filterVal += " " + cs.Provider.String()
+
+				unseen := unseenSet[pane.ID]
+				reason, hasReason := unseenReason[pane.ID]
+
+				// Sort key: unseen waiting (0), unseen finished (1), working (2), idle (3).
+				sortKey := 3
+				if unseen && hasReason {
+					sortKey = int(reason)
+				} else {
+					switch cs.Activity {
+					case agent.ActivityWaitingInput:
+						sortKey = 0
+					case agent.ActivityCompleted:
+						sortKey = 1
+					case agent.ActivityWorking:
+						sortKey = 2
+					case agent.ActivityIdle:
+						sortKey = 3
+					}
+				}
+
+				var sortTime int64
+				if !hasSince {
+					sortTime = 1<<62 - 1
+				} else {
+					switch {
+					case sortKey <= 1:
+						sortTime = since.Unix()
+					case sortKey == 2:
+						sortTime = since.Unix()
+					default:
+						sortTime = -since.Unix()
+					}
+				}
+
+				items = append(items, queueItem{
+					item: PickerItem{
+						Title:       title,
+						Description: desc,
+						FilterValue: filterVal,
+						Active:      unseen,
+					},
+					entry: finderEntry{
+						kind:   KindQueue,
+						paneID: pane.ID,
+						unseen: unseen,
+					},
+					sortKey:  sortKey,
+					sortTime: sortTime,
+				})
+			}
+		}
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].sortKey != items[j].sortKey {
+			return items[i].sortKey > items[j].sortKey
+		}
+		return items[i].sortTime > items[j].sortTime
+	})
+
+	m.queueItems = make([]PickerItem, len(items))
+	m.queueIdx = make([]finderEntry, len(items))
+	for i, qi := range items {
+		m.queueItems[i] = qi.item
+		m.queueIdx[i] = qi.entry
+	}
+	m.hasQueue = true
+}
+
+func buildQueueDescription(pane tmux.Pane, cs agent.AgentStatus, elapsed time.Duration, hasSince bool) string {
+	var parts []string
+
+	if pane.Git.IsRepo && pane.Git.Branch != "" {
+		b := pane.Git.Branch
+		if pane.Git.Dirty {
+			b += "*"
+		}
+		parts = append(parts, b)
+	}
+
+	if cs.Provider != agent.ProviderUnknown {
+		parts = append(parts, cs.Provider.String())
+	}
+
+	if cs.ContextSet {
+		parts = append(parts, fmt.Sprintf("%d%%", cs.ContextPct))
+	}
+
+	if hasSince {
+		parts = append(parts, RenderActivity(cs.Activity)+" "+formatDuration(elapsed))
+	} else {
+		parts = append(parts, RenderActivity(cs.Activity))
+	}
+
+	return JoinParts(parts)
+}
+
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return "<1s"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+}
+
 func (m finderModel) View() string {
-	if !m.hasSess && !m.hasProj {
+	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasMark {
 		return "  Loading...\n"
+	}
+	if m.kind == FinderQueue && len(m.queueItems) == 0 {
+		return "  No agent sessions\n"
 	}
 	return m.picker.View()
 }

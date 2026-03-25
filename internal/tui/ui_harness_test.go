@@ -59,7 +59,7 @@ func TestRenderHarnessQueue(t *testing.T) {
 	InitStyles(cfg)
 	w := harnessWatcher()
 
-	m := newQueueModel(cfg, w, 120, 18)
+	m := newFinderModel(cfg, w, FinderQueue, 120, 18)
 	t.Log("=== queue harness ===")
 	t.Log("\n" + m.View())
 }
@@ -95,7 +95,7 @@ func TestRenderHarnessLive(t *testing.T) {
 		}
 	}
 	finder := newFinderModel(cfg, w, FinderSessions, 140, 24)
-	queue := newQueueModel(cfg, w, 140, 24)
+	queue := newFinderModel(cfg, w, FinderQueue, 140, 24)
 
 	t.Logf("live sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 	t.Log("=== live dashboard ===")

@@ -13,18 +13,18 @@ import (
 	"github.com/serge/cms/internal/tmux"
 )
 
-// RunCmd dispatches worktree subcommands.
+// RunCmd dispatches worktree subcommands (kept for cms internal worktree).
 func RunCmd(args []string) error {
 	if len(args) == 0 {
-		return list()
+		return RunList()
 	}
 	switch args[0] {
 	case "list", "ls":
-		return list()
+		return RunList()
 	case "add", "a":
-		return add(args[1:])
+		return RunAdd(args[1:])
 	case "remove", "rm":
-		return remove(args[1:])
+		return RunRemove(args[1:])
 	case "merge", "m":
 		return Merge(args[1:])
 	default:
@@ -32,7 +32,8 @@ func RunCmd(args []string) error {
 	}
 }
 
-func list() error {
+// RunList prints the worktree table.
+func RunList() error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -91,55 +92,24 @@ func list() error {
 	return w.Flush()
 }
 
-func add(args []string) error {
-	var branch, path string
-	newBranch := false
-	force := false
-	noOpen := false
+// AddOpts controls optional behavior for AddWorktree.
+type AddOpts struct {
+	NoOpen bool // skip auto-creating a tmux window
+}
 
-	// Parse flags.
-	positional := []string{}
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-b":
-			newBranch = true
-		case "--force", "-f":
-			force = true
-		case "--no-open":
-			noOpen = true
-		default:
-			positional = append(positional, args[i])
-		}
-	}
-
-	if len(positional) == 0 {
-		return fmt.Errorf("usage: cms worktree add [-b] [-f] [--no-open] <branch> [path]")
-	}
-
+// AddWorktree creates a worktree for the given branch at the given path.
+// If path is empty, it is resolved from config. If the branch doesn't exist,
+// it is created automatically.
+func AddWorktree(root, branch, path string, opts AddOpts) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	root, err := FindRepoRoot(cwd)
-	if err != nil {
-		return err
-	}
 
-	// Resolve special symbols (@, -, ^).
-	branch, err = ResolveWorktreeSymbol(root, positional[0])
-	if err != nil {
-		return err
-	}
-	if len(positional) > 1 {
-		path = positional[1]
-	}
-
-	// Merge user config with per-repo .cms.toml.
 	cfg := config.Load()
 	wtCfg := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
 	if path == "" {
 		baseDir := ResolveWorktreeBaseDir(root, &wtCfg)
-		// Sanitize branch for path: feature/auth -> feature-auth
 		path = filepath.Join(baseDir, SanitizeBranch(branch))
 	}
 	if !filepath.IsAbs(path) {
@@ -147,19 +117,16 @@ func add(args []string) error {
 	}
 
 	// Resolve branch: check local, then remote for auto-tracking.
-	opts := CreateWorktreeOpts{NewBranch: newBranch, Force: force}
-	if !newBranch {
-		local, remote, err := ResolveBranch(root, branch)
-		if err != nil {
-			// Branch doesn't exist anywhere -- create it.
-			opts.NewBranch = true
-		} else if !local && remote != "" {
-			opts.Track = remote
-		}
+	createOpts := CreateWorktreeOpts{}
+	local, remote, err := ResolveBranch(root, branch)
+	if err != nil {
+		createOpts.NewBranch = true
+	} else if !local && remote != "" {
+		createOpts.Track = remote
 	}
 
 	fmt.Fprintf(os.Stderr, "creating worktree at %s for branch %s\n", ShortenHome(path), branch)
-	if err := CreateWorktree(root, path, branch, opts); err != nil {
+	if err := CreateWorktree(root, path, branch, createOpts); err != nil {
 		return fmt.Errorf("git worktree add failed: %w", err)
 	}
 
@@ -173,12 +140,51 @@ func add(args []string) error {
 	}
 
 	// Auto-open tmux window for the new worktree.
-	if !noOpen && os.Getenv("TMUX") != "" {
+	if !opts.NoOpen && os.Getenv("TMUX") != "" {
 		openTmuxWindow(branch, path)
 	}
 
 	fmt.Println(path)
 	return nil
+}
+
+// RunAdd parses flags and creates a worktree.
+func RunAdd(args []string) error {
+	noOpen := false
+
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-open":
+			noOpen = true
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: cms add [--no-open] <branch> [path]")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	root, err := FindRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+
+	branch, err := ResolveWorktreeSymbol(root, positional[0])
+	if err != nil {
+		return err
+	}
+	var path string
+	if len(positional) > 1 {
+		path = positional[1]
+	}
+
+	return AddWorktree(root, branch, path, AddOpts{NoOpen: noOpen})
 }
 
 // openTmuxWindow creates a tmux window for a new worktree in the
@@ -192,7 +198,8 @@ func openTmuxWindow(branch, wtPath string) {
 	_, _ = tmux.Run("new-window", "-t", target.Session, "-n", windowName, "-c", wtPath)
 }
 
-func remove(args []string) error {
+// RunRemove parses flags and removes a worktree.
+func RunRemove(args []string) error {
 	force := false
 	keepBranch := false
 	positional := []string{}
