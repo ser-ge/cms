@@ -68,6 +68,11 @@ type Watcher struct {
 	activitySince map[string]time.Time // paneID → when current activity started
 	Attention     AttentionQueue
 
+	// Configurable timing.
+	workingHold    time.Duration // observer: suppress false idle during output gaps
+	hookStale      time.Duration // observer resumes if hooks go silent
+	completedDecay time.Duration // Completed→Idle auto-decay
+
 	// Lifecycle.
 	stopCh chan struct{}
 }
@@ -76,11 +81,10 @@ const (
 	settleRecheckDelay    = 300 * time.Millisecond
 	liveRecheckInterval   = 250 * time.Millisecond
 	liveOutputGracePeriod = 350 * time.Millisecond
-	optimisticWorkingHold = 2 * time.Second
-	hookStaleTimeout      = 30 * time.Second // observer resumes if hooks go silent
 )
 
-// NewWatcher creates a Watcher.
+// NewWatcher creates a Watcher with default timing.
+// Call ApplyConfig to override from user config.
 func NewWatcher() *Watcher {
 	return &Watcher{
 		agentPanes:      map[string]bool{},
@@ -91,7 +95,17 @@ func NewWatcher() *Watcher {
 		hookSeen:        map[string]time.Time{},
 		hookCh:          make(chan HookEvent, 64),
 		activitySince:   map[string]time.Time{},
+		workingHold:     2 * time.Second,
+		hookStale:       30 * time.Second,
+		completedDecay:  30 * time.Second,
 		stopCh:          make(chan struct{}),
+	}
+}
+
+// ApplyConfig sets timing from user configuration.
+func (w *Watcher) ApplyConfig(cfg GeneralConfig) {
+	if cfg.CompletedDecayMs > 0 {
+		w.completedDecay = time.Duration(cfg.CompletedDecayMs) * time.Millisecond
 	}
 }
 
@@ -181,7 +195,7 @@ func (w *Watcher) trackTransitions(prev, next map[string]AgentStatus) {
 	}
 	w.mu.Unlock()
 
-	// Emit attention events based on transitions.
+	// Emit attention events based on current state (not diffs).
 	for paneID, ns := range next {
 		if !ns.Running {
 			w.Attention.RemovePane(paneID)
@@ -190,26 +204,28 @@ func (w *Watcher) trackTransitions(prev, next map[string]AgentStatus) {
 		}
 		ps := prev[paneID]
 
-		// Became waiting → attention.
-		if ns.Activity == ActivityWaitingInput && ps.Activity != ActivityWaitingInput {
-			w.Attention.Add(paneID, AttentionWaiting)
-			changed = true
-		}
-		// Stopped waiting → remove waiting attention.
-		if ns.Activity != ActivityWaitingInput && ps.Activity == ActivityWaitingInput {
-			w.Attention.Remove(paneID, AttentionWaiting)
-			changed = true
-		}
-
-		// Just finished work (Working → Idle).
-		if ns.Activity == ActivityIdle && ps.Activity == ActivityWorking {
+		switch ns.Activity {
+		case ActivityWaitingInput:
+			if ps.Activity != ActivityWaitingInput {
+				w.Attention.Add(paneID, AttentionWaiting)
+				changed = true
+			}
+		case ActivityCompleted:
 			w.Attention.Add(paneID, AttentionFinished)
 			changed = true
-		}
-		// Started working again → remove finished attention.
-		if ns.Activity == ActivityWorking && ps.Activity != ActivityWorking {
-			w.Attention.Remove(paneID, AttentionFinished)
-			changed = true
+		case ActivityWorking:
+			// Started working → clear any finished/waiting attention.
+			if ps.Activity != ActivityWorking {
+				w.Attention.Remove(paneID, AttentionFinished)
+				w.Attention.Remove(paneID, AttentionWaiting)
+				changed = true
+			}
+		default:
+			// Idle or Unknown — remove waiting if it was set.
+			if ps.Activity == ActivityWaitingInput {
+				w.Attention.Remove(paneID, AttentionWaiting)
+				changed = true
+			}
 		}
 	}
 
@@ -244,6 +260,52 @@ func (w *Watcher) applyAgentUpdate(updates map[string]AgentStatus) {
 	w.send(agentUpdateMsg{updates: updates})
 }
 
+// transitionAgent is the single state machine for all activity transitions.
+// Both observer and hook paths call this to get the final activity state.
+// It handles:
+//   - Observer hold window (suppress false idle during streaming)
+//   - Working→Idle promotion to Completed
+//   - Hook events bypass hold logic entirely
+//
+// Caller must hold w.mu.
+func (w *Watcher) transitionAgent(paneID string, source StatusSource, prev, raw AgentStatus) Activity {
+	parsed := raw.Activity
+
+	if source == SourceHook {
+		// Hooks are authoritative — no hold logic.
+		// Promote Working→Idle to Completed so attention queue sees it.
+		if prev.Activity == ActivityWorking && parsed == ActivityIdle {
+			return ActivityCompleted
+		}
+		return parsed
+	}
+
+	// Observer source: apply hold window to suppress false idles.
+	if parsed != ActivityIdle {
+		return parsed
+	}
+
+	// If previous was Working and we're within the hold window, stay Working.
+	lastOut := w.lastOutput[paneID]
+	workingUntil := w.workingUntil[paneID]
+	now := time.Now()
+
+	if prev.Activity == ActivityWorking {
+		if now.Sub(lastOut) < liveOutputGracePeriod || now.Before(workingUntil) {
+			return ActivityWorking
+		}
+		// Hold expired — promote to Completed.
+		return ActivityCompleted
+	}
+
+	// Provider-specific optimistic hold (e.g. Claude has 2s hold).
+	if shouldHoldWorking(raw) && now.Sub(lastOut) < w.workingHold {
+		return ActivityWorking
+	}
+
+	return ActivityIdle
+}
+
 // hookActiveFor returns true if hooks have reported for this pane recently enough
 // that the observer should defer to hook data.
 func (w *Watcher) hookActiveFor(paneID string) bool {
@@ -251,7 +313,7 @@ func (w *Watcher) hookActiveFor(paneID string) bool {
 	if !ok {
 		return false
 	}
-	return time.Since(lastSeen) < hookStaleTimeout
+	return time.Since(lastSeen) < w.hookStale
 }
 
 // HookStats returns debug info about hook state.
@@ -260,7 +322,7 @@ func (w *Watcher) HookStats() (activeCount int, listening bool) {
 	defer w.mu.Unlock()
 	now := time.Now()
 	for _, t := range w.hookSeen {
-		if now.Sub(t) < hookStaleTimeout {
+		if now.Sub(t) < w.hookStale {
 			activeCount++
 		}
 	}
@@ -390,7 +452,9 @@ func (w *Watcher) handleOutput(paneID string) {
 		return
 	}
 	debugf("watcher: output pane=%s tracked=true", paneID)
-	optimisticUpdate := w.promotePaneWorkingLocked(paneID)
+
+	// Set optimistic working hold — transitionAgent will use this.
+	w.workingUntil[paneID] = now.Add(w.workingHold)
 
 	// Cancel any pending timer for this pane.
 	if t, ok := w.outputTimers[paneID]; ok {
@@ -406,39 +470,15 @@ func (w *Watcher) handleOutput(paneID string) {
 	if now.Sub(lastLive) >= liveRecheckInterval {
 		w.lastLiveRecheck[paneID] = now
 		w.mu.Unlock()
-		if optimisticUpdate != nil {
-			w.send(agentUpdateMsg{updates: optimisticUpdate})
-		}
 		debugf("watcher: live recheck pane=%s scheduled", paneID)
 		go w.liveRecheckPane(paneID)
 		return
 	}
 
 	w.mu.Unlock()
-	if optimisticUpdate != nil {
-		w.send(agentUpdateMsg{updates: optimisticUpdate})
-	}
 	debugf("watcher: live recheck pane=%s throttled age=%s", paneID, now.Sub(lastLive))
 }
 
-func (w *Watcher) promotePaneWorkingLocked(paneID string) map[string]AgentStatus {
-	w.stateMu.Lock()
-	defer w.stateMu.Unlock()
-
-	status, ok := w.agents[paneID]
-	if !ok || !status.Running {
-		return nil
-	}
-	if status.Activity == ActivityWaitingInput || status.Activity == ActivityWorking {
-		return nil
-	}
-
-	status.Activity = ActivityWorking
-	w.agents[paneID] = status
-	w.workingUntil[paneID] = time.Now().Add(optimisticWorkingHold)
-	debugf("watcher: optimistic working pane=%s provider=%s", paneID, status.Provider.String())
-	return map[string]AgentStatus{paneID: status}
-}
 
 func (w *Watcher) liveRecheckPane(paneID string) {
 	w.recheckPane(paneID, "live")
@@ -490,10 +530,7 @@ func (w *Watcher) recheckPane(paneID, source string) {
 	}
 
 	w.mu.Lock()
-	now := time.Now()
-	lastOut := w.lastOutput[paneID]
-	workingUntil := w.workingUntil[paneID]
-	status.Activity = heldActivity(source, prev, status, lastOut, workingUntil, now)
+	status.Activity = w.transitionAgent(paneID, SourceObserver, prev, status)
 	if source == "settle" || status.Activity != ActivityWorking {
 		delete(w.workingUntil, paneID)
 	}
@@ -622,9 +659,7 @@ func (w *Watcher) pollProcesses() {
 						continue
 					}
 					prev := cachedAgents[pane.ID]
-					lastOut := w.lastOutput[pane.ID]
-					workingUntil := w.workingUntil[pane.ID]
-					status.Activity = heldActivity("poll", prev, status, lastOut, workingUntil, time.Now())
+					status.Activity = w.transitionAgent(pane.ID, SourceObserver, prev, status)
 					status.Source = SourceObserver
 					debugf("watcher: process poll pane=%s provider=%s activity=%s mode=%q", pane.ID, status.Provider.String(), status.Activity.String(), status.ModeLabel)
 					updates[pane.ID] = status
@@ -639,24 +674,6 @@ func (w *Watcher) pollProcesses() {
 	}
 }
 
-func heldActivity(source string, prev AgentStatus, status AgentStatus, lastOut, workingUntil, now time.Time) Activity {
-	activity := status.Activity
-	if activity != ActivityIdle {
-		return activity
-	}
-
-	if source != "settle" && prev.Activity == ActivityWorking {
-		if now.Sub(lastOut) < liveOutputGracePeriod || now.Before(workingUntil) {
-			return ActivityWorking
-		}
-	}
-
-	if shouldHoldWorking(status) && now.Sub(lastOut) < optimisticWorkingHold {
-		return ActivityWorking
-	}
-
-	return activity
-}
 
 // runHookLoop reads hook events from the hook channel and applies them as
 // authoritative agent status updates.
@@ -703,6 +720,7 @@ func (w *Watcher) handleHookEvent(ev HookEvent) {
 		}
 	}
 
+	// Build the raw status from the hook event.
 	switch ev.Kind {
 	case HookSessionStart:
 		status.Running = true
@@ -711,7 +729,7 @@ func (w *Watcher) handleHookEvent(ev HookEvent) {
 		debugf("watcher: hook session-start pane=%s session=%s", paneID, ev.SessionID)
 
 	case HookStop:
-		status.Activity = ActivityIdle
+		status.Activity = ActivityIdle // transitionAgent will promote to Completed if prev was Working
 		status.ToolName = ""
 		debugf("watcher: hook stop pane=%s", paneID)
 
@@ -739,6 +757,11 @@ func (w *Watcher) handleHookEvent(ev HookEvent) {
 		status.ToolName = ev.ToolName
 		debugf("watcher: hook pre-tool-use pane=%s tool=%s", paneID, ev.ToolName)
 	}
+
+	// Run through the state machine.
+	w.mu.Lock()
+	status.Activity = w.transitionAgent(paneID, SourceHook, existing, status)
+	w.mu.Unlock()
 
 	w.applyAgentUpdate(map[string]AgentStatus{paneID: status})
 }

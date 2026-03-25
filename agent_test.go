@@ -322,24 +322,68 @@ func TestReparseAgentStatusUsesProviderParser(t *testing.T) {
 	}
 }
 
-func TestHeldActivityKeepsWorkingDuringLiveOutput(t *testing.T) {
-	now := time.Now()
-	prev := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityWorking}
-	parsed := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityIdle}
+func TestTransitionAgentObserverKeepsWorkingDuringHold(t *testing.T) {
+	w := NewWatcher()
+	paneID := "%1"
+	w.lastOutput[paneID] = time.Now().Add(-100 * time.Millisecond)
+	w.workingUntil[paneID] = time.Now().Add(1500 * time.Millisecond)
 
-	activity := heldActivity("live", prev, parsed, now.Add(-100*time.Millisecond), now.Add(1500*time.Millisecond), now)
-	if activity != ActivityWorking {
-		t.Fatalf("heldActivity(live) = %v, want %v", activity, ActivityWorking)
+	prev := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityWorking}
+	raw := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityIdle}
+
+	got := w.transitionAgent(paneID, SourceObserver, prev, raw)
+	if got != ActivityWorking {
+		t.Fatalf("transitionAgent = %v, want Working (within hold window)", got)
 	}
 }
 
-func TestHeldActivityAllowsSettleToReturnIdle(t *testing.T) {
-	now := time.Now()
-	prev := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityWorking}
-	parsed := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityIdle}
+func TestTransitionAgentObserverCompletedAfterHoldExpires(t *testing.T) {
+	w := NewWatcher()
+	paneID := "%1"
+	w.lastOutput[paneID] = time.Now().Add(-3 * time.Second)
+	w.workingUntil[paneID] = time.Now().Add(-1 * time.Second)
 
-	activity := heldActivity("settle", prev, parsed, now.Add(-400*time.Millisecond), now.Add(1500*time.Millisecond), now)
-	if activity != ActivityIdle {
-		t.Fatalf("heldActivity(settle) = %v, want %v", activity, ActivityIdle)
+	prev := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityWorking}
+	raw := AgentStatus{Running: true, Provider: ProviderCodex, Activity: ActivityIdle}
+
+	got := w.transitionAgent(paneID, SourceObserver, prev, raw)
+	if got != ActivityCompleted {
+		t.Fatalf("transitionAgent = %v, want Completed (hold expired, was Working)", got)
+	}
+}
+
+func TestTransitionAgentHookCompletedOnStop(t *testing.T) {
+	w := NewWatcher()
+	prev := AgentStatus{Running: true, Provider: ProviderClaude, Activity: ActivityWorking}
+	raw := AgentStatus{Running: true, Provider: ProviderClaude, Activity: ActivityIdle}
+
+	got := w.transitionAgent("%1", SourceHook, prev, raw)
+	if got != ActivityCompleted {
+		t.Fatalf("transitionAgent = %v, want Completed (hook Working→Idle)", got)
+	}
+}
+
+func TestTransitionAgentHookPassesThroughNonIdle(t *testing.T) {
+	w := NewWatcher()
+	prev := AgentStatus{Running: true, Provider: ProviderClaude, Activity: ActivityIdle}
+	raw := AgentStatus{Running: true, Provider: ProviderClaude, Activity: ActivityWorking}
+
+	got := w.transitionAgent("%1", SourceHook, prev, raw)
+	if got != ActivityWorking {
+		t.Fatalf("transitionAgent = %v, want Working (hook passthrough)", got)
+	}
+}
+
+func TestTransitionAgentObserverIdleFromIdle(t *testing.T) {
+	w := NewWatcher()
+	paneID := "%1"
+	w.lastOutput[paneID] = time.Now().Add(-5 * time.Second)
+
+	prev := AgentStatus{Running: true, Provider: ProviderClaude, Activity: ActivityIdle}
+	raw := AgentStatus{Running: true, Provider: ProviderClaude, Activity: ActivityIdle}
+
+	got := w.transitionAgent(paneID, SourceObserver, prev, raw)
+	if got != ActivityIdle {
+		t.Fatalf("transitionAgent = %v, want Idle (no transition)", got)
 	}
 }

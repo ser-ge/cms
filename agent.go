@@ -30,6 +30,7 @@ const (
 	ActivityIdle
 	ActivityWorking
 	ActivityWaitingInput
+	ActivityCompleted // just finished work (Working→Idle), decays to Idle
 )
 
 func (a Activity) String() string {
@@ -40,6 +41,8 @@ func (a Activity) String() string {
 		return "working"
 	case ActivityWaitingInput:
 		return "waiting"
+	case ActivityCompleted:
+		return "completed"
 	default:
 		return "unknown"
 	}

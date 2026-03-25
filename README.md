@@ -44,6 +44,7 @@ search_submodules = false
 search_paths = [
   { path = "~/projects", max_depth = 3 }
 ]
+completed_decay_ms = 30000  # how long "completed" shows before becoming "idle"
 ```
 
 ## Claude Code Hooks (optional)

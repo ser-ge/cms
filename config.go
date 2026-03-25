@@ -66,6 +66,8 @@ type GeneralConfig struct {
 	LastSessionFirst bool         `toml:"last_session_first"`
 	SearchSubmodules bool         `toml:"search_submodules"`
 	SearchPaths      []SearchPath `toml:"search_paths"`
+
+	CompletedDecayMs int `toml:"completed_decay_ms"` // Completed→Idle auto-decay in ms (default 30000)
 }
 
 type IconsConfig struct {
@@ -170,6 +172,7 @@ func DefaultGeneralConfig() GeneralConfig {
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
 		},
+		CompletedDecayMs: 30000,
 	}
 }
 
@@ -252,6 +255,7 @@ func (c *Config) normalize() {
 	defaultSlice(&c.General.SwitchPriority, dg.SwitchPriority)
 	defaultStr(&c.General.EscapeChord, dg.EscapeChord)
 	defaultInt(&c.General.EscapeChordMs, dg.EscapeChordMs)
+	defaultInt(&c.General.CompletedDecayMs, dg.CompletedDecayMs)
 }
 
 func configPath() string {

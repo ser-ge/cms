@@ -96,6 +96,8 @@ func selectPriorityPane(panes []Pane, priority []string, agents map[string]Agent
 		switch p {
 		case "waiting":
 			target = ActivityWaitingInput
+		case "completed":
+			target = ActivityCompleted
 		case "idle":
 			target = ActivityIdle
 		case "working":

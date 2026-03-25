@@ -162,6 +162,8 @@ func (m *queueModel) rebuildPicker() {
 					switch cs.Activity {
 					case ActivityWaitingInput:
 						sortKey = 0
+					case ActivityCompleted:
+						sortKey = 1
 					case ActivityWorking:
 						sortKey = 2
 					case ActivityIdle:

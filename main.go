@@ -80,6 +80,7 @@ func main() {
 	}
 
 	watcher := NewWatcher()
+	watcher.ApplyConfig(cfg.General)
 	m := newRootModel(initial, fk, cfg, watcher)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	watcher.Start(p.Send)
@@ -154,7 +155,7 @@ func jumpNext() error {
 
 func selectNextPane(all []jumpCandidate, currentIdx int) string {
 	start := currentIdx + 1
-	for _, target := range []Activity{ActivityWaitingInput, ActivityIdle} {
+	for _, target := range []Activity{ActivityWaitingInput, ActivityCompleted, ActivityIdle} {
 		for i := 0; i < len(all); i++ {
 			idx := (start + i) % len(all)
 			if all[idx].activity == target {

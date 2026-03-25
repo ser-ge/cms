@@ -660,6 +660,8 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 			pc.indicator = waitingStyle.Render(waitingIndicator) + " "
 		case ActivityIdle:
 			pc.indicator = idleStyle.Render(idleIndicator) + " "
+		case ActivityCompleted:
+			pc.indicator = idleStyle.Render(idleIndicator) + " "
 		default:
 			pc.indicator = dimStyle.Render(unknownIndicator) + " "
 		}
@@ -779,6 +781,9 @@ func renderAgentActivity(cs AgentStatus) (string, string) {
 	case ActivityIdle:
 		style = idleStyle
 		label = "idle"
+	case ActivityCompleted:
+		style = idleStyle
+		label = "completed"
 	default:
 		return "", ""
 	}
@@ -787,7 +792,7 @@ func renderAgentActivity(cs AgentStatus) (string, string) {
 
 func fixedPaneColumnWidths() [numPaneCols]int {
 	var widths [numPaneCols]int
-	widths[3] = len("waiting")
+	widths[3] = len("completed")
 	widths[4] = len("100%")
 	widths[5] = len("danger-full-access")
 	return widths
