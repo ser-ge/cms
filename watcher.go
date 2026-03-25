@@ -53,6 +53,9 @@ type Watcher struct {
 	// Debouncing: coalesce rapid %output events per pane.
 	outputTimers map[string]*time.Timer
 
+	// Completed→Idle decay timers per pane.
+	completedTimers map[string]*time.Timer
+
 	// Hook integration: when hooks report for a pane, suppress observer updates.
 	hookSeen     map[string]time.Time // paneID → last hook event time
 	hookCh       chan HookEvent       // receives events from hook listener
@@ -92,6 +95,7 @@ func NewWatcher() *Watcher {
 		lastLiveRecheck: map[string]time.Time{},
 		workingUntil:    map[string]time.Time{},
 		outputTimers:    map[string]*time.Timer{},
+		completedTimers: map[string]*time.Timer{},
 		hookSeen:        map[string]time.Time{},
 		hookCh:          make(chan HookEvent, 64),
 		activitySince:   map[string]time.Time{},
@@ -124,9 +128,12 @@ func (w *Watcher) Stop() {
 	}
 	close(w.stopCh)
 
-	// Cancel all pending debounce timers.
+	// Cancel all pending timers.
 	w.mu.Lock()
 	for _, t := range w.outputTimers {
+		t.Stop()
+	}
+	for _, t := range w.completedTimers {
 		t.Stop()
 	}
 	w.mu.Unlock()
@@ -257,6 +264,18 @@ func (w *Watcher) applyAgentUpdate(updates map[string]AgentStatus) {
 	w.stateMu.Unlock()
 
 	w.trackTransitions(prevSnapshot, updates)
+
+	// Schedule/cancel Completed→Idle decay timers.
+	w.mu.Lock()
+	for id, status := range updates {
+		if status.Activity == ActivityCompleted {
+			w.scheduleCompletedDecayLocked(id)
+		} else {
+			w.cancelCompletedDecayLocked(id)
+		}
+	}
+	w.mu.Unlock()
+
 	w.send(agentUpdateMsg{updates: updates})
 }
 
@@ -275,6 +294,10 @@ func (w *Watcher) transitionAgent(paneID string, source StatusSource, prev, raw 
 		// Hooks are authoritative — no hold logic.
 		// Promote Working→Idle to Completed so attention queue sees it.
 		if prev.Activity == ActivityWorking && parsed == ActivityIdle {
+			return ActivityCompleted
+		}
+		// Preserve Completed until the decay timer fires.
+		if prev.Activity == ActivityCompleted && parsed == ActivityIdle {
 			return ActivityCompleted
 		}
 		return parsed
@@ -298,12 +321,63 @@ func (w *Watcher) transitionAgent(paneID string, source StatusSource, prev, raw 
 		return ActivityCompleted
 	}
 
+	// Preserve Completed until the decay timer fires.
+	if prev.Activity == ActivityCompleted {
+		return ActivityCompleted
+	}
+
 	// Provider-specific optimistic hold (e.g. Claude has 2s hold).
 	if shouldHoldWorking(raw) && now.Sub(lastOut) < w.workingHold {
 		return ActivityWorking
 	}
 
 	return ActivityIdle
+}
+
+// scheduleCompletedDecayLocked starts a timer to transition Completed→Idle.
+// Caller must hold w.mu.
+func (w *Watcher) scheduleCompletedDecayLocked(paneID string) {
+	// Cancel existing timer if any.
+	if t, ok := w.completedTimers[paneID]; ok {
+		t.Stop()
+	}
+	w.completedTimers[paneID] = time.AfterFunc(w.completedDecay, func() {
+		w.decayCompleted(paneID)
+	})
+}
+
+// cancelCompletedDecayLocked cancels a pending decay timer.
+// Caller must hold w.mu.
+func (w *Watcher) cancelCompletedDecayLocked(paneID string) {
+	if t, ok := w.completedTimers[paneID]; ok {
+		t.Stop()
+		delete(w.completedTimers, paneID)
+	}
+}
+
+// decayCompleted transitions a pane from Completed to Idle.
+func (w *Watcher) decayCompleted(paneID string) {
+	select {
+	case <-w.stopCh:
+		return
+	default:
+	}
+
+	w.mu.Lock()
+	delete(w.completedTimers, paneID)
+	w.mu.Unlock()
+
+	w.stateMu.RLock()
+	status, ok := w.agents[paneID]
+	w.stateMu.RUnlock()
+
+	if !ok || status.Activity != ActivityCompleted {
+		return
+	}
+
+	debugf("watcher: completed decay pane=%s → idle", paneID)
+	status.Activity = ActivityIdle
+	w.applyAgentUpdate(map[string]AgentStatus{paneID: status})
 }
 
 // hookActiveFor returns true if hooks have reported for this pane recently enough
@@ -355,13 +429,31 @@ func (w *Watcher) bootstrap() {
 	w.mu.Lock()
 	for id, status := range agents {
 		w.agentPanes[id] = true
-		// Restore persisted activity timestamp if the activity hasn't changed.
-		if p, ok := persisted[id]; ok && p.activity == status.Activity.String() {
-			w.activitySince[id] = p.since
+		if p, ok := persisted[id]; ok {
+			if p.activity == status.Activity.String() {
+				w.activitySince[id] = p.since
+			}
+			// Restore Completed state from previous run.
+			// If the decay window hasn't expired, set Completed and schedule decay
+			// for the remaining time. Otherwise leave as Idle.
+			if p.activity == ActivityCompleted.String() {
+				elapsed := time.Since(p.since)
+				if elapsed < w.completedDecay {
+					status.Activity = ActivityCompleted
+					agents[id] = status
+					w.activitySince[id] = p.since
+					w.completedTimers[id] = time.AfterFunc(w.completedDecay-elapsed, func() {
+						w.decayCompleted(id)
+					})
+				}
+			}
 		}
-		// Seed initial attention for panes already waiting.
+		// Seed initial attention for panes already waiting or just completed.
 		if status.Activity == ActivityWaitingInput {
 			w.Attention.Add(id, AttentionWaiting)
+		}
+		if status.Activity == ActivityCompleted {
+			w.Attention.Add(id, AttentionFinished)
 		}
 	}
 	w.mu.Unlock()
@@ -647,6 +739,7 @@ func (w *Watcher) pollProcesses() {
 						t.Stop()
 						delete(w.outputTimers, pane.ID)
 					}
+					w.cancelCompletedDecayLocked(pane.ID)
 					debugf("watcher: process poll exited pane=%s", pane.ID)
 					updates[pane.ID] = AgentStatus{Running: false}
 					continue
