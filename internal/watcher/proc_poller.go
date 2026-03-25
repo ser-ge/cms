@@ -89,8 +89,11 @@ func (w *Watcher) pollProcesses() {
 					prev := cachedAgents[pane.ID]
 					status.Activity = w.transitionAgent(pane.ID, agent.SourceObserver, prev, status)
 					status.Source = agent.SourceObserver
-					debug.Logf("watcher: process poll pane=%s provider=%s activity=%s mode=%q", pane.ID, status.Provider.String(), status.Activity.String(), status.ModeLabel)
-					updates[pane.ID] = status
+					// Only emit update if something actually changed.
+					if prev != status {
+						debug.Logf("watcher: process poll pane=%s provider=%s activity=%s mode=%q", pane.ID, status.Provider.String(), status.Activity.String(), status.ModeLabel)
+						updates[pane.ID] = status
+					}
 				}
 			}
 		}

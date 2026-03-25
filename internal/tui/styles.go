@@ -151,26 +151,19 @@ func RenderMode(status agent.AgentStatus) string {
 	return ModeStyle(status).Render(status.ModeLabel)
 }
 
-// RenderAgentActivity returns the plain label and styled label for an agent's activity.
-func RenderAgentActivity(cs agent.AgentStatus, spinnerFrame int) string {
-	var style lipgloss.Style
-	label := ""
-	switch cs.Activity {
-	case agent.ActivityWorking:
-		style = workingStyle
-		label = "working"
-	case agent.ActivityWaitingInput:
-		style = waitingStyle
-		label = "waiting"
+func RenderActivity(a agent.Activity) string {
+
+	switch a {
 	case agent.ActivityIdle:
-		style = idleStyle
-		label = "idle"
+		return idleStyle.Render(agent.ActivityIdle.String())
+	case agent.ActivityWorking:
+		return workingStyle.Render(agent.ActivityWorking.String())
+	case agent.ActivityWaitingInput:
+		return waitingStyle.Render(agent.ActivityWaitingInput.String())
 	case agent.ActivityCompleted:
-		style = idleStyle
-		label = "completed"
+		return waitingStyle.Render(agent.ActivityCompleted.String())
 	default:
-		return ""
+		return "unknown"
 	}
-	_ = style
-	return label
+
 }

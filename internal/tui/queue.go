@@ -215,9 +215,9 @@ func (m *queueModel) rebuildPicker() {
 
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].sortKey != items[j].sortKey {
-			return items[i].sortKey < items[j].sortKey
+			return items[i].sortKey > items[j].sortKey
 		}
-		return items[i].sortTime < items[j].sortTime
+		return items[i].sortTime > items[j].sortTime
 	})
 
 	// Build picker items and entries.
@@ -229,25 +229,7 @@ func (m *queueModel) rebuildPicker() {
 	}
 	m.entries = entries
 
-	// Preserve picker state across rebuilds.
-	query := m.picker.Value()
-	cursor := m.picker.cursor
-	mode := m.picker.mode
-
-	m.picker = newPicker("", pickerItems, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
-	m.picker.width = m.width
-	m.picker.height = m.height
-	m.picker.mode = mode
-	if mode == pickerNormal {
-		m.picker.input.Blur()
-	}
-	if query != "" {
-		m.picker.input.SetValue(query)
-		m.picker.applyFilter()
-	}
-	if cursor < m.picker.visibleCount() {
-		m.picker.cursor = cursor
-	}
+	m.picker = m.picker.resetWith(pickerItems, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
 }
 
 func (m *queueModel) buildDescription(pane tmux.Pane, cs agent.AgentStatus, elapsed time.Duration, hasSince bool) string {
@@ -274,9 +256,9 @@ func (m *queueModel) buildDescription(pane tmux.Pane, cs agent.AgentStatus, elap
 
 	// Activity + duration (-- if no observed transition yet).
 	if hasSince {
-		parts = append(parts, cs.Activity.String()+" "+formatDuration(elapsed))
+		parts = append(parts, RenderActivity(cs.Activity)+" "+formatDuration(elapsed))
 	} else {
-		parts = append(parts, cs.Activity.String())
+		parts = append(parts, RenderActivity(cs.Activity))
 	}
 
 	return JoinParts(parts)

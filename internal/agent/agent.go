@@ -1,6 +1,5 @@
 package agent
 
-import "strings"
 
 // Provider identifies the agent runtime in a tmux pane.
 type Provider int
@@ -136,7 +135,3 @@ func NormalizeParsed(status *AgentStatus) {
 	}
 }
 
-// JoinParts joins display parts with a separator.
-func JoinParts(parts []string) string {
-	return strings.Join(parts, " \u00b7 ")
-}

@@ -10,7 +10,6 @@ import (
 	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/debug"
 	"github.com/serge/cms/internal/project"
-	"github.com/serge/cms/internal/session"
 	"github.com/serge/cms/internal/tmux"
 	"github.com/serge/cms/internal/watcher"
 )
@@ -390,10 +389,10 @@ func (m *finderModel) rebuildPicker() {
 	if m.kind != FinderSessions {
 		activeNames := map[string]bool{}
 		for _, e := range m.sessIdx {
-			activeNames[session.NormalizeName(e.sessionName)] = true
+			activeNames[normalizeName(e.sessionName)] = true
 		}
 		for i, p := range m.projects {
-			normName := session.NormalizeName(p.Title)
+			normName := normalizeName(p.Title)
 			if activeNames[normName] {
 				continue
 			}
@@ -404,25 +403,7 @@ func (m *finderModel) rebuildPicker() {
 
 	m.entries = entries
 
-	// Preserve picker state across rebuilds.
-	query := m.picker.Value()
-	cursor := m.picker.cursor
-	mode := m.picker.mode
-
-	m.picker = newPicker("", items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
-	m.picker.width = m.width
-	m.picker.height = m.height
-	m.picker.mode = mode
-	if mode == pickerNormal {
-		m.picker.input.Blur()
-	}
-	if query != "" {
-		m.picker.input.SetValue(query)
-		m.picker.applyFilter()
-	}
-	if cursor < m.picker.visibleCount() {
-		m.picker.cursor = cursor
-	}
+	m.picker = m.picker.resetWith(items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
 }
 
 func (m finderModel) View() string {

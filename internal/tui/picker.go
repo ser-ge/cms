@@ -82,6 +82,31 @@ func (m pickerModel) Value() string {
 	return m.input.Value()
 }
 
+// resetWith replaces items while preserving query, cursor, and mode.
+func (m pickerModel) resetWith(items []PickerItem, escapeChord string, escapeChordMs int) pickerModel {
+	query := m.Value()
+	cursor := m.cursor
+	mode := m.mode
+	width := m.width
+	height := m.height
+
+	m = newPicker("", items, escapeChord, escapeChordMs)
+	m.width = width
+	m.height = height
+	m.mode = mode
+	if mode == pickerNormal {
+		m.input.Blur()
+	}
+	if query != "" {
+		m.input.SetValue(query)
+		m.applyFilter()
+	}
+	if cursor < m.visibleCount() {
+		m.cursor = cursor
+	}
+	return m
+}
+
 type chordTimeoutMsg struct{}
 
 func (m pickerModel) Init() tea.Cmd {

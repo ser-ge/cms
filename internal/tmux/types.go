@@ -37,3 +37,16 @@ type CurrentTarget struct {
 	Window  int
 	Pane    int
 }
+
+// CollectPaneDirs returns all unique pane working directories from a session list.
+func CollectPaneDirs(sessions []Session) []string {
+	var dirs []string
+	for _, sess := range sessions {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				dirs = append(dirs, pane.WorkingDir)
+			}
+		}
+	}
+	return dirs
+}

@@ -240,16 +240,13 @@ func (w *Watcher) applyAgentUpdate(updates map[string]agent.AgentStatus) {
 		return
 	}
 
-	w.stateMu.RLock()
+	w.stateMu.Lock()
 	prevSnapshot := make(map[string]agent.AgentStatus, len(updates))
 	for id := range updates {
 		if prev, ok := w.agents[id]; ok {
 			prevSnapshot[id] = prev
 		}
 	}
-	w.stateMu.RUnlock()
-
-	w.stateMu.Lock()
 	w.agents = agent.ApplyUpdates(w.agents, updates)
 	w.stateMu.Unlock()
 

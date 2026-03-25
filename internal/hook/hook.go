@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/serge/cms/internal/debug"
 )
 
 // Kind identifies the type of Claude Code hook event.
@@ -121,7 +123,7 @@ func NewListener(socketPath string, events chan<- Event) (*Listener, error) {
 		stopCh:     make(chan struct{}),
 	}
 	go hl.acceptLoop()
-	log.Printf("hook: listener started on %s", socketPath)
+	debug.Logf("hook: listener started on %s", socketPath)
 	return hl, nil
 }
 
@@ -135,7 +137,7 @@ func (hl *Listener) Stop() {
 	close(hl.stopCh)
 	hl.listener.Close()
 	os.Remove(hl.socketPath)
-	log.Printf("hook: listener stopped")
+	debug.Logf("hook: listener stopped")
 }
 
 func (hl *Listener) acceptLoop() {

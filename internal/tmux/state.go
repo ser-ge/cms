@@ -87,6 +87,7 @@ func FetchState() ([]Session, proc.Table, error) {
 	}
 
 	// Collect all unique working dirs and resolve git info concurrently.
+	// Build a flat pane list from the window map (sessions not assembled yet).
 	var allDirs []string
 	for _, wKeys := range windowOrder {
 		for _, wKey := range wKeys {

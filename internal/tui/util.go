@@ -22,3 +22,10 @@ func ShortenHome(path string) string {
 func JoinParts(parts []string) string {
 	return strings.Join(parts, " \u00b7 ")
 }
+
+// normalizeName makes a name safe for tmux (dots and colons become underscores).
+func normalizeName(name string) string {
+	name = strings.ReplaceAll(name, ".", "_")
+	name = strings.ReplaceAll(name, ":", "_")
+	return name
+}

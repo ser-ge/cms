@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/serge/cms/internal/git"
+	"github.com/serge/cms/internal/tmux"
 )
 
 // runGitPoll periodically re-checks git status for all pane working dirs.
@@ -30,16 +31,26 @@ func (w *Watcher) pollGit() {
 		return
 	}
 
-	var allDirs []string
-	for _, sess := range sessions {
-		for _, win := range sess.Windows {
-			for _, pane := range win.Panes {
-				allDirs = append(allDirs, pane.WorkingDir)
-			}
-		}
-	}
+	allDirs := tmux.CollectPaneDirs(sessions)
 
 	gitCache := git.NewCache()
 	results := gitCache.DetectAll(allDirs)
-	w.send(GitUpdateMsg{GitInfo: results})
+
+	// Suppress no-op sends: compare against cached pane git info.
+	w.stateMu.RLock()
+	changed := false
+	for _, sess := range w.sessions {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				if info, ok := results[pane.WorkingDir]; ok && info != pane.Git {
+					changed = true
+				}
+			}
+		}
+	}
+	w.stateMu.RUnlock()
+
+	if changed {
+		w.send(GitUpdateMsg{GitInfo: results})
+	}
 }
