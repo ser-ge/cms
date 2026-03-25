@@ -49,8 +49,20 @@ func main() {
 		case "open", "o":
 			initial = screenFinder
 			fk = finderProjects
+		case "queue", "q":
+			initial = screenQueue
 		case "next", "n":
 			if err := jumpNext(); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "refresh":
+			var name string
+			if len(os.Args) > 2 {
+				name = os.Args[2]
+			}
+			if err := RefreshWorktrees(name); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}

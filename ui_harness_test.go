@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderHarnessDashboard(t *testing.T) {
@@ -35,13 +36,27 @@ func TestRenderHarnessFinder(t *testing.T) {
 
 	cfg := DefaultConfig()
 	initStyles(cfg)
-	w := &Watcher{}
-	w.updateCache(harnessSessions(), harnessAgents(), CurrentTarget{Session: "cms", Window: 0, Pane: 1})
+	w := harnessWatcher()
 
 	m := newFinderModel(cfg, w, finderSessions, 120, 18)
 	t.Log("=== finder harness ===")
 	t.Log("\n" + m.View())
 }
+
+func TestRenderHarnessQueue(t *testing.T) {
+	if os.Getenv("CMS_RENDER_HARNESS") == "" {
+		t.Skip("set CMS_RENDER_HARNESS=1 to print queue render output")
+	}
+
+	cfg := DefaultConfig()
+	initStyles(cfg)
+	w := harnessWatcher()
+
+	m := newQueueModel(cfg, w, 120, 18)
+	t.Log("=== queue harness ===")
+	t.Log("\n" + m.View())
+}
+
 
 func TestRenderHarnessLive(t *testing.T) {
 	if os.Getenv("CMS_LIVE_HARNESS") == "" {
@@ -63,15 +78,26 @@ func TestRenderHarnessLive(t *testing.T) {
 	updated, _ := dash.Update(stateMsg{sessions: sessions, agents: agents, current: current})
 	dash = updated
 
-	w := &Watcher{}
+	w := NewWatcher()
 	w.updateCache(sessions, agents, current)
+	// Seed activitySince from current state.
+	now := time.Now()
+	for id := range agents {
+		w.activitySince[id] = now
+		if agents[id].Activity == ActivityWaitingInput {
+			w.Attention.Add(id, AttentionWaiting)
+		}
+	}
 	finder := newFinderModel(cfg, w, finderSessions, 140, 24)
+	queue := newQueueModel(cfg, w, 140, 24)
 
 	t.Logf("live sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 	t.Log("=== live dashboard ===")
 	t.Log("\n" + dash.View())
 	t.Log("=== live finder ===")
 	t.Log("\n" + finder.View())
+	t.Log("=== live queue ===")
+	t.Log("\n" + queue.View())
 }
 
 func harnessSessions() []Session {
@@ -85,9 +111,12 @@ func harnessSessions() []Session {
 					Name:   "fish",
 					Active: true,
 					Panes: []Pane{
-						{ID: "%1", Index: 0, Command: "cms", WorkingDir: "/Users/serge/projects/cms", Active: false},
-						{ID: "%2", Index: 1, Command: "codex", WorkingDir: "/Users/serge/projects/cms", Active: true},
-						{ID: "%3", Index: 2, Command: "claude", WorkingDir: "/Users/serge/projects/cms", Active: false},
+						{ID: "%1", Index: 0, Command: "cms", WorkingDir: "/Users/serge/projects/cms", Active: false,
+							Git: GitInfo{IsRepo: true, Branch: "feature/refactor", RepoName: "cms", Dirty: true}},
+						{ID: "%2", Index: 1, Command: "codex", WorkingDir: "/Users/serge/projects/cms", Active: true,
+							Git: GitInfo{IsRepo: true, Branch: "codex/functionality", RepoName: "cms"}},
+						{ID: "%3", Index: 2, Command: "claude", WorkingDir: "/Users/serge/projects/cms", Active: false,
+							Git: GitInfo{IsRepo: true, Branch: "codex/functionality", RepoName: "cms"}},
 					},
 				},
 			},
@@ -100,14 +129,39 @@ func harnessSessions() []Session {
 					Name:   "main",
 					Active: true,
 					Panes: []Pane{
-						{ID: "%4", Index: 0, Command: "claude", WorkingDir: "/Users/serge/projects/gather_git", Active: true},
-						{ID: "%5", Index: 1, Command: "zsh", WorkingDir: "/Users/serge/projects/gather_git", Active: false},
+						{ID: "%4", Index: 0, Command: "claude", WorkingDir: "/Users/serge/projects/gather_git", Active: true,
+							Git: GitInfo{IsRepo: true, Branch: "main", RepoName: "gather_git"}},
+						{ID: "%5", Index: 1, Command: "zsh", WorkingDir: "/Users/serge/projects/gather_git", Active: false,
+							Git: GitInfo{IsRepo: true, Branch: "main", RepoName: "gather_git"}},
 					},
 				},
 			},
 		},
 	}
 }
+
+// harnessWatcher builds a Watcher pre-populated with harness data,
+// including activitySince timestamps and attention events.
+func harnessWatcher() *Watcher {
+	w := NewWatcher()
+	sessions := harnessSessions()
+	agents := harnessAgents()
+	w.updateCache(sessions, agents, CurrentTarget{Session: "cms", Window: 0, Pane: 1})
+
+	// Seed activitySince with staggered times so the queue shows varied durations.
+	now := time.Now()
+	w.activitySince["%1"] = now.Add(-8 * time.Minute)  // idle 8m
+	w.activitySince["%2"] = now.Add(-15 * time.Second)  // working 15s
+	w.activitySince["%3"] = now.Add(-2 * time.Minute)   // waiting 2m
+	w.activitySince["%4"] = now.Add(-45 * time.Second)  // working 45s
+
+	// Seed attention: %3 is waiting, %1 just finished (was working, now idle).
+	w.Attention.Add("%3", AttentionWaiting)
+	w.Attention.Add("%1", AttentionFinished)
+
+	return w
+}
+
 
 func harnessAgents() map[string]AgentStatus {
 	return map[string]AgentStatus{
