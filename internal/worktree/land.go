@@ -279,6 +279,17 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 		fmt.Scanln()
 	}
 
+	// Switch to target worktree BEFORE cleanup — CleanupTmuxWindow kills
+	// the current window (and this process with it), so the switch must
+	// happen first.
+	if os.Getenv("TMUX") != "" {
+		if targetWt != nil {
+			switchOrOpenTmuxWindow(targetWt.Path, target)
+		} else if mainWt != "" {
+			switchOrOpenTmuxWindow(mainWt, target)
+		}
+	}
+
 	// Step 9: Clean up worktree + branch.
 	if willCleanup {
 		fmt.Fprintf(os.Stderr, "%s worktree %s\n", dim("cleaning up"), ShortenHome(currentWt.Path))
@@ -297,15 +308,6 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 		}
 
 		CleanupTmuxWindow(currentWt.Path)
-	}
-
-	// Switch to target worktree after cleanup.
-	if os.Getenv("TMUX") != "" {
-		if targetWt != nil {
-			switchOrOpenTmuxWindow(targetWt.Path, target)
-		} else if mainWt != "" {
-			switchOrOpenTmuxWindow(mainWt, target)
-		}
 	}
 
 	return nil
