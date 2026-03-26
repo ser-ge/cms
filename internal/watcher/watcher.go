@@ -56,6 +56,12 @@ type Watcher struct {
 	completedDecay time.Duration // Completed->Idle auto-decay
 	hookPersist    bool          // when true, hooks never go stale
 
+	// Transition smoothing: suppress flicker by holding the current state
+	// for a configurable delay before committing a transition.
+	smoothingCfg    config.GeneralConfig   // carries SmoothingMs()
+	smoothingTimers map[string]*time.Timer // paneID -> pending smoothing timer
+	smoothingTarget map[string]agent.Activity // paneID -> target activity when timer fires
+
 	// Lifecycle.
 	stopCh chan struct{}
 }
@@ -83,6 +89,8 @@ func New() *Watcher {
 		hookStale:       30 * time.Second,
 		completedDecay:  0,
 		hookPersist:     true,
+		smoothingTimers: map[string]*time.Timer{},
+		smoothingTarget: map[string]agent.Activity{},
 		stopCh:          make(chan struct{}),
 	}
 }
@@ -97,6 +105,7 @@ func (w *Watcher) ApplyConfig(cfg config.GeneralConfig) {
 	} else {
 		w.hookPersist = true
 	}
+	w.smoothingCfg = cfg
 }
 
 // Start begins the watcher goroutines. Must be called after tea.NewProgram.

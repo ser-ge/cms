@@ -10,6 +10,7 @@ import (
 
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/attention"
+	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/hook"
 	"github.com/serge/cms/internal/tmux"
 )
@@ -38,6 +39,7 @@ func findAgentUpdate(msgs []tea.Msg) (AgentUpdateMsg, bool) {
 
 func TestHookActiveFor(t *testing.T) {
 	w := New()
+	w.hookPersist = false // test staleness behavior
 
 	// No hook seen — should return false.
 	if w.hookActiveFor("%1") {
@@ -54,6 +56,15 @@ func TestHookActiveFor(t *testing.T) {
 	w.hookSeen["%2"] = time.Now().Add(-w.hookStale - time.Second)
 	if w.hookActiveFor("%2") {
 		t.Fatal("hookActiveFor should be false for stale pane")
+	}
+}
+
+func TestHookActiveForPersist(t *testing.T) {
+	w := New() // hookPersist=true by default
+
+	w.hookSeen["%1"] = time.Now().Add(-w.hookStale - time.Second)
+	if !w.hookActiveFor("%1") {
+		t.Fatal("hookActiveFor should be true when hookPersist is enabled, even if stale")
 	}
 }
 
@@ -397,6 +408,232 @@ func TestPersistActivitySinceMismatchIgnored(t *testing.T) {
 	if _, ok := since[paneID]; ok {
 		t.Fatal("activitySince should NOT be restored when persisted activity doesn't match current")
 	}
+}
+
+// --- Smoothing tests ---
+
+// testWatcherWithSmoothing sets up a watcher with smoothing config applied.
+func testWatcherWithSmoothing(workingToIdleMs, workingToCompletedMs int) (*Watcher, *[]tea.Msg) {
+	w, msgs := testWatcher()
+	cfg := config.DefaultGeneralConfig()
+	cfg.Smoothing.WorkingToIdleMs = workingToIdleMs
+	cfg.Smoothing.WorkingToCompletedMs = workingToCompletedMs
+	w.ApplyConfig(cfg)
+	return w, msgs
+}
+
+func TestSmoothingHookWorkingToIdleSuppressed(t *testing.T) {
+	w, _ := testWatcherWithSmoothing(3000, 0)
+	paneID := "%1"
+
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityIdle}
+
+	w.mu.Lock()
+	got := w.transitionAgent(paneID, agent.SourceHook, prev, raw)
+	w.mu.Unlock()
+
+	// transitionAgent resolves Working->Idle as Completed (hook promotion),
+	// then smoothing delays that Working->Completed transition.
+	// With workingToCompletedMs=0, Completed goes through immediately.
+	// But workingToIdleMs=3000 doesn't apply here because resolved is Completed, not Idle.
+	if got != agent.ActivityCompleted {
+		t.Fatalf("activity = %v, want Completed (hook promotes Working->Idle)", got)
+	}
+
+	// Cancel the timer to avoid goroutine leak.
+	w.mu.Lock()
+	w.cancelSmoothingLocked(paneID)
+	w.mu.Unlock()
+}
+
+func TestSmoothingHookWorkingToCompletedDelayed(t *testing.T) {
+	w, _ := testWatcherWithSmoothing(0, 2000)
+	paneID := "%1"
+
+	// Seed agent state so commitSmoothedTransition can find it.
+	w.stateMu.Lock()
+	w.agents = map[string]agent.AgentStatus{
+		paneID: {Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking},
+	}
+	w.stateMu.Unlock()
+
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityIdle}
+
+	w.mu.Lock()
+	got := w.transitionAgent(paneID, agent.SourceHook, prev, raw)
+	hasPending := w.smoothingTarget[paneID] == agent.ActivityCompleted
+	w.mu.Unlock()
+
+	// Should stay Working (smoothing delays the Working->Completed transition).
+	if got != agent.ActivityWorking {
+		t.Fatalf("activity = %v, want Working (smoothed, not yet committed)", got)
+	}
+	if !hasPending {
+		t.Fatal("expected pending smoothing timer targeting Completed")
+	}
+
+	// Cancel to prevent goroutine leak.
+	w.mu.Lock()
+	w.cancelSmoothingLocked(paneID)
+	w.mu.Unlock()
+}
+
+func TestSmoothingCancelledOnSameState(t *testing.T) {
+	w, _ := testWatcherWithSmoothing(3000, 2000)
+	paneID := "%1"
+
+	// Start a pending transition Working->Completed.
+	w.mu.Lock()
+	w.smoothingTarget[paneID] = agent.ActivityCompleted
+	w.smoothingTimers[paneID] = time.AfterFunc(time.Hour, func() {})
+	w.mu.Unlock()
+
+	// Now transition from Working->Working (same state) — should cancel pending.
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+
+	w.mu.Lock()
+	got := w.transitionAgent(paneID, agent.SourceHook, prev, raw)
+	_, hasPending := w.smoothingTarget[paneID]
+	w.mu.Unlock()
+
+	if got != agent.ActivityWorking {
+		t.Fatalf("activity = %v, want Working", got)
+	}
+	if hasPending {
+		t.Fatal("pending smoothing should be cancelled when transition is same-state")
+	}
+}
+
+func TestSmoothingGlobalOverride(t *testing.T) {
+	w, _ := testWatcher()
+	cfg := config.DefaultGeneralConfig()
+	cfg.TransitionSmoothingMs = 5000 // global override
+	cfg.Smoothing.WorkingToIdleMs = 0
+	cfg.Smoothing.WorkingToCompletedMs = 0
+	w.ApplyConfig(cfg)
+
+	paneID := "%1"
+	w.stateMu.Lock()
+	w.agents = map[string]agent.AgentStatus{
+		paneID: {Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking},
+	}
+	w.stateMu.Unlock()
+
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityIdle}
+
+	w.mu.Lock()
+	got := w.transitionAgent(paneID, agent.SourceHook, prev, raw)
+	_, hasPending := w.smoothingTarget[paneID]
+	w.mu.Unlock()
+
+	// Global override should apply even though per-transition is 0.
+	if got != agent.ActivityWorking {
+		t.Fatalf("activity = %v, want Working (global smoothing override)", got)
+	}
+	if !hasPending {
+		t.Fatal("expected pending smoothing timer from global override")
+	}
+
+	w.mu.Lock()
+	w.cancelSmoothingLocked(paneID)
+	w.mu.Unlock()
+}
+
+func TestSmoothingNoDelayForIdleToWorking(t *testing.T) {
+	w, _ := testWatcherWithSmoothing(3000, 2000)
+	paneID := "%1"
+
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityIdle}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+
+	w.mu.Lock()
+	got := w.transitionAgent(paneID, agent.SourceHook, prev, raw)
+	_, hasPending := w.smoothingTarget[paneID]
+	w.mu.Unlock()
+
+	// Idle->Working has 0ms smoothing — should be instant.
+	if got != agent.ActivityWorking {
+		t.Fatalf("activity = %v, want Working (no smoothing for idle->working)", got)
+	}
+	if hasPending {
+		t.Fatal("should not have pending smoothing for idle->working")
+	}
+}
+
+func TestSmoothingTimerCommits(t *testing.T) {
+	w, msgs := testWatcherWithSmoothing(0, 50) // 50ms for fast test
+	paneID := "%1"
+
+	w.stateMu.Lock()
+	w.agents = map[string]agent.AgentStatus{
+		paneID: {Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking},
+	}
+	w.stateMu.Unlock()
+
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityIdle}
+
+	w.mu.Lock()
+	got := w.transitionAgent(paneID, agent.SourceHook, prev, raw)
+	w.mu.Unlock()
+
+	if got != agent.ActivityWorking {
+		t.Fatalf("activity = %v, want Working (smoothing in progress)", got)
+	}
+
+	// Wait for smoothing timer to fire.
+	time.Sleep(100 * time.Millisecond)
+
+	// Timer should have committed the transition via applyAgentUpdate.
+	update, ok := findAgentUpdate(*msgs)
+	if !ok {
+		t.Fatal("expected AgentUpdateMsg from smoothing timer commit")
+	}
+	status := update.Updates[paneID]
+	if status.Activity != agent.ActivityCompleted {
+		t.Fatalf("committed activity = %v, want Completed", status.Activity)
+	}
+}
+
+func TestSmoothingObserverWorkingToCompletedDelayed(t *testing.T) {
+	w, _ := testWatcherWithSmoothing(0, 2000)
+	paneID := "%1"
+
+	w.mu.Lock()
+	w.lastOutput[paneID] = time.Now().Add(-3 * time.Second)
+	w.workingUntil[paneID] = time.Now().Add(-1 * time.Second)
+	w.mu.Unlock()
+
+	w.stateMu.Lock()
+	w.agents = map[string]agent.AgentStatus{
+		paneID: {Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking},
+	}
+	w.stateMu.Unlock()
+
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityIdle}
+
+	w.mu.Lock()
+	got := w.transitionAgent(paneID, agent.SourceObserver, prev, raw)
+	_, hasPending := w.smoothingTarget[paneID]
+	w.mu.Unlock()
+
+	// Observer resolves Working->Idle (hold expired) as Completed,
+	// smoothing delays Working->Completed.
+	if got != agent.ActivityWorking {
+		t.Fatalf("activity = %v, want Working (observer smoothed)", got)
+	}
+	if !hasPending {
+		t.Fatal("expected pending smoothing timer")
+	}
+
+	w.mu.Lock()
+	w.cancelSmoothingLocked(paneID)
+	w.mu.Unlock()
 }
 
 // setTmuxPaneOption sets a pane user option.

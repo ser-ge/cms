@@ -127,25 +127,41 @@ func (w *Watcher) recheckPane(paneID, source string) {
 //   - Observer hold window (suppress false idle during streaming)
 //   - Working->Idle promotion to Completed
 //   - Hook events bypass hold logic entirely
+//   - Smoothing: configurable delay before committing transitions
 //
 // Caller must hold w.mu.
 func (w *Watcher) transitionAgent(paneID string, source agent.StatusSource, prev, raw agent.AgentStatus) agent.Activity {
 	parsed := raw.Activity
 
+	var resolved agent.Activity
+
 	if source == agent.SourceHook {
 		// Hooks are authoritative -- no hold logic.
 		// Promote Working->Idle to Completed so attention queue sees it.
 		if prev.Activity == agent.ActivityWorking && parsed == agent.ActivityIdle {
-			return agent.ActivityCompleted
+			resolved = agent.ActivityCompleted
+		} else if prev.Activity == agent.ActivityCompleted && parsed == agent.ActivityIdle {
+			// Preserve Completed until the decay timer fires.
+			resolved = agent.ActivityCompleted
+		} else {
+			resolved = parsed
 		}
-		// Preserve Completed until the decay timer fires.
-		if prev.Activity == agent.ActivityCompleted && parsed == agent.ActivityIdle {
-			return agent.ActivityCompleted
-		}
-		return parsed
+	} else {
+		// Observer source: apply hold window to suppress false idles.
+		resolved = w.resolveObserver(paneID, prev, raw)
 	}
 
-	// Observer source: apply hold window to suppress false idles.
+	// Apply smoothing: if the resolved state differs from current,
+	// check if we need a smoothing delay.
+	return w.applySmoothing(paneID, source, prev.Activity, resolved)
+}
+
+// resolveObserver computes the target activity for observer-sourced updates,
+// applying hold windows to suppress false idles during streaming.
+// Caller must hold w.mu.
+func (w *Watcher) resolveObserver(paneID string, prev, raw agent.AgentStatus) agent.Activity {
+	parsed := raw.Activity
+
 	if parsed != agent.ActivityIdle {
 		return parsed
 	}
@@ -174,6 +190,87 @@ func (w *Watcher) transitionAgent(paneID string, source agent.StatusSource, prev
 	}
 
 	return agent.ActivityIdle
+}
+
+// applySmoothing checks whether a transition should be delayed.
+// If smoothing is configured for this transition type, it returns the
+// current (previous) state and schedules a timer to commit the change later.
+// If no smoothing applies, or the target matches an already-pending timer,
+// it commits immediately and cancels any pending timer.
+// Caller must hold w.mu.
+func (w *Watcher) applySmoothing(paneID string, source agent.StatusSource, from, to agent.Activity) agent.Activity {
+	// No change — cancel any pending smoothing and return as-is.
+	if from == to {
+		w.cancelSmoothingLocked(paneID)
+		return to
+	}
+
+	delayMs := w.smoothingCfg.SmoothingMs(from.String(), to.String())
+	if delayMs <= 0 {
+		// No smoothing for this transition — commit immediately.
+		w.cancelSmoothingLocked(paneID)
+		return to
+	}
+
+	// If there's already a pending smoothing timer targeting the same state, keep waiting.
+	if target, pending := w.smoothingTarget[paneID]; pending && target == to {
+		return from
+	}
+
+	// Different target or no pending timer — start a new smoothing delay.
+	w.cancelSmoothingLocked(paneID)
+	w.smoothingTarget[paneID] = to
+
+	delay := time.Duration(delayMs) * time.Millisecond
+	w.smoothingTimers[paneID] = time.AfterFunc(delay, func() {
+		w.commitSmoothedTransition(paneID, source, to)
+	})
+
+	debug.Logf("watcher: smoothing pane=%s %s->%s delay=%dms", paneID, from, to, delayMs)
+	return from
+}
+
+// cancelSmoothingLocked cancels any pending smoothing timer for a pane.
+// Caller must hold w.mu.
+func (w *Watcher) cancelSmoothingLocked(paneID string) {
+	if t, ok := w.smoothingTimers[paneID]; ok {
+		t.Stop()
+		delete(w.smoothingTimers, paneID)
+		delete(w.smoothingTarget, paneID)
+	}
+}
+
+// commitSmoothedTransition fires after the smoothing delay expires.
+// It re-evaluates the current state and applies the transition if still valid.
+func (w *Watcher) commitSmoothedTransition(paneID string, source agent.StatusSource, target agent.Activity) {
+	select {
+	case <-w.stopCh:
+		return
+	default:
+	}
+
+	w.mu.Lock()
+	delete(w.smoothingTimers, paneID)
+	delete(w.smoothingTarget, paneID)
+	w.mu.Unlock()
+
+	w.stateMu.RLock()
+	status, ok := w.agents[paneID]
+	w.stateMu.RUnlock()
+	if !ok || !status.Running {
+		return
+	}
+
+	// Only commit if the transition is still meaningful.
+	// If the state has already moved past this, skip.
+	if status.Activity == target {
+		return
+	}
+
+	debug.Logf("watcher: smoothing commit pane=%s %s->%s", paneID, status.Activity, target)
+	status.Activity = target
+	status.Source = source
+	w.applyAgentUpdate(map[string]agent.AgentStatus{paneID: status})
 }
 
 // scheduleCompletedDecayLocked starts a timer to transition Completed->Idle.

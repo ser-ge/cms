@@ -70,6 +70,40 @@ type GeneralConfig struct {
 
 	CompletedDecayMs int   `toml:"completed_decay_ms"` // Completed->Idle auto-decay in ms (default 30000)
 	AlwaysHooksForStatus *bool `toml:"always_hooks_for_status"` // when true (default), hooks never go stale; observer skips transitions while any hook has been seen
+
+	// Transition smoothing: delay state changes to suppress flicker.
+	// Global override applies to all transitions if > 0.
+	TransitionSmoothingMs int              `toml:"transition_smoothing_ms"`
+	Smoothing             SmoothingConfig  `toml:"smoothing"`
+}
+
+// SmoothingConfig holds per-transition smoothing delays in milliseconds.
+// A value of 0 means no smoothing for that transition.
+type SmoothingConfig struct {
+	WorkingToIdleMs      int `toml:"working_to_idle_ms"`      // suppress brief idle flickers during multi-step work
+	WorkingToCompletedMs int `toml:"working_to_completed_ms"` // don't show "completed" too eagerly
+	IdleToWorkingMs      int `toml:"idle_to_working_ms"`      // going TO working (usually instant)
+	CompletedToIdleMs    int `toml:"completed_to_idle_ms"`    // controlled by completed_decay_ms already
+}
+
+// SmoothingMs returns the smoothing delay in ms for a transition,
+// applying the global override if set.
+func (g GeneralConfig) SmoothingMs(from, to string) int {
+	if g.TransitionSmoothingMs > 0 {
+		return g.TransitionSmoothingMs
+	}
+	key := from + "_to_" + to
+	switch key {
+	case "working_to_idle":
+		return g.Smoothing.WorkingToIdleMs
+	case "working_to_completed":
+		return g.Smoothing.WorkingToCompletedMs
+	case "idle_to_working":
+		return g.Smoothing.IdleToWorkingMs
+	case "completed_to_idle":
+		return g.Smoothing.CompletedToIdleMs
+	}
+	return 0
 }
 
 type IconsConfig struct {
@@ -300,6 +334,10 @@ func DefaultGeneralConfig() GeneralConfig {
 		},
 		CompletedDecayMs: 300000,
 		AlwaysHooksForStatus: boolPtr(true),
+		Smoothing: SmoothingConfig{
+			WorkingToIdleMs:      3000,
+			WorkingToCompletedMs: 2000,
+		},
 	}
 }
 
