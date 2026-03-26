@@ -58,7 +58,7 @@ internal/
     proc.go                       Process table (Entry, Table, BuildTable, IsShellCommand)
 
   config/
-    config.go                     All config types + Load, FinderConfig, PickerSortConfig
+    config.go                     All config types + Load, FinderConfig, SortKeys, PickerSortConfig
 
   git/
     git.go                        Info, Cache, DetectAll, Cmd
@@ -155,10 +155,10 @@ Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
 - **`CreateWorktreeOpts.StartPoint` vs `Track`.** Use `StartPoint` for local base branches (e.g. `main`). Use `Track` only when checking out a remote branch that needs upstream tracking. Don't assume `origin/<branch>` exists.
 - **`WorktreeConfig.BaseBranch`** is configurable in `[worktree]` (user or project config). Empty means auto-detect via `DefaultBranch()` (origin/HEAD → main → master).
 - **Finder is the universal switcher.** A `[]string` of section names (passed from CLI or config) controls which item types appear. Sections are composable via comma-separated CLI args (e.g. `cms sessions,worktrees`). `rebuildPicker()` assembles sections in order. Valid sections: `sessions`, `projects`, `queue`, `worktrees`, `branches`, `panes`, `windows`, `marks`.
-- **Finder sort is config-driven.** `PickerSortConfig` (per-picker section overrides with global defaults) controls `demote_current`, `promote_recent`, and `promote_active`. Each section uses `sortedSectionItems()` with pluggable `isCurrent`/`isRecent` predicates. Queue has its own urgency sort.
-- **Active is always computed.** Every item gets `Active` set based on its "live presence" (sessions: attached, worktrees: has tmux pane, projects: has session, panes: has agent, windows: has agent, branches: has worktree, queue: unseen events, marks: pane alive). `promote_active` controls only sort order, not whether Active is computed. The Active indicator visual is configurable via `[finder.active_indicator]`.
+- **Finder sort is config-driven.** `sort = [...]` lists define sort key priority (left-to-right, first difference wins). Global default in `[finder].sort`, per-section override in `[finder.<section>].sort`. All sections including queue go through `sortedSectionItems()` with pluggable predicates. Keys: `active`, `current`, `recent` (bool), `state`, `unseen`, `oldest`, `newest` (queue-specific). Prefix `-` demotes. See `docs/finder-sort.md` for worked examples.
+- **Active is always computed.** Every item gets `Active` set based on its "live presence" (sessions: attached, worktrees: has tmux pane, projects: has session, panes: has agent, windows: has agent, branches: has worktree, queue: unseen events, marks: pane alive). The `active` sort key controls only sort order, not whether Active is computed. The Active indicator visual is configurable via `[finder.active_indicator]`.
 - **Cross-section dedup.** When overlapping sections are composed, the "more specific" section wins: branches with worktrees are hidden from branches when worktrees section is visible; projects with sessions are hidden from projects when sessions section is visible.
-- **Agent config is separated.** `[finder.agents]` holds `provider_order`, `state_order`, `show_context_percentage`, and `use_seen_in_ranking`. These are agent-specific display settings used by queue and session summaries.
+- **Agent display config is separated.** `display_provider_order`, `display_state_order`, and `show_context_percentage` on `[finder]` control agent summary rendering in session descriptions and queue.
 - **Queue renders fixed-width columns.** Title is `session/branch`, description columns are provider (6), context% (4), activity (9, padded for ANSI), duration (4). Titles padded to longest across all items.
 - **Picker supports normal-mode actions.** `PickerAction` enum (e.g. `PickerActionDelete`) with y/n confirmation prompt. Picker sets `action` + `chosen`; finder dispatches by item kind (kill session/pane, remove mark).
 - **Marks are file-backed.** Stored as JSON at `~/.config/cms/marks.json`. Pane IDs are globally addressable in tmux; session/window stored for display only.

@@ -88,14 +88,13 @@ completed_decay_s = 300
 # What bare `cms` shows and in what order.
 include = ["sessions", "queue", "worktrees", "marks", "projects"]
 
-# Global sort defaults (per-section overrides below).
-demote_current = true          # push active/current item to bottom
-promote_recent = false         # promote last-visited item to top
-promote_active = false         # sort active/open items first
+# Global sort key priority list. Per-section overrides below.
+# Keys evaluated left-to-right; first difference wins.
+# Prefix "-" demotes (pushes matching items to bottom).
+sort = ["active", "-current"]
 
-# Queue urgency sort order (first = closest to input = highest priority).
+# Queue urgency order (used by "state" sort key).
 state_order = ["waiting", "completed", "working", "idle"]
-use_unseen = false             # unseen attention events boost queue ranking
 
 # Display settings for agent summaries (session descriptions + queue).
 display_provider_order = ["claude", "codex"]
@@ -109,17 +108,33 @@ color = "2"                    # ANSI foreground color (green)
 # bold = false
 
 [finder.sessions]
-promote_recent = true          # last-visited session floats up
+sort = ["recent", "-current"]  # last-visited first, attached last
 
-# Per-section overrides — only specify what differs from global defaults.
-# [finder.queue]
-# state_order = ["waiting", "completed", "working", "idle"]
-# use_unseen = true
+[finder.queue]
+sort = ["state", "unseen", "oldest"]  # urgency sort
+
+# Per-section overrides — only specify what differs from global.
 # [finder.worktrees]
-# promote_active = true
+# sort = ["active", "-current"]
 # [finder.branches]
-# promote_active = true
+# sort = ["active"]
 ```
+
+### Sort keys
+
+| Key | Meaning | Sections |
+|-----|---------|----------|
+| `active` | Items with Active=true first | all |
+| `-active` | Items with Active=true last | all |
+| `current` | Current/focused item first | all (needs isCurrent predicate) |
+| `-current` | Current/focused item last | all |
+| `recent` | Most recently visited first | sessions |
+| `state` | Sort by `state_order` list | queue |
+| `unseen` | Unseen attention events first | queue |
+| `oldest` | Oldest activity timestamp first | queue |
+| `newest` | Newest activity timestamp first | queue |
+
+Keys are evaluated left-to-right. The first key that distinguishes two items wins. Within equal items, `sort.SliceStable` preserves original order.
 
 ### Active indicator
 
@@ -136,7 +151,7 @@ Every item in the picker gets an "Active" status based on its live presence:
 | queue | unseen attention events |
 | marks | pane still alive |
 
-Active items show the configured indicator icon. `promote_active` controls whether they sort first.
+Active items always show the configured indicator icon. The `active` sort key controls whether they also sort first.
 
 ### Cross-section dedup
 

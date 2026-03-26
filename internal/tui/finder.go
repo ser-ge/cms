@@ -10,7 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/serge/cms/internal/agent"
-	"github.com/serge/cms/internal/attention"
 	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/debug"
 	"github.com/serge/cms/internal/git"
@@ -29,7 +28,9 @@ type finderEntry struct {
 	worktreeBranch string // KindWorktree
 	paneID         string // KindPane, KindQueue, KindMark
 	markLabel      string // KindMark
-	unseen         bool   // KindQueue (for markAttentionSeen)
+	unseen         bool   // KindQueue (for markAttentionSeen + "unseen" sort key)
+	queueStateRank int    // KindQueue: stateRank for "state" sort key
+	queueSortTime  int64  // KindQueue: timestamp for "oldest"/"newest" sort keys
 }
 
 type finderModel struct {
@@ -87,7 +88,7 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, wi
 	want := sectionSet(sections)
 
 	// Cache the last session name once at init (avoid subprocess per rebuild).
-	if cfg.Finder.ShouldPromoteRecent("sessions") {
+	if sortKeysContain(cfg.Finder.SortKeys("sessions"), "recent") {
 		m.lastSessionName = tmux.FetchLastSession()
 	}
 
@@ -467,7 +468,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 
 	case watcher.FocusChangedMsg:
 		// User switched session -- refresh cached last session name.
-		if m.cfg.Finder.ShouldPromoteRecent("sessions") {
+		if sortKeysContain(m.cfg.Finder.SortKeys("sessions"), "recent") {
 			m.lastSessionName = tmux.FetchLastSession()
 		}
 		m.rebuildPicker()
@@ -709,8 +710,7 @@ func (m *finderModel) sectionItems(section string) ([]PickerItem, []finderEntry)
 	case "sessions":
 		return m.sortedSectionItems(m.sessions, m.sessIdx, "sessions", m.sessionIsCurrent, m.sessionIsRecent)
 	case "queue":
-		// Queue has its own urgency sort — no generic reordering.
-		return m.queueItems, m.queueIdx
+		return m.sortedSectionItems(m.queueItems, m.queueIdx, "queue", nil, nil)
 	case "worktrees":
 		items, idx := m.worktreeItemsWithOpenStatus()
 		return m.sortedSectionItems(items, idx, "worktrees", m.worktreeIsCurrent, nil)
@@ -728,27 +728,25 @@ func (m *finderModel) sectionItems(section string) ([]PickerItem, []finderEntry)
 	return nil, nil
 }
 
-// sortedSectionItems applies generic demote_current/promote_recent sorting.
+// sortedSectionItems applies config-driven sort keys to a section's items.
+// Sort keys are evaluated left-to-right; the first key that distinguishes
+// two items wins. Prefix "-" demotes matching items to the bottom.
 type currentFn func(int) bool
 type recentFn func(int) bool
 
 func (m *finderModel) sortedSectionItems(
-	items []PickerItem, idx []finderEntry, pickerType string,
+	items []PickerItem, idx []finderEntry, section string,
 	isCurrent currentFn, isRecent recentFn,
 ) ([]PickerItem, []finderEntry) {
 	if len(items) == 0 {
 		return nil, nil
 	}
 
-	demote := m.cfg.Finder.ShouldDemoteCurrent(pickerType)
-	promote := m.cfg.Finder.ShouldPromoteRecent(pickerType)
-	promoteActive := m.cfg.Finder.ShouldPromoteActive(pickerType)
-
-	if !demote && !promote && !promoteActive {
+	keys := m.cfg.Finder.SortKeys(section)
+	if len(keys) == 0 {
 		return items, idx
 	}
 
-	// Build index list and stable-sort.
 	order := make([]int, len(items))
 	for i := range order {
 		order[i] = i
@@ -756,23 +754,15 @@ func (m *finderModel) sortedSectionItems(
 
 	sort.SliceStable(order, func(a, b int) bool {
 		ia, ib := order[a], order[b]
-		// Open items first (Active == true means open).
-		if promoteActive {
-			oa, ob := items[ia].Active, items[ib].Active
-			if oa != ob {
-				return oa
-			}
-		}
-		if promote && isRecent != nil {
-			ra, rb := isRecent(ia), isRecent(ib)
-			if ra != rb {
-				return ra
-			}
-		}
-		if demote && isCurrent != nil {
-			ca, cb := isCurrent(ia), isCurrent(ib)
-			if ca != cb {
-				return !ca // non-current before current
+		for _, key := range keys {
+			demote := strings.HasPrefix(key, "-")
+			name := strings.TrimPrefix(key, "-")
+			va, vb := evalSortKey(name, ia, ib, items, idx, isCurrent, isRecent)
+			if va != vb {
+				if demote {
+					return !va
+				}
+				return va
 			}
 		}
 		return false
@@ -785,6 +775,53 @@ func (m *finderModel) sortedSectionItems(
 		sortedIdx[i] = idx[o]
 	}
 	return sortedItems, sortedIdx
+}
+
+// evalSortKey evaluates a single sort key for two items.
+// Returns (true, false) when item a should sort before b,
+// (false, true) when b before a, (false, false) when equal.
+func evalSortKey(
+	name string, ia, ib int,
+	items []PickerItem, idx []finderEntry,
+	isCurrent currentFn, isRecent recentFn,
+) (bool, bool) {
+	switch name {
+	case "active":
+		return items[ia].Active, items[ib].Active
+	case "current":
+		if isCurrent == nil {
+			return false, false
+		}
+		return isCurrent(ia), isCurrent(ib)
+	case "recent":
+		if isRecent == nil {
+			return false, false
+		}
+		return isRecent(ia), isRecent(ib)
+	case "state":
+		ka, kb := idx[ia].queueStateRank, idx[ib].queueStateRank
+		return ka < kb, ka > kb
+	case "unseen":
+		return idx[ia].unseen, idx[ib].unseen
+	case "oldest":
+		ta, tb := idx[ia].queueSortTime, idx[ib].queueSortTime
+		return ta < tb, ta > tb
+	case "newest":
+		ta, tb := idx[ia].queueSortTime, idx[ib].queueSortTime
+		return ta > tb, ta < tb
+	}
+	return false, false
+}
+
+// sortKeysContain returns true if any key in keys matches name
+// (ignoring the "-" prefix).
+func sortKeysContain(keys []string, name string) bool {
+	for _, k := range keys {
+		if strings.TrimPrefix(k, "-") == name {
+			return true
+		}
+	}
+	return false
 }
 
 // --- "is current" predicates per item type ---
@@ -985,11 +1022,13 @@ func (m *finderModel) buildPaneItems() {
 	m.hasPane = true
 }
 
-// buildQueueItems constructs urgency-sorted agent pane items for the queue view.
-// Ported from the former queueModel.rebuildPicker().
+// buildQueueItems constructs agent pane items for the queue view.
+// Sorting is handled by sortedSectionItems via config-driven sort keys;
+// this method only builds items and populates sort data on finderEntry.
+//
 // stateRank returns the sort priority for an activity based on the configured
-// state order. Lower rank = closer to input (higher priority). States not in
-// the order list get max rank.
+// state order. Lower rank = higher priority. States not in the order list
+// get max rank.
 func stateRank(a agent.Activity, order []string) int {
 	name := a.String()
 	for i, s := range order {
@@ -1008,29 +1047,14 @@ func (m *finderModel) buildQueueItems() {
 	attnEvents := m.watcher.Attention.Snapshot()
 
 	// Build unseen lookup: paneID -> most urgent reason.
-	unseenReason := map[string]attention.Reason{}
 	unseenSet := map[string]bool{}
 	for _, ev := range attnEvents {
-		if ev.Seen {
-			continue
-		}
-		unseenSet[ev.PaneID] = true
-		if prev, ok := unseenReason[ev.PaneID]; !ok || ev.Reason < prev {
-			unseenReason[ev.PaneID] = ev.Reason
+		if !ev.Seen {
+			unseenSet[ev.PaneID] = true
 		}
 	}
 
 	stateOrder := m.cfg.Finder.GetStateOrder("queue")
-	useUnseen := m.cfg.Finder.ShouldUseUnseen("queue")
-
-	type queueItem struct {
-		item     PickerItem
-		entry    finderEntry
-		sortKey  int
-		sortTime int64
-	}
-
-	var items []queueItem
 	now := time.Now()
 
 	for _, sess := range m.sessData {
@@ -1067,71 +1091,45 @@ func (m *finderModel) buildQueueItems() {
 				filterVal += " " + cs.Provider.String()
 
 				unseen := unseenSet[pane.ID]
-				reason, hasReason := unseenReason[pane.ID]
-
-				// Sort key from state_order config (lower = closer to input).
-				sortKey := stateRank(cs.Activity, stateOrder)
-				if unseen && hasReason && useUnseen {
-					sortKey = int(reason)
-				}
+				rank := stateRank(cs.Activity, stateOrder)
 
 				var sortTime int64
 				if !hasSince {
 					sortTime = 1<<62 - 1
 				} else {
-					switch {
-					case sortKey <= 1:
-						sortTime = since.Unix()
-					case sortKey == 2:
-						sortTime = since.Unix()
-					default:
-						sortTime = -since.Unix()
-					}
+					sortTime = since.Unix()
 				}
 
 				if debug.Enabled {
-					desc += fmt.Sprintf("  [sk=%d st=%d]", sortKey, sortTime)
+					desc += fmt.Sprintf("  [rank=%d t=%d]", rank, sortTime)
 				}
-				items = append(items, queueItem{
-					item: PickerItem{
-						Title:       title,
-						Description: desc,
-						FilterValue: filterVal,
-						Active:      unseen,
-					},
-					entry: finderEntry{
-						kind:   KindQueue,
-						paneID: pane.ID,
-						unseen: unseen,
-					},
-					sortKey:  sortKey,
-					sortTime: sortTime,
+
+				m.queueItems = append(m.queueItems, PickerItem{
+					Title:       title,
+					Description: desc,
+					FilterValue: filterVal,
+					Active:      unseen,
+				})
+				m.queueIdx = append(m.queueIdx, finderEntry{
+					kind:           KindQueue,
+					paneID:         pane.ID,
+					unseen:         unseen,
+					queueStateRank: rank,
+					queueSortTime:  sortTime,
 				})
 			}
 		}
 	}
 
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].sortKey != items[j].sortKey {
-			return items[i].sortKey < items[j].sortKey
-		}
-		return items[i].sortTime < items[j].sortTime
-	})
-
 	// Pad titles to uniform width so description columns align.
 	maxTitle := 0
-	for _, qi := range items {
-		if w := len(qi.item.Title); w > maxTitle {
+	for _, item := range m.queueItems {
+		if w := len(item.Title); w > maxTitle {
 			maxTitle = w
 		}
 	}
-
-	m.queueItems = make([]PickerItem, len(items))
-	m.queueIdx = make([]finderEntry, len(items))
-	for i, qi := range items {
-		qi.item.Title = fmt.Sprintf("%-*s", maxTitle, qi.item.Title)
-		m.queueItems[i] = qi.item
-		m.queueIdx[i] = qi.entry
+	for i := range m.queueItems {
+		m.queueItems[i].Title = fmt.Sprintf("%-*s", maxTitle, m.queueItems[i].Title)
 	}
 	m.hasQueue = true
 }

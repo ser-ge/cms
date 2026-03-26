@@ -132,13 +132,10 @@ type DashboardConfig struct {
 }
 
 // PickerSortConfig controls sort behavior for a single picker/section type.
-// nil values inherit from FinderConfig defaults.
+// An empty Sort list inherits from FinderConfig.Sort.
 type PickerSortConfig struct {
-	DemoteCurrent *bool    `toml:"demote_current"`
-	PromoteRecent *bool    `toml:"promote_recent"`
-	PromoteActive *bool    `toml:"promote_active"`  // sort active/open items first
-	StateOrder    []string `toml:"state_order"`      // queue urgency order (e.g. ["waiting","completed","working","idle"])
-	UseUnseen     *bool    `toml:"use_unseen"`       // unseen attention events boost queue ranking
+	Sort       []string `toml:"sort"`        // sort key priority list (e.g. ["recent", "-current"])
+	StateOrder []string `toml:"state_order"` // queue urgency order (e.g. ["waiting","completed","working","idle"])
 }
 
 // ActiveIndicatorConfig controls the visual indicator for active/open items.
@@ -153,12 +150,12 @@ type FinderConfig struct {
 	// What appears in bare `cms` and in what order.
 	Include []string `toml:"include"`
 
-	// Global sort defaults (per-section overrides below).
-	DemoteCurrent bool     `toml:"demote_current"`
-	PromoteRecent bool     `toml:"promote_recent"`
-	PromoteActive bool     `toml:"promote_active"` // sort active/open items first
-	StateOrder    []string `toml:"state_order"`     // queue urgency order
-	UseUnseen     bool     `toml:"use_unseen"`      // unseen attention events boost queue ranking
+	// Global sort key priority list. Per-section overrides below.
+	// Keys evaluated left-to-right; first difference wins.
+	// Prefix "-" demotes (e.g. "-current" pushes current item to bottom).
+	// Valid keys: active, current, recent, state, unseen, oldest, newest.
+	Sort       []string `toml:"sort"`
+	StateOrder []string `toml:"state_order"` // queue urgency order (used by "state" sort key)
 
 	// Display settings for agent summaries (session descriptions + queue).
 	DisplayProviderOrder  []string `toml:"display_provider_order"`
@@ -179,51 +176,24 @@ type FinderConfig struct {
 	Marks     PickerSortConfig `toml:"marks"`
 }
 
-// ShouldDemoteCurrent returns whether the given picker type should push
-// the active/current item to the bottom.
-func (f FinderConfig) ShouldDemoteCurrent(pickerType string) bool {
-	if psc := f.pickerSort(pickerType); psc.DemoteCurrent != nil {
-		return *psc.DemoteCurrent
+// SortKeys returns the sort key priority list for the given section.
+// Falls back to the global FinderConfig.Sort if the section has no override.
+func (f FinderConfig) SortKeys(section string) []string {
+	if psc := f.sectionConfig(section); len(psc.Sort) > 0 {
+		return psc.Sort
 	}
-	return f.DemoteCurrent
-}
-
-// ShouldPromoteRecent returns whether the given picker type should promote
-// the most recently visited item to the top.
-func (f FinderConfig) ShouldPromoteRecent(pickerType string) bool {
-	if psc := f.pickerSort(pickerType); psc.PromoteRecent != nil {
-		return *psc.PromoteRecent
-	}
-	return f.PromoteRecent
-}
-
-// ShouldPromoteActive returns whether active/open items should be
-// promoted above inactive items in the given section.
-func (f FinderConfig) ShouldPromoteActive(pickerType string) bool {
-	if psc := f.pickerSort(pickerType); psc.PromoteActive != nil {
-		return *psc.PromoteActive
-	}
-	return f.PromoteActive
+	return f.Sort
 }
 
 // GetStateOrder returns the queue urgency sort order for the given section.
-func (f FinderConfig) GetStateOrder(pickerType string) []string {
-	if psc := f.pickerSort(pickerType); len(psc.StateOrder) > 0 {
+func (f FinderConfig) GetStateOrder(section string) []string {
+	if psc := f.sectionConfig(section); len(psc.StateOrder) > 0 {
 		return psc.StateOrder
 	}
 	return f.StateOrder
 }
 
-// ShouldUseUnseen returns whether unseen attention events should boost
-// queue ranking for the given section.
-func (f FinderConfig) ShouldUseUnseen(pickerType string) bool {
-	if psc := f.pickerSort(pickerType); psc.UseUnseen != nil {
-		return *psc.UseUnseen
-	}
-	return f.UseUnseen
-}
-
-func (f FinderConfig) pickerSort(pickerType string) PickerSortConfig {
+func (f FinderConfig) sectionConfig(pickerType string) PickerSortConfig {
 	switch pickerType {
 	case "sessions":
 		return f.Sessions
@@ -353,10 +323,9 @@ func boolPtr(b bool) *bool { return &b }
 
 func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
-		Include:       []string{"sessions", "queue", "worktrees", "marks", "projects"},
-		DemoteCurrent: true,
-		PromoteRecent: false,
-		StateOrder:    []string{"waiting", "completed", "working", "idle"},
+		Include:    []string{"sessions", "queue", "worktrees", "marks", "projects"},
+		Sort:       []string{"active", "-current"},
+		StateOrder: []string{"waiting", "completed", "working", "idle"},
 
 		DisplayProviderOrder:  []string{"claude", "codex"},
 		DisplayStateOrder:     []string{"idle", "working", "completed", "waiting"},
@@ -366,7 +335,8 @@ func DefaultFinderConfig() FinderConfig {
 			Icon:  "\u25aa", // ▪
 			Color: "2",      // green
 		},
-		Sessions: PickerSortConfig{PromoteRecent: boolPtr(true)},
+		Sessions: PickerSortConfig{Sort: []string{"recent", "-current"}},
+		Queue:    PickerSortConfig{Sort: []string{"state", "unseen", "oldest"}},
 	}
 }
 
@@ -473,6 +443,7 @@ func (c *Config) normalize() {
 
 	df := DefaultFinderConfig()
 	defaultSlice(&c.Finder.Include, df.Include)
+	defaultSlice(&c.Finder.Sort, df.Sort)
 	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
 	defaultSlice(&c.Finder.DisplayProviderOrder, df.DisplayProviderOrder)
 	defaultSlice(&c.Finder.DisplayStateOrder, df.DisplayStateOrder)
@@ -517,7 +488,32 @@ func DefaultConfigTOML() ([]byte, error) {
 	if err := enc.Encode(out); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return stripEmptySections(buf.Bytes()), nil
+}
+
+// stripEmptySections removes TOML section headers that are immediately
+// followed by another section header or EOF (i.e. have no key-value pairs).
+func stripEmptySections(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	var out []string
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		// Check if this is a section header like [foo.bar].
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			// Look ahead: skip blank lines, check if next non-blank is another header or EOF.
+			j := i + 1
+			for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
+				j++
+			}
+			if j >= len(lines) || (strings.HasPrefix(strings.TrimSpace(lines[j]), "[") && strings.HasSuffix(strings.TrimSpace(lines[j]), "]")) {
+				i = j - 1 // skip this empty section (and its trailing blanks)
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return []byte(strings.Join(out, "\n"))
 }
 
 func WriteDefaultConfigFile() (string, error) {
