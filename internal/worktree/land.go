@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/serge/cms/internal/config"
@@ -162,9 +163,13 @@ func Land(args []string) error {
 
 	// Handle --continue: resume from step 6 (rebase --continue, then merge).
 	if opts.Continue {
-		fmt.Fprintf(os.Stderr, "%s rebase\n", green("continuing"))
-		if err := git.RunInteractive(cwd, "rebase", "--continue"); err != nil {
-			return fmt.Errorf("rebase --continue failed: %w\nresolve remaining conflicts and run: cms land --continue", err)
+		if isRebaseInProgress(cwd) {
+			fmt.Fprintf(os.Stderr, "%s rebase\n", green("continuing"))
+			if err := git.RunInteractive(cwd, "rebase", "--continue"); err != nil {
+				return fmt.Errorf("rebase --continue failed: %w\nresolve remaining conflicts and run: cms land --continue", err)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "%s rebase already completed\n", dim("skipping"))
 		}
 		return landMergeAndCleanup(cwd, root, currentBranch, target, mainWt, currentWt, targetWt, opts, wtCfg)
 	}
@@ -311,6 +316,20 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 	}
 
 	return nil
+}
+
+// isRebaseInProgress checks whether a git rebase is currently in progress.
+func isRebaseInProgress(dir string) bool {
+	gitDir, err := git.Cmd(dir, "rev-parse", "--git-dir")
+	if err != nil {
+		return false
+	}
+	for _, sub := range []string{"rebase-merge", "rebase-apply"} {
+		if _, err := os.Stat(filepath.Join(gitDir, sub)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // squashCommits squashes all branch commits into a single commit.
