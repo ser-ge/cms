@@ -521,7 +521,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.projIdx = nil
 		for _, p := range msg.projects {
 			var parts []string
-			parts = append(parts, ShortenHome(p.Path))
+			parts = append(parts, CompactPath(ShortenHome(p.Path), 25))
 			if p.Git.Branch != "" {
 				g := p.Git.Branch
 				if p.Git.Dirty {
@@ -560,7 +560,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			if branch == "" {
 				branch = "(detached)"
 			}
-			desc := ShortenHome(wt.Path)
+			desc := CompactPath(ShortenHome(wt.Path), 25)
 			if !wt.IsMain && defBranch != "" && wt.Branch != "" && wt.Branch != defBranch {
 				if integrated, reason := worktree.IsBranchIntegrated(msg.repoRoot, wt.Branch, defBranch); integrated {
 					desc += " [merged: " + reason + "]"
@@ -1105,7 +1105,7 @@ func (m *finderModel) buildPaneItems() {
 				pending = append(pending, paneEntry{
 					title:    title,
 					filterVal: sess.Name + " " + win.Name + " " + pane.Command + " " + pane.WorkingDir,
-					path:     ShortenHome(pane.WorkingDir),
+					path:     CompactPath(ShortenHome(pane.WorkingDir), 25),
 					cs:       cs,
 					hasAgent: hasAgent,
 					command:  pane.Command,

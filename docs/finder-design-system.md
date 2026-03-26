@@ -111,12 +111,28 @@ Column widths:
 
 Path width is computed per-rebuild as the max across all pane paths.
 
+## Path Shortening
+
+All displayed paths use `CompactPath(ShortenHome(path), maxLen)`:
+
+1. `ShortenHome` replaces the home directory with `~`
+2. `CompactPath` abbreviates each intermediate directory to its first
+   character, keeping the last component in full
+
+Examples:
+- `~/projects/cms/worktrees/feature` → `~/p/c/w/feature`
+- `~/projects/gather_git` → `~/p/gather_git`
+- `~/notes` → `~/notes` (only 2 components, no abbreviation)
+
+When `maxLen > 0`, abbreviation only triggers if the path exceeds that
+length. With `maxLen=0` (current default), always abbreviate.
+
 ### Simple (worktrees, branches, marks, projects)
 
 Free-form descriptions with middle-dot separators via `JoinParts()`:
 
 ```
- ⎇ main     ~/projects/cms
+ ⎇ main     ~/p/cms
  B fix/typo  local branch
  M build     cms:fish
  P notes     ~/notes · main*
