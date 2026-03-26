@@ -46,7 +46,9 @@ var commands = []command{
 
 	// Config.
 	{Name: "config", Args: "{init|default}", Short: "Manage config", Long: "  init      Write default config file\n  default   Print default config to stdout", Group: "Config"},
-	{Name: "hook-setup", Short: "Print Claude Code hook config", Group: "Config"},
+	{Name: "hook-print", Short: "Print Claude Code hook config", Group: "Config"},
+	{Name: "hook-install", Short: "Install Claude Code hooks into settings", Group: "Config"},
+	{Name: "hook-uninstall", Short: "Remove Claude Code hooks from settings", Group: "Config"},
 	{Name: "completion", Args: "<fish|bash|zsh>", Short: "Print shell completion script", Group: "Config"},
 
 	// Hidden.

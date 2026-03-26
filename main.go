@@ -128,8 +128,14 @@ func main() {
 		// TUI screens.
 		case "new":
 			initial = tui.ScreenNewWorktree
-		case "hook-setup":
+		case "hook-print":
 			hook.RunSetup()
+			return
+		case "hook-install":
+			exitIfErr(hook.RunInstall())
+			return
+		case "hook-uninstall":
+			exitIfErr(hook.RunUninstall())
 			return
 
 		// Internal (hidden from help).

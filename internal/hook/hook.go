@@ -206,7 +206,7 @@ func Config(socketPath string) string {
 	if exe, err := os.Executable(); err == nil {
 		cmsBin = exe
 	}
-	base := fmt.Sprintf(`%s hook --socket %s`, cmsBin, socketPath)
+	base := fmt.Sprintf(`%s internal hook --socket %s`, cmsBin, socketPath)
 
 	hooks := map[string][]map[string]interface{}{
 		"SessionStart": {{
