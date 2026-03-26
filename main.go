@@ -32,8 +32,27 @@ func main() {
 	initial := tui.ScreenFinder
 	fk := tui.FinderAll
 
-	// Parse flags before subcommand.
 	args := os.Args[1:]
+
+	// Global help.
+	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+		fmt.Print(renderHelp())
+		return
+	}
+
+	// Shell completion.
+	if len(args) > 0 && args[0] == "completion" {
+		exitIfErr(runCompletion(args[1:]))
+		return
+	}
+
+	// Per-command help: cms <command> --help
+	if len(args) >= 2 && (args[len(args)-1] == "--help" || args[len(args)-1] == "-h") {
+		fmt.Print(renderCommandHelp(args[0]))
+		return
+	}
+
+	// Parse flags before subcommand.
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case "-s":
@@ -45,7 +64,7 @@ func main() {
 		case "-m":
 			fk = tui.FinderMarks
 		default:
-			exitErr(fmt.Errorf("unknown flag: %s", args[0]))
+			exitErr(fmt.Errorf("%s", unknownFlagMsg(args[0])))
 		}
 		args = args[1:]
 	}
@@ -157,6 +176,9 @@ func main() {
 			}
 			fmt.Fprintln(os.Stderr, "usage: cms session save")
 			os.Exit(1)
+
+		default:
+			exitErr(fmt.Errorf("%s", unknownCommandMsg(args[0])))
 		}
 	}
 
