@@ -1,0 +1,272 @@
+# Agent Harness
+
+## Purpose
+
+The harness is the current test/debug layer for exercising the watcher against a real tmux environment while keeping artifacts for later inspection and replay work.
+
+It exists to answer two questions:
+
+1. What signals did the watcher/business layer actually receive?
+2. What was visible in the pane when those signals happened?
+
+Right now the harness is focused on:
+
+- watcher ingress recording
+- orthogonal tmux state snapshots
+- persisted pane captures
+- live tmux smoke tests
+- gated live Claude hook integration tests
+
+## What It Records
+
+The harness uses the recorder in `internal/trace`.
+
+It writes two JSONL streams:
+
+- `ingress.jsonl`
+  - raw watcher/business-model inputs
+- `tmux_state.jsonl`
+  - full tmux state snapshots, kept orthogonal to ingress
+
+### `ingress.jsonl`
+
+Current event kinds:
+
+- `bootstrap_state`
+- `tmux_event`
+- `hook_event`
+- `process_poll_snapshot`
+- `full_refresh_snapshot`
+- `timer_fired`
+- `capture_snapshot`
+
+These are recorded from the watcher at real ingress points:
+
+- bootstrap
+- tmux control-mode events
+- Claude hook events
+- process polling
+- full refresh
+- observer pane captures
+- settle/smoothing/completed-decay timers
+
+### `tmux_state.jsonl`
+
+Current snapshot kind:
+
+- `tmux_state_snapshot`
+
+This contains:
+
+- sessions
+- windows
+- panes
+- pane pid
+- working dir
+- git context
+- current target
+
+This stream is intentionally separate from watcher-derived state such as:
+
+- attention queue
+- seen/unseen
+- activitySince
+
+## Pane Capture Artifacts
+
+The live harness also persists human-readable pane captures to disk.
+
+These live under:
+
+- `pane_captures/`
+
+inside the scenario temp directory.
+
+This is separate from `capture_snapshot` events:
+
+- `capture_snapshot` in `ingress.jsonl` is the replay-oriented observer capture data
+- `pane_captures/*.txt` are debugging/review artifacts for humans
+
+### What pane captures are used for
+
+- automatic timeout diagnostics
+- final scenario inspection
+- explicit snapshots during a scenario when more context is needed
+
+The harness can currently capture:
+
+- after sending commands
+- when trust prompts appear
+- when observer conditions are met
+- on timeout
+- final pane state on teardown
+
+## Live Harness Helper
+
+File:
+
+- `internal/watcher/live_harness_test.go`
+
+Current helper responsibilities:
+
+- create `pane_captures/`
+- persist pane captures by label
+- log capture artifact paths
+- run wait loops with optional timeout capture hooks
+
+Important helper methods:
+
+- `newLiveHarness(...)`
+- `capturePane(...)`
+- `capturePaneNow(...)`
+- `waitFor(...)`
+
+## Tests That Use The Harness
+
+### 1. Live tmux smoke test
+
+File:
+
+- `internal/watcher/live_trace_smoke_test.go`
+
+Gate:
+
+```bash
+CMS_LIVE_TRACE_SMOKE=1 go test ./internal/watcher -run TestLiveTraceSmoke -v
+```
+
+What it does:
+
+- starts a real watcher
+- uses isolated tmux
+- drives pane output directly
+- validates observer capture recording
+- forces structural refresh
+- writes pane capture artifacts
+
+What it proves today:
+
+- watcher ingress recording works in a live tmux run
+- tmux-state snapshots are orthogonal
+- observer capture recording works
+- timer events are recorded
+
+### 2. Claude hook integration test
+
+File:
+
+- `internal/watcher/claude_integration_test.go`
+
+Gate:
+
+```bash
+CMS_CLAUDE_INTEGRATION=1 go test ./internal/watcher -run TestClaudeHookIntegration -v
+```
+
+Subtests:
+
+- `bash_sleep_hooks`
+- `permission_prompt_hooks`
+
+What it does:
+
+- builds a temporary `cms` binary
+- writes temporary Claude hook settings that invoke:
+  - `cms internal hook --socket ... session-start`
+  - `cms internal hook --socket ... pre-tool-use`
+  - etc.
+- starts a real watcher with JSONL recording
+- runs Claude inside isolated tmux
+- records trace + pane captures
+
+What it can do right now:
+
+- detect and accept Claude’s workspace trust prompt automatically
+- prove that real Claude hook events can reach the watcher
+- persist pane captures around trust/startup/failure states
+- surface startup blockers through traces and pane artifacts
+
+What is not fully stable yet:
+
+- end-to-end Bash tool execution hook coverage
+- end-to-end permission prompt hook coverage
+
+Current known live blocker:
+
+- Claude startup environment noise, especially MCP/auth/plugin startup state, can block or delay the scenarios before they reach the hook we want
+
+## Claude-Specific Findings From The Harness
+
+The harness already established several facts about the installed Claude CLI/environment:
+
+- this CLI does not support `--prompt`
+- the prompt must be passed as the trailing positional argument
+- Claude can stop first on a workspace trust prompt
+- after trust is accepted, `session-start` hook events can be observed
+- further startup issues such as MCP auth/failure can still block progress before `pre-tool-use`
+
+This means the harness is already useful even when the test is not green:
+
+- it converts “hung integration test” into traceable, reviewable evidence
+
+## What The Harness Can Do Right Now
+
+Current capabilities:
+
+- run watcher against isolated tmux in tests
+- record ingress and tmux-state JSONL streams
+- persist pane captures automatically
+- capture panes deliberately at meaningful checkpoints
+- run gated live smoke tests
+- run gated live Claude hook tests
+- surface trust prompts and other startup blockers from real CLI behavior
+
+## What The Harness Does Not Do Yet
+
+Not implemented yet:
+
+- deterministic replay runner from `ingress.jsonl`
+- final structured harness events for actions like trust acceptance
+- automatic recording of matched Claude process PID
+- stable green Claude integration coverage for all target scenarios
+- artifact promotion to a durable checked-in `testdata/` scenario catalog
+
+## Recommended Next Steps
+
+1. Stabilize Claude live scenarios with a more stripped-down Claude startup mode.
+Likely try `--bare` and stricter MCP disabling.
+
+2. Finish recording actual matched agent process PID, not just pane PID.
+
+3. Build replay on top of `ingress.jsonl`.
+
+4. If live scenarios become reliable, add artifact summarization so successful runs print:
+- trace dir
+- pane capture dir
+- key hook kinds seen
+
+## Quick Commands
+
+Run all regular tests:
+
+```bash
+go test ./...
+```
+
+Run live tmux smoke:
+
+```bash
+CMS_LIVE_TRACE_SMOKE=1 go test ./internal/watcher -run TestLiveTraceSmoke -v
+```
+
+Run Claude Bash-only subtest:
+
+```bash
+CMS_CLAUDE_INTEGRATION=1 go test ./internal/watcher -run 'TestClaudeHookIntegration/bash_sleep_hooks' -v
+```
+
+Run full Claude integration test:
+
+```bash
+CMS_CLAUDE_INTEGRATION=1 go test ./internal/watcher -run TestClaudeHookIntegration -v
+```
