@@ -24,10 +24,12 @@ cms mark <label> [pane]          Mark current pane (or specified pane) with labe
 cms jump <label>                 Switch to marked pane
 
 # Worktree operations (top-level)
-cms go <branch> [path]           Switch to worktree (create if needed)
-cms add [--no-open] <branch> [path]  Create worktree
-cms rm <branch>                  Remove worktree
-cms merge [flags] [branch]       Merge worktree
+cms switch <branch>              Switch to existing branch's worktree (strict git switch semantics)
+cms switch -c <branch> [start]   Create new branch + worktree (error if exists)
+cms switch -C <branch> [start]   Force-create/reset branch + worktree
+cms go <branch> [start-point]    Switch or create from base_branch (opinionated shortcut)
+cms rm <branch>                  Remove worktree (+ merged branch)
+cms land [target]                Land current branch into target (rebase + merge + cleanup)
 cms ls                           Worktree table (paths, branches, merge status)
 
 # Config
@@ -90,9 +92,9 @@ internal/
     project.go                    Scan, Project (git repo discovery from search paths)
 
   worktree/
-    worktree.go                   CreateWorktree, AddWorktree, RemoveWorktree, DeleteBranch, hooks
-    cmd.go                        RunCmd, RunAdd, RunRemove, RunList (worktree CLI dispatch)
-    merge.go                      Merge, SquashCommits, commit message generation
+    worktree.go                   CreateWorktree, SwitchWorktree, GoWorktree, RemoveWorktree, DeleteBranch, hooks
+    cmd.go                        RunCmd, RunSwitch, RunGo, RunRemove, RunList (worktree CLI dispatch)
+    land.go                       Land, squashCommits, commit message generation
 
   watcher/
     events.go                     StateMsg, AgentUpdateMsg, FocusChangedMsg, GitUpdateMsg
@@ -120,7 +122,7 @@ Presentation    tui/*            Renders state, emits tea.Cmd via actions.go
 Business        watcher/*        Coordinates state; sends bubbletea messages to tui
                 session          Session lifecycle ops (tmux commands)
                 project          Repo scanning
-                worktree         Worktree management + merge workflow
+                worktree         Worktree management + land workflow
 Domain          agent/*          Agent detection, status types, parsing
                 attention/*      Attention queue logic + persistence
                 hook/*           Hook socket listener + event types

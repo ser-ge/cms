@@ -24,11 +24,12 @@ cms mark <label> [pane]          # mark current pane with label
 cms jump <label>                 # switch to marked pane
 
 # Worktree operations (top-level)
-cms go <branch> [path]           # switch to worktree (create if needed)
-cms add [--no-open] <branch> [path]  # create worktree
+cms switch <branch>              # switch to existing branch's worktree
+cms switch -c <branch> [start]   # create new branch + worktree
+cms go <branch> [start-point]    # switch or create from base_branch
 cms rm <branch>                  # remove worktree
-cms merge [flags] [branch]       # merge worktree
-cms ls                           # worktree table (paths, branches, merge status)
+cms land [target]                # land current branch into target
+cms ls                           # worktree table
 
 # Config
 cms config init                  # scaffold default config
@@ -106,16 +107,63 @@ Dead marks (pane no longer exists) are shown dimmed in the picker and can be cle
 
 Manage git worktrees from the CLI. Inspired by [wtp](https://github.com/satococoa/wtp) and [Worktrunk](https://github.com/max-sixty/worktrunk).
 
-#### `cms go`
+### `cms switch` — strict git switch semantics
 
-Switch to a worktree, creating it if needed:
+Switch to an existing branch's worktree. Creating a new branch requires `-c`/`-C` (explicit intent). Start-point is only valid with `-c`/`-C`.
 
 ```bash
-cms go feature-auth            # switch to worktree, or create + switch
-cms go -                       # switch to previous branch worktree
+cms switch feature             # switch to existing branch's worktree
+cms switch -c feature main     # create new branch from main
+cms switch -c feature ^        # create from default branch
+cms switch -C feature main     # force-create (reset if exists)
 ```
 
-#### `cms ls`
+Options: `--force`/`-f` (force worktree creation), `--path <dir>` (override worktree directory), `--no-open` (skip tmux window).
+
+If the branch has a worktree, switches to it. If the branch exists but has no worktree, creates one. If the branch doesn't exist, errors (use `-c` to create).
+
+### `cms go` — opinionated switch-or-create
+
+The daily driver. Same worktree/tmux behavior as switch, but auto-creates new branches from the configured `base_branch`.
+
+```bash
+cms go feature                 # switch if exists, create from base_branch if not
+cms go feature main            # override start-point for this invocation
+cms go -                       # switch to previous branch's worktree
+```
+
+Options: `--force`/`-f`, `--path <dir>`, `--no-open`.
+
+Default base branch: `[worktree].base_branch` config, then `origin/HEAD`, then `main`/`master`.
+
+### `cms land` — land current branch into target
+
+Run from inside a feature worktree. Squashes (optional), rebases, merges, and cleans up.
+
+```bash
+cms land                       # land into default branch, ff-only
+cms land --squash              # squash all commits into one
+cms land --squash -m "message" # squash with explicit commit message
+cms land --no-ff               # create a merge commit
+cms land --keep                # don't remove worktree after landing
+cms land --abort               # abort an in-progress rebase
+cms land --continue            # resume after resolving conflicts
+```
+
+### `cms rm` — remove worktree
+
+Removes worktree + branch + tmux window. Agent-aware: blocks removal if Claude or Codex agents are running in the worktree.
+
+```bash
+cms rm feature                 # remove worktree, delete branch (if merged)
+cms rm feature --keep-branch   # remove worktree, keep the branch
+cms rm -f -D feature           # force remove + force delete unmerged branch
+cms rm --dry-run feature       # preview what would be removed
+```
+
+`--force`/`-f` forces worktree removal and skips agent checks. `-D` force-deletes the branch even if not merged (mirrors `git branch -D`).
+
+### `cms ls` — list worktrees
 
 Shows all worktrees with the current one marked `*`. Merged branches show `[merged: reason]`.
 
@@ -125,44 +173,24 @@ Shows all worktrees with the current one marked `*`. Merged branches show `[merg
    old-fix       ../worktrees/old-fix       [merged: ancestor of main]
 ```
 
-#### `cms add`
+### Symbols
 
-Creates a worktree and opens a tmux window for it.
+Special branch symbols work in `switch`, `go`, `land`, and `rm`:
 
-```bash
-cms add feature/auth           # auto-creates branch, path from config
-cms add --no-open feature      # skip tmux window creation
-```
+| Symbol | Meaning |
+|--------|---------|
+| `@` | Current branch |
+| `-` | Previous branch (from reflog) |
+| `^` | Default branch (main/master) |
 
-Branch resolution: local branch > remote tracking > create new. Special symbols: `@` (current), `-` (previous), `^` (default branch).
-
-#### `cms merge`
-
-Full merge workflow: squash + rebase + merge + cleanup.
-
-```bash
-cms merge                      # merge current branch into default, ff-only
-cms merge --squash             # squash all commits into one before merging
-cms merge -s -m "message"      # squash with explicit commit message
-cms merge --no-ff              # create a merge commit even if ff is possible
-cms merge --keep               # don't remove worktree after merge
-```
-
-#### `cms rm`
-
-Removes worktree + branch + tmux window. Agent-aware: blocks removal if Claude or Codex agents are running in the worktree panes.
-
-```bash
-cms rm feature-auth            # remove worktree, delete branch (if merged)
-```
-
-#### Worktree Configuration
+### Worktree Configuration
 
 Settings merge from user config (`~/.config/cms/config.toml`) and per-repo config (`.cms.toml`):
 
 ```toml
 [worktree]
 base_dir = "../worktrees"
+base_branch = "main"               # default start-point for cms go
 commit_cmd = "llm -m claude-haiku"  # LLM commit message generation
 
 [[worktree.hooks]]           # post-create hooks
@@ -171,7 +199,7 @@ command = "npm install"
 [[worktree.pre_commit]]      # before squash commit
 command = "npm run lint"
 
-[[worktree.pre_merge]]       # before merge
+[[worktree.pre_merge]]       # before landing
 command = "npm test"
 ```
 
@@ -226,7 +254,7 @@ internal/
   mark/         Named pane bookmarks (file-backed JSON)
   session/      Session CRUD, smart switching, OpenProject
   project/      Git repo discovery from search paths
-  worktree/     Worktree create/remove/merge workflow
+  worktree/     Worktree switch/go/rm/land workflow
   watcher/      State coordination: events, pane tracking, polling
   tui/          All UI: app router, dashboard, finder, picker, styles
   debug/        Package-level Logf var

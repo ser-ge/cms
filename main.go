@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -85,17 +84,17 @@ func main() {
 			return
 
 		// Worktree operations (top-level).
-		case "go":
-			exitIfErr(runGo(args[1:]))
+		case "switch", "add":
+			exitIfErr(worktree.RunSwitch(args[1:]))
 			return
-		case "add":
-			exitIfErr(worktree.RunAdd(args[1:]))
+		case "go":
+			exitIfErr(worktree.RunGo(args[1:]))
 			return
 		case "rm":
 			exitIfErr(worktree.RunRemove(args[1:]))
 			return
-		case "merge":
-			exitIfErr(worktree.Merge(args[1:]))
+		case "land", "merge":
+			exitIfErr(worktree.Land(args[1:]))
 			return
 		case "ls":
 			exitIfErr(worktree.RunList())
@@ -196,16 +195,15 @@ func executePostAction(a *tui.PostAction) error {
 		return session.OpenProject(a.ProjectPath)
 	case tui.KindWorktree:
 		if a.BranchName != "" {
-			return createWorktree(a.BranchName)
+			return createWorktreeFromTUI(a.BranchName)
 		}
-		return switchToWorktree(a.WorktreePath, a.WorktreeBranch)
+		return switchToWorktreeWindow(a.WorktreePath, a.WorktreeBranch)
 	}
 	return nil
 }
 
-// switchToWorktree finds an existing tmux window for the worktree, or creates one.
-func switchToWorktree(wtPath, branch string) error {
-	// Look for a pane whose working dir is inside the worktree.
+// switchToWorktreeWindow finds an existing tmux window for the worktree, or creates one.
+func switchToWorktreeWindow(wtPath, branch string) error {
 	sessions, _, err := tmux.FetchState()
 	if err == nil {
 		for _, sess := range sessions {
@@ -218,7 +216,6 @@ func switchToWorktree(wtPath, branch string) error {
 			}
 		}
 	}
-	// No existing window — create one.
 	target, err := tmux.FetchCurrentTarget()
 	if err != nil {
 		return fmt.Errorf("not inside tmux")
@@ -307,12 +304,9 @@ func runJump(args []string) error {
 	return session.SwitchToPane(m.PaneID)
 }
 
-// runGo implements `cms go <branch> [path]`.
-func runGo(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: cms go <branch> [path]")
-	}
-
+// createWorktreeFromTUI creates a new worktree using go semantics (auto-create from base_branch).
+// Called from the TUI "new worktree" screen's PostAction.
+func createWorktreeFromTUI(branch string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -321,89 +315,7 @@ func runGo(args []string) error {
 	if err != nil {
 		return err
 	}
-
-	branchArg, err := worktree.ResolveWorktreeSymbol(root, args[0])
-	if err != nil {
-		return err
-	}
-
-	// Check if worktree already exists for this branch.
-	wts, err := git.ListWorktrees(root)
-	if err != nil {
-		return err
-	}
-	for _, wt := range wts {
-		if wt.Branch == branchArg || worktree.SanitizeBranch(wt.Branch) == branchArg ||
-			filepath.Base(wt.Path) == branchArg {
-			// Worktree exists — switch to it.
-			return switchToWorktree(wt.Path, wt.Branch)
-		}
-	}
-
-	// Worktree doesn't exist — create it.
-	var path string
-	if len(args) > 1 {
-		path = args[1]
-	}
-	return worktree.AddWorktree(root, branchArg, path, worktree.AddOpts{})
-}
-
-// createWorktree creates a new worktree for the given branch name, using the
-// configured base branch and base directory. Opens a tmux window for it.
-func createWorktree(branch string) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	root, err := worktree.FindRepoRoot(cwd)
-	if err != nil {
-		return err
-	}
-
-	cfg := config.Load()
-	wtCfg := worktree.ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
-
-	// Resolve base branch: config > auto-detect.
-	baseBranch := wtCfg.BaseBranch
-	if baseBranch == "" {
-		baseBranch, err = worktree.DefaultBranch(root)
-		if err != nil {
-			return fmt.Errorf("cannot determine base branch: %w", err)
-		}
-	}
-
-	baseDir := worktree.ResolveWorktreeBaseDir(root, &wtCfg)
-	path := fmt.Sprintf("%s/%s", baseDir, worktree.SanitizeBranch(branch))
-
-	fmt.Fprintf(os.Stderr, "creating worktree at %s for branch %s (from %s)\n",
-		worktree.ShortenHome(path), branch, baseBranch)
-
-	if err := worktree.CreateWorktree(root, path, branch, worktree.CreateWorktreeOpts{
-		NewBranch:  true,
-		StartPoint: baseBranch,
-	}); err != nil {
-		return fmt.Errorf("git worktree add failed: %w", err)
-	}
-
-	// Run post-create hooks.
-	mainWt, _ := worktree.FindMainWorktree(root)
-	if len(wtCfg.Hooks) > 0 {
-		fmt.Fprintf(os.Stderr, "running %d post-create hooks\n", len(wtCfg.Hooks))
-		if err := worktree.RunPostCreateHooks(mainWt, path, wtCfg.Hooks); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: hook failed: %v\n", err)
-		}
-	}
-
-	// Open tmux window and switch to it.
-	if os.Getenv("TMUX") != "" {
-		windowName := worktree.SanitizeBranch(branch)
-		target, err := tmux.FetchCurrentTarget()
-		if err == nil {
-			tmux.Run("new-window", "-t", target.Session, "-n", windowName, "-c", path)
-		}
-	}
-
-	return nil
+	return worktree.GoWorktree(root, branch, worktree.SwitchOpts{})
 }
 
 // runInternal dispatches hidden internal commands.

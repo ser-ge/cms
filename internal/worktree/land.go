@@ -10,43 +10,45 @@ import (
 	"github.com/serge/cms/internal/git"
 )
 
-// MergeOpts configures the merge workflow.
-type MergeOpts struct {
-	Squash  bool   // squash all commits into one before merge
-	NoFF    bool   // create a merge commit even for fast-forward
-	Force   bool   // skip integration checks
-	Message string // commit message (for squash); empty = auto-generate
-	NoEdit  bool   // don't open editor for commit message
-	Keep    bool   // keep worktree after merge (don't remove)
+// LandOpts configures the land workflow.
+type LandOpts struct {
+	Squash   bool   // squash all commits into one before landing
+	NoFF     bool   // create a merge commit even for fast-forward
+	Message  string // commit message (for squash); empty = auto-generate
+	NoEdit   bool   // don't open editor for commit message
+	Keep     bool   // keep worktree after landing (don't remove)
+	Abort    bool   // abort an in-progress rebase
+	Continue bool   // resume after resolving rebase conflicts
 }
 
-// Merge implements the full merge workflow inspired by Worktrunk:
-//  1. Validate we're in a worktree (not main)
+// Land implements the full land workflow:
+//  1. Stage uncommitted changes  (if --squash)
 //  2. Run pre-commit hooks
-//  3. Squash commits if requested
-//  4. Commit (with optional LLM-generated message)
-//  5. Run post-commit hooks
-//  6. Rebase onto target
-//  7. Run pre-merge hooks
-//  8. Merge into target (ff or --no-ff)
-//  9. Run post-merge hooks
-//  10. Clean up: remove worktree + branch + tmux window
-func Merge(args []string) error {
-	opts := MergeOpts{}
+//  3. Squash commits             (if --squash)
+//  4. Run post-commit hooks
+//  5. Rebase onto target
+//  6. Run pre-land hooks
+//  7. Fast-forward merge into target (or --no-ff merge commit)
+//  8. Run post-land hooks
+//  9. Remove worktree + branch + tmux window (unless --keep)
+func Land(args []string) error {
+	opts := LandOpts{}
 	positional := []string{}
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--squash", "-s":
+		case "--squash":
 			opts.Squash = true
 		case "--no-ff":
 			opts.NoFF = true
-		case "--force", "-f":
-			opts.Force = true
 		case "--keep":
 			opts.Keep = true
 		case "--no-edit":
 			opts.NoEdit = true
+		case "--abort":
+			opts.Abort = true
+		case "--continue":
+			opts.Continue = true
 		case "-m":
 			if i+1 < len(args) {
 				i++
@@ -61,6 +63,16 @@ func Merge(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// Handle --abort early.
+	if opts.Abort {
+		fmt.Fprintf(os.Stderr, "aborting rebase\n")
+		if _, err := git.Cmd(cwd, "rebase", "--abort"); err != nil {
+			return fmt.Errorf("rebase --abort failed: %w", err)
+		}
+		return nil
+	}
+
 	root, err := FindRepoRoot(cwd)
 	if err != nil {
 		return err
@@ -85,15 +97,18 @@ func Merge(args []string) error {
 			return err
 		}
 	} else {
-		// Default: merge into the default branch.
-		target, err = DefaultBranch(root)
-		if err != nil {
-			return fmt.Errorf("no target specified and cannot determine default branch: %w", err)
+		// Default: use configured base_branch, then auto-detect.
+		target = wtCfg.BaseBranch
+		if target == "" {
+			target, err = DefaultBranch(root)
+			if err != nil {
+				return fmt.Errorf("no target specified and cannot determine default branch: %w", err)
+			}
 		}
 	}
 
 	if currentBranch == target {
-		return fmt.Errorf("already on target branch %s, nothing to merge", target)
+		return fmt.Errorf("already on target branch %s, nothing to land", target)
 	}
 
 	// Verify target branch exists.
@@ -101,11 +116,7 @@ func Merge(args []string) error {
 		return fmt.Errorf("target branch %q does not exist", target)
 	}
 
-	// Check for uncommitted changes.
-	status, _ := git.Cmd(cwd, "status", "--porcelain")
-	hasChanges := strings.TrimSpace(status) != ""
-
-	// Find the current worktree info.
+	// Find worktree info.
 	wts, err := git.ListWorktrees(root)
 	if err != nil {
 		return err
@@ -117,8 +128,6 @@ func Merge(args []string) error {
 			break
 		}
 	}
-
-	// Find the target worktree (needed for switching and post-merge hooks).
 	var targetWt *git.Worktree
 	for i := range wts {
 		if wts[i].Branch == target {
@@ -127,7 +136,20 @@ func Merge(args []string) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "merging %s into %s\n", currentBranch, target)
+	// Handle --continue: resume from step 6 (rebase --continue, then merge).
+	if opts.Continue {
+		fmt.Fprintf(os.Stderr, "continuing rebase\n")
+		if _, err := git.Cmd(cwd, "rebase", "--continue"); err != nil {
+			return fmt.Errorf("rebase --continue failed: %w\nresolve remaining conflicts and run: cms land --continue", err)
+		}
+		return landMergeAndCleanup(cwd, root, currentBranch, target, mainWt, currentWt, targetWt, opts, wtCfg)
+	}
+
+	fmt.Fprintf(os.Stderr, "landing %s into %s\n", currentBranch, target)
+
+	// Check for uncommitted changes.
+	status, _ := git.Cmd(cwd, "status", "--porcelain")
+	hasChanges := strings.TrimSpace(status) != ""
 
 	// Step 1: Handle uncommitted changes.
 	if hasChanges {
@@ -166,14 +188,20 @@ func Merge(args []string) error {
 	// Step 5: Rebase onto target.
 	fmt.Fprintf(os.Stderr, "rebasing onto %s\n", target)
 	if _, err := git.Cmd(cwd, "rebase", target); err != nil {
-		return fmt.Errorf("rebase failed: %w\nresolve conflicts and run: git rebase --continue", err)
+		return fmt.Errorf("rebase failed: %w\nresolve conflicts and run: cms land --continue\nor abort with: cms land --abort", err)
 	}
 
-	// Step 6: Pre-merge hooks.
+	// Steps 6-9: Merge and cleanup.
+	return landMergeAndCleanup(cwd, root, currentBranch, target, mainWt, currentWt, targetWt, opts, wtCfg)
+}
+
+// landMergeAndCleanup handles steps 6-9 of the land workflow (shared by normal and --continue paths).
+func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, currentWt, targetWt *git.Worktree, opts LandOpts, wtCfg *config.WorktreeConfig) error {
+	// Step 6: Pre-land hooks.
 	if len(wtCfg.PreMerge) > 0 {
-		fmt.Fprintf(os.Stderr, "running %d pre-merge hooks\n", len(wtCfg.PreMerge))
-		if err := RunHooks("pre-merge", mainWt, root, wtCfg.PreMerge); err != nil {
-			return fmt.Errorf("pre-merge hook failed: %w", err)
+		fmt.Fprintf(os.Stderr, "running %d pre-land hooks\n", len(wtCfg.PreMerge))
+		if err := RunHooks("pre-land", mainWt, root, wtCfg.PreMerge); err != nil {
+			return fmt.Errorf("pre-land hook failed: %w", err)
 		}
 	}
 
@@ -182,7 +210,6 @@ func Merge(args []string) error {
 	if targetWt != nil {
 		mergeDir = targetWt.Path
 	} else {
-		// Target has no worktree -- checkout in main worktree.
 		mergeDir = mainWt
 		if _, err := git.Cmd(mergeDir, "checkout", target); err != nil {
 			return fmt.Errorf("cannot checkout target %s: %w", target, err)
@@ -200,7 +227,6 @@ func Merge(args []string) error {
 	fmt.Fprintf(os.Stderr, "merging %s into %s\n", currentBranch, target)
 	if _, err := git.Cmd(mergeDir, mergeArgs...); err != nil {
 		if !opts.NoFF {
-			// ff-only failed, try with --no-ff if forced.
 			fmt.Fprintf(os.Stderr, "fast-forward not possible, trying merge commit\n")
 			mergeArgs = []string{"merge", "--no-ff", currentBranch}
 			if _, err := git.Cmd(mergeDir, mergeArgs...); err != nil {
@@ -211,16 +237,16 @@ func Merge(args []string) error {
 		}
 	}
 
-	// Step 8: Post-merge hooks (run in target worktree).
+	// Step 8: Post-land hooks.
 	if len(wtCfg.PostMerge) > 0 {
 		hookDir := mergeDir
-		fmt.Fprintf(os.Stderr, "running %d post-merge hooks\n", len(wtCfg.PostMerge))
-		if err := RunHooks("post-merge", mainWt, hookDir, wtCfg.PostMerge); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: post-merge hook failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "running %d post-land hooks\n", len(wtCfg.PostMerge))
+		if err := RunHooks("post-land", mainWt, hookDir, wtCfg.PostMerge); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: post-land hook failed: %v\n", err)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "merged %s into %s\n", currentBranch, target)
+	fmt.Fprintf(os.Stderr, "landed %s into %s\n", currentBranch, target)
 
 	// Wait for confirmation before closing the window.
 	if !opts.Keep && currentWt != nil && !currentWt.IsMain {
@@ -232,27 +258,23 @@ func Merge(args []string) error {
 	if !opts.Keep && currentWt != nil && !currentWt.IsMain {
 		fmt.Fprintf(os.Stderr, "cleaning up worktree %s\n", ShortenHome(currentWt.Path))
 
-		// Run pre-remove hooks.
 		if len(wtCfg.PreRemove) > 0 {
 			RunHooks("pre-remove", mainWt, currentWt.Path, wtCfg.PreRemove)
 		}
 
-		// Remove worktree.
 		if err := RemoveWorktree(root, currentWt.Path, true); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: worktree remove failed: %v\n", err)
 		}
 
-		// Delete branch (safe -- it's been merged).
 		fmt.Fprintf(os.Stderr, "deleting branch %s\n", currentBranch)
 		if err := DeleteBranch(root, currentBranch, false); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: branch delete failed: %v\n", err)
 		}
 
-		// Kill the tmux window for the removed worktree.
 		CleanupTmuxWindow(currentWt.Path)
 	}
 
-	// Step 10: Switch to target worktree.
+	// Switch to target worktree.
 	if targetWt != nil && os.Getenv("TMUX") != "" {
 		windowName := SanitizeBranch(target)
 		SwitchToTmuxWindow(windowName)
@@ -262,31 +284,26 @@ func Merge(args []string) error {
 }
 
 // squashCommits squashes all branch commits into a single commit.
-func squashCommits(wtDir, target, branch string, opts MergeOpts, wtCfg *config.WorktreeConfig) error {
-	// Find merge base.
+func squashCommits(wtDir, target, branch string, opts LandOpts, wtCfg *config.WorktreeConfig) error {
 	mergeBase, err := git.Cmd(wtDir, "merge-base", target, branch)
 	if err != nil {
 		return fmt.Errorf("cannot find merge base between %s and %s: %w", target, branch, err)
 	}
 
-	// Soft reset to merge base (keeps all changes staged).
 	fmt.Fprintf(os.Stderr, "squashing commits since %s\n", mergeBase[:8])
 	if _, err := git.Cmd(wtDir, "reset", "--soft", mergeBase); err != nil {
 		return fmt.Errorf("git reset --soft failed: %w", err)
 	}
 
-	// Determine commit message.
 	message := opts.Message
 	if message == "" {
 		message = generateCommitMessage(wtDir, target, branch, wtCfg)
 	}
 
-	// Commit.
 	commitArgs := []string{"commit"}
 	if message != "" {
 		commitArgs = append(commitArgs, "-m", message)
 	} else if !opts.NoEdit {
-		// Open editor for message.
 		return commitInteractive(wtDir)
 	}
 
@@ -299,7 +316,6 @@ func squashCommits(wtDir, target, branch string, opts MergeOpts, wtCfg *config.W
 
 // generateCommitMessage creates a commit message, optionally via LLM.
 func generateCommitMessage(wtDir, target, branch string, wtCfg *config.WorktreeConfig) string {
-	// Try LLM generation if configured.
 	if wtCfg.CommitCmd != "" {
 		msg := generateCommitMessageLLM(wtDir, wtCfg.CommitCmd)
 		if msg != "" {
@@ -308,7 +324,6 @@ func generateCommitMessage(wtDir, target, branch string, wtCfg *config.WorktreeC
 		fmt.Fprintf(os.Stderr, "warning: LLM commit message generation failed, using default\n")
 	}
 
-	// Default message: summarize the branch.
 	diffStat, _ := git.Cmd(wtDir, "diff", "--stat", "HEAD~1")
 	subject := fmt.Sprintf("Merge branch '%s'", branch)
 	if diffStat != "" {
@@ -319,7 +334,6 @@ func generateCommitMessage(wtDir, target, branch string, wtCfg *config.WorktreeC
 
 // generateCommitMessageLLM pipes the staged diff to an LLM command and returns its output.
 func generateCommitMessageLLM(wtDir, llmCmd string) string {
-	// Get the staged diff.
 	diff, err := git.Cmd(wtDir, "diff", "--cached", "--stat")
 	if err != nil || diff == "" {
 		diff, _ = git.Cmd(wtDir, "diff", "HEAD~1", "--stat")
@@ -328,13 +342,11 @@ func generateCommitMessageLLM(wtDir, llmCmd string) string {
 		return ""
 	}
 
-	// Get detailed diff for context (limit to avoid token overload).
 	detailedDiff, _ := git.Cmd(wtDir, "diff", "--cached")
 	if detailedDiff == "" {
 		detailedDiff, _ = git.Cmd(wtDir, "diff", "HEAD~1")
 	}
 
-	// Truncate large diffs.
 	const maxDiff = 8000
 	if len(detailedDiff) > maxDiff {
 		detailedDiff = detailedDiff[:maxDiff] + "\n... (truncated)"

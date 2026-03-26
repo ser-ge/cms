@@ -49,7 +49,7 @@ func TestSquashCommits(t *testing.T) {
 	logBefore, _ := git.Cmd(wtPath, "log", "--oneline")
 	linesBefore := len(strings.Split(strings.TrimSpace(logBefore), "\n"))
 
-	opts := MergeOpts{Squash: true, Message: "squashed feature"}
+	opts := LandOpts{Squash: true, Message: "squashed feature"}
 	wtCfg := &config.WorktreeConfig{}
 	err := squashCommits(wtPath, defBranch, "feature", opts, wtCfg)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestSquashCommits(t *testing.T) {
 func TestSquashCommits_PreservesContent(t *testing.T) {
 	_, wtPath, defBranch := initTestRepoWithBranch(t)
 
-	err := squashCommits(wtPath, defBranch, "feature", MergeOpts{Squash: true, Message: "all in one"}, &config.WorktreeConfig{})
+	err := squashCommits(wtPath, defBranch, "feature", LandOpts{Squash: true, Message: "all in one"}, &config.WorktreeConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestMergeWorkflow_SquashAndMerge(t *testing.T) {
 	repo, wtPath, defBranch := initTestRepoWithBranch(t)
 
 	// Squash feature commits.
-	err := squashCommits(wtPath, defBranch, "feature", MergeOpts{Squash: true, Message: "feat: all in one"}, &config.WorktreeConfig{})
+	err := squashCommits(wtPath, defBranch, "feature", LandOpts{Squash: true, Message: "feat: all in one"}, &config.WorktreeConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestSquashCommits_SingleCommit(t *testing.T) {
 	runGit(t, wtPath, "add", "only.txt")
 	runGit(t, wtPath, "commit", "-m", "single commit")
 
-	err := squashCommits(wtPath, defBranch, "single-commit", MergeOpts{Squash: true, Message: "squashed single"}, &config.WorktreeConfig{})
+	err := squashCommits(wtPath, defBranch, "single-commit", LandOpts{Squash: true, Message: "squashed single"}, &config.WorktreeConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestSquashCommits_WithLLMMessage(t *testing.T) {
 
 	// Use echo as fake LLM.
 	wtCfg := &config.WorktreeConfig{CommitCmd: "echo 'feat: LLM generated message'"}
-	err := squashCommits(wtPath, defBranch, "feature", MergeOpts{Squash: true}, wtCfg)
+	err := squashCommits(wtPath, defBranch, "feature", LandOpts{Squash: true}, wtCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestMergeWorkflow_FullLifecycle(t *testing.T) {
 	repo, wtPath, defBranch := initTestRepoWithBranch(t)
 
 	// Squash.
-	err := squashCommits(wtPath, defBranch, "feature", MergeOpts{Squash: true, Message: "feat: everything"}, &config.WorktreeConfig{})
+	err := squashCommits(wtPath, defBranch, "feature", LandOpts{Squash: true, Message: "feat: everything"}, &config.WorktreeConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

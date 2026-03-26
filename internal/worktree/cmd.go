@@ -21,14 +21,16 @@ func RunCmd(args []string) error {
 	switch args[0] {
 	case "list", "ls":
 		return RunList()
-	case "add", "a":
-		return RunAdd(args[1:])
+	case "switch", "add", "a":
+		return RunSwitch(args[1:])
+	case "go":
+		return RunGo(args[1:])
 	case "remove", "rm":
 		return RunRemove(args[1:])
-	case "merge", "m":
-		return Merge(args[1:])
+	case "land", "merge", "m":
+		return Land(args[1:])
 	default:
-		return fmt.Errorf("unknown worktree command: %s\nusage: cms worktree [list|add|remove|merge]", args[0])
+		return fmt.Errorf("unknown worktree command: %s\nusage: cms worktree [list|switch|go|remove|land]", args[0])
 	}
 }
 
@@ -92,15 +94,19 @@ func RunList() error {
 	return w.Flush()
 }
 
-// AddOpts controls optional behavior for AddWorktree.
-type AddOpts struct {
-	NoOpen bool // skip auto-creating a tmux window
+// SwitchOpts configures the switch command (git switch semantics).
+type SwitchOpts struct {
+	NoOpen      bool   // skip tmux window creation/switch
+	NewBranch   string // -c: create new branch (error if exists)
+	ForceBranch string // -C: force-create branch (reset if exists)
+	Force       bool   // --force: force worktree creation
+	Path        string // --path: override auto-resolved worktree dir
+	StartPoint  string // positional start-point (only with -c/-C)
 }
 
-// AddWorktree creates a worktree for the given branch at the given path.
-// If path is empty, it is resolved from config. If the branch doesn't exist,
-// it is created automatically.
-func AddWorktree(root, branch, path string, opts AddOpts) error {
+// SwitchWorktree switches to a branch's worktree, creating it if needed.
+// With strict git switch semantics: unknown branches require -c/-C.
+func SwitchWorktree(root, branch string, opts SwitchOpts) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -108,6 +114,25 @@ func AddWorktree(root, branch, path string, opts AddOpts) error {
 
 	cfg := config.Load()
 	wtCfg := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
+
+	// Check if worktree already exists for this branch — switch to it.
+	wts, err := git.ListWorktrees(root)
+	if err != nil {
+		return err
+	}
+	for _, wt := range wts {
+		if wt.Branch == branch || SanitizeBranch(wt.Branch) == branch ||
+			filepath.Base(wt.Path) == branch {
+			if !opts.NoOpen && os.Getenv("TMUX") != "" {
+				switchOrOpenTmuxWindow(wt.Path, wt.Branch)
+			}
+			fmt.Println(wt.Path)
+			return nil
+		}
+	}
+
+	// Resolve path.
+	path := opts.Path
 	if path == "" {
 		baseDir := ResolveWorktreeBaseDir(root, &wtCfg)
 		path = filepath.Join(baseDir, SanitizeBranch(branch))
@@ -116,11 +141,97 @@ func AddWorktree(root, branch, path string, opts AddOpts) error {
 		path = filepath.Join(root, path)
 	}
 
-	// Resolve branch: check local, then remote for auto-tracking.
-	createOpts := CreateWorktreeOpts{}
+	// Build create options based on mode.
+	createOpts := CreateWorktreeOpts{Force: opts.Force}
+
+	if opts.ForceBranch != "" {
+		// -C: force-create branch.
+		createOpts.NewBranch = true
+		createOpts.ForceBranch = true
+		createOpts.StartPoint = opts.StartPoint
+	} else if opts.NewBranch != "" {
+		// -c: create new branch, error if exists.
+		if local, _, _ := ResolveBranch(root, branch); local {
+			return fmt.Errorf("branch %q already exists (use -C to force-reset)", branch)
+		}
+		createOpts.NewBranch = true
+		createOpts.StartPoint = opts.StartPoint
+	} else {
+		// No -c/-C: strict mode — branch must exist.
+		local, remote, err := ResolveBranch(root, branch)
+		if err != nil {
+			return fmt.Errorf("branch %q not found (use -c to create a new branch)", branch)
+		}
+		if !local && remote != "" {
+			createOpts.Track = remote
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "creating worktree at %s for branch %s\n", ShortenHome(path), branch)
+	if err := CreateWorktree(root, path, branch, createOpts); err != nil {
+		return fmt.Errorf("git worktree add failed: %w", err)
+	}
+
+	runPostCreateHooksAndOpen(path, branch, &wtCfg, opts.NoOpen)
+	fmt.Println(path)
+	return nil
+}
+
+// GoWorktree switches to a branch's worktree, auto-creating from base_branch if needed.
+// This is the opinionated shortcut — unknown branches are created automatically.
+func GoWorktree(root, branch string, opts SwitchOpts) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cfg := config.Load()
+	wtCfg := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
+
+	// Check if worktree already exists — switch to it.
+	wts, err := git.ListWorktrees(root)
+	if err != nil {
+		return err
+	}
+	for _, wt := range wts {
+		if wt.Branch == branch || SanitizeBranch(wt.Branch) == branch ||
+			filepath.Base(wt.Path) == branch {
+			if !opts.NoOpen && os.Getenv("TMUX") != "" {
+				switchOrOpenTmuxWindow(wt.Path, wt.Branch)
+			}
+			fmt.Println(wt.Path)
+			return nil
+		}
+	}
+
+	// Resolve path.
+	path := opts.Path
+	if path == "" {
+		baseDir := ResolveWorktreeBaseDir(root, &wtCfg)
+		path = filepath.Join(baseDir, SanitizeBranch(branch))
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+
+	// Resolve branch: check local, then remote, then create new.
+	createOpts := CreateWorktreeOpts{Force: opts.Force}
 	local, remote, err := ResolveBranch(root, branch)
 	if err != nil {
+		// Branch doesn't exist — create from start-point or base_branch.
 		createOpts.NewBranch = true
+		if opts.StartPoint != "" {
+			createOpts.StartPoint = opts.StartPoint
+		} else {
+			// Use configured base_branch or default branch.
+			baseBranch := wtCfg.BaseBranch
+			if baseBranch == "" {
+				baseBranch, _ = DefaultBranch(root)
+			}
+			if baseBranch != "" {
+				createOpts.StartPoint = baseBranch
+			}
+		}
 	} else if !local && remote != "" {
 		createOpts.Track = remote
 	}
@@ -130,40 +241,155 @@ func AddWorktree(root, branch, path string, opts AddOpts) error {
 		return fmt.Errorf("git worktree add failed: %w", err)
 	}
 
-	// Run post-create hooks.
-	mainWt, _ := FindMainWorktree(root)
+	runPostCreateHooksAndOpen(path, branch, &wtCfg, opts.NoOpen)
+	fmt.Println(path)
+	return nil
+}
+
+// runPostCreateHooksAndOpen runs post-create hooks and opens a tmux window.
+func runPostCreateHooksAndOpen(path, branch string, wtCfg *config.WorktreeConfig, noOpen bool) {
+	var mainWt string
+	if root, err := FindRepoRoot(path); err == nil {
+		mainWt, _ = FindMainWorktree(root)
+	}
 	if len(wtCfg.Hooks) > 0 {
 		fmt.Fprintf(os.Stderr, "running %d post-create hooks\n", len(wtCfg.Hooks))
 		if err := RunPostCreateHooks(mainWt, path, wtCfg.Hooks); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: hook failed: %v\n", err)
 		}
 	}
-
-	// Auto-open tmux window for the new worktree.
-	if !opts.NoOpen && os.Getenv("TMUX") != "" {
+	if !noOpen && os.Getenv("TMUX") != "" {
 		openTmuxWindow(branch, path)
 	}
-
-	fmt.Println(path)
-	return nil
 }
 
-// RunAdd parses flags and creates a worktree.
-func RunAdd(args []string) error {
-	noOpen := false
+// switchOrOpenTmuxWindow switches to an existing tmux window for the worktree,
+// or creates a new one if none exists.
+func switchOrOpenTmuxWindow(wtPath, branch string) {
+	sessions, _, err := tmux.FetchState()
+	if err == nil {
+		for _, sess := range sessions {
+			for _, win := range sess.Windows {
+				for _, pane := range win.Panes {
+					if strings.HasPrefix(pane.WorkingDir, wtPath) {
+						tmux.Run("switch-client", "-t", pane.ID)
+						return
+					}
+				}
+			}
+		}
+	}
+	openTmuxWindow(branch, wtPath)
+}
 
+// RunSwitch parses flags for the switch command (strict git switch semantics).
+func RunSwitch(args []string) error {
+	opts := SwitchOpts{}
 	positional := []string{}
+
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "-c":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-c requires a branch name")
+			}
+			i++
+			opts.NewBranch = args[i]
+		case "-C":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-C requires a branch name")
+			}
+			i++
+			opts.ForceBranch = args[i]
+		case "--path":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--path requires a directory")
+			}
+			i++
+			opts.Path = args[i]
+		case "--force", "-f":
+			opts.Force = true
 		case "--no-open":
-			noOpen = true
+			opts.NoOpen = true
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+
+	// Determine branch and start-point from flags + positionals.
+	var branch string
+	if opts.NewBranch != "" || opts.ForceBranch != "" {
+		// -c/-C: branch from flag, positional is start-point.
+		if opts.NewBranch != "" {
+			branch = opts.NewBranch
+		} else {
+			branch = opts.ForceBranch
+		}
+		if len(positional) > 0 {
+			opts.StartPoint = positional[0]
+		}
+		if len(positional) > 1 {
+			return fmt.Errorf("too many arguments")
+		}
+	} else {
+		// No -c/-C: single positional is branch, no start-point allowed.
+		if len(positional) == 0 {
+			return fmt.Errorf("usage: cms switch [-c/-C <branch>] [<start-point>] | cms switch <branch>")
+		}
+		branch = positional[0]
+		if len(positional) > 1 {
+			return fmt.Errorf("start-point requires -c or -C (did you mean: cms switch -c %s %s?)", positional[0], positional[1])
+		}
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	root, err := FindRepoRoot(cwd)
+	if err != nil {
+		return err
+	}
+
+	// Resolve symbols.
+	branch, err = ResolveWorktreeSymbol(root, branch)
+	if err != nil {
+		return err
+	}
+	if opts.StartPoint != "" {
+		opts.StartPoint, err = ResolveWorktreeSymbol(root, opts.StartPoint)
+		if err != nil {
+			return err
+		}
+	}
+
+	return SwitchWorktree(root, branch, opts)
+}
+
+// RunGo parses flags for the go command (opinionated switch-or-create).
+func RunGo(args []string) error {
+	opts := SwitchOpts{}
+	positional := []string{}
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--path":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--path requires a directory")
+			}
+			i++
+			opts.Path = args[i]
+		case "--force", "-f":
+			opts.Force = true
+		case "--no-open":
+			opts.NoOpen = true
 		default:
 			positional = append(positional, args[i])
 		}
 	}
 
 	if len(positional) == 0 {
-		return fmt.Errorf("usage: cms add [--no-open] <branch> [path]")
+		return fmt.Errorf("usage: cms go <branch> [<start-point>]")
 	}
 
 	cwd, err := os.Getwd()
@@ -179,12 +405,15 @@ func RunAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	var path string
 	if len(positional) > 1 {
-		path = positional[1]
+		sp, err := ResolveWorktreeSymbol(root, positional[1])
+		if err != nil {
+			return err
+		}
+		opts.StartPoint = sp
 	}
 
-	return AddWorktree(root, branch, path, AddOpts{NoOpen: noOpen})
+	return GoWorktree(root, branch, opts)
 }
 
 // openTmuxWindow creates a tmux window for a new worktree in the
@@ -201,21 +430,27 @@ func openTmuxWindow(branch, wtPath string) {
 // RunRemove parses flags and removes a worktree.
 func RunRemove(args []string) error {
 	force := false
+	forceBranch := false
 	keepBranch := false
+	dryRun := false
 	positional := []string{}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--force", "-f":
 			force = true
+		case "-D":
+			forceBranch = true
 		case "--keep-branch":
 			keepBranch = true
+		case "--dry-run":
+			dryRun = true
 		default:
 			positional = append(positional, args[i])
 		}
 	}
 
 	if len(positional) == 0 {
-		return fmt.Errorf("usage: cms worktree remove [-f] [--keep-branch] <branch-or-path>")
+		return fmt.Errorf("usage: cms rm [-f] [-D] [--keep-branch] [--dry-run] <branch-or-path>")
 	}
 
 	cwd, err := os.Getwd()
@@ -267,6 +502,22 @@ func RunRemove(args []string) error {
 		}
 	}
 
+	// Dry-run: show what would happen and exit.
+	if dryRun {
+		fmt.Fprintf(os.Stderr, "would remove worktree at %s\n", ShortenHome(found.Path))
+		if !keepBranch && found.Branch != "" {
+			defBranch, _ := DefaultBranch(root)
+			integrated, _ := IsBranchIntegrated(root, found.Branch, defBranch)
+			if forceBranch || integrated {
+				fmt.Fprintf(os.Stderr, "would delete branch %s\n", found.Branch)
+			} else {
+				fmt.Fprintf(os.Stderr, "would skip branch %s (not merged; use -D to force)\n", found.Branch)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "would kill tmux window for %s\n", ShortenHome(found.Path))
+		return nil
+	}
+
 	// Run pre-remove hooks.
 	cfg := config.Load()
 	wtCfg := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
@@ -283,22 +534,22 @@ func RunRemove(args []string) error {
 		return fmt.Errorf("git worktree remove failed: %w", err)
 	}
 
-	// Delete branch (same as merge: always delete unless --keep-branch).
+	// Delete branch unless --keep-branch.
 	if !keepBranch && found.Branch != "" {
-		if !force {
+		if !forceBranch {
 			defBranch, err := DefaultBranch(root)
 			if err == nil && defBranch != "" {
 				integrated, reason := IsBranchIntegrated(root, found.Branch, defBranch)
 				if !integrated {
 					fmt.Fprintf(os.Stderr, "warning: branch %s is not merged into %s, skipping deletion\n", found.Branch, defBranch)
-					fmt.Fprintf(os.Stderr, "  use --force to delete anyway\n")
+					fmt.Fprintf(os.Stderr, "  use -D to delete anyway\n")
 					goto cleanup
 				}
 				fmt.Fprintf(os.Stderr, "branch %s is safe to delete (%s)\n", found.Branch, reason)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "deleting branch %s\n", found.Branch)
-		if err := DeleteBranch(root, found.Branch, force); err != nil {
+		if err := DeleteBranch(root, found.Branch, forceBranch); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: branch delete failed: %v\n", err)
 		}
 	}
