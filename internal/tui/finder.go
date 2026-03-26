@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -552,6 +553,8 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		if msg.repoRoot != "" {
 			defBranch, _ = worktree.DefaultBranch(msg.repoRoot)
 		}
+		projectName := filepath.Base(msg.repoRoot)
+
 		for _, wt := range msg.worktrees {
 			if wt.IsBare {
 				continue
@@ -560,15 +563,22 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			if branch == "" {
 				branch = "(detached)"
 			}
-			desc := CompactPath(ShortenHome(wt.Path), 25)
+
+			// Title: project/branch (same style as queue).
+			title := projectName + "/" + branch
+
+			// Static description: merged status (expensive git check, done once at scan).
+			desc := ""
 			if !wt.IsMain && defBranch != "" && wt.Branch != "" && wt.Branch != defBranch {
 				if integrated, reason := worktree.IsBranchIntegrated(msg.repoRoot, wt.Branch, defBranch); integrated {
-					desc += " [merged: " + reason + "]"
+					desc = "[merged: " + reason + "]"
 				}
 			}
-			// Icon: dim by default; Active updated later by worktreeItemsWithOpenStatus.
+
+			// Icon and Active are set to defaults here; worktreeItemsWithOpenStatus()
+			// recomputes them on every rebuildPicker() using live agent data.
 			m.worktreeItems = append(m.worktreeItems, PickerItem{
-				Title:       branch,
+				Title:       title,
 				Description: desc,
 				FilterValue: branch + " " + wt.Path,
 				Active:      wt.IsMain,
@@ -931,20 +941,40 @@ func (m *finderModel) paneIsCurrent(i int) bool {
 	return m.paneItems[i].Active
 }
 
-// worktreeItemsWithOpenStatus returns worktree items with Active set to true
-// for worktrees that have a tmux pane inside them. Active is always computed;
-// promote_active controls only whether Active items sort first.
+// worktreeItemsWithOpenStatus returns worktree items with Active and agent
+// state summaries computed from live session/agent data. Called on every
+// rebuildPicker() so updates are reflected when agents change state.
 func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry) {
 	if len(m.worktreeItems) == 0 {
 		return nil, nil
 	}
 
-	// Build set of worktree paths that have tmux panes inside them.
-	openPaths := map[string]bool{}
+	stateOrder := m.cfg.Finder.GetStateOrder("worktrees")
+
+	// For each worktree, collect agent states and whether any pane is open.
+	type wtInfo struct {
+		hasPane     bool
+		stateCounts map[agent.Activity]int
+		activities  []agent.Activity
+	}
+	info := make([]wtInfo, len(m.worktreeItems))
+	for i := range info {
+		info[i].stateCounts = map[agent.Activity]int{}
+	}
+
 	for _, sess := range m.sessData {
 		for _, win := range sess.Windows {
 			for _, pane := range win.Panes {
-				openPaths[pane.WorkingDir] = true
+				for i, entry := range m.worktreeIdx {
+					if !strings.HasPrefix(pane.WorkingDir, entry.worktreePath) {
+						continue
+					}
+					info[i].hasPane = true
+					if cs, ok := m.agentData[pane.ID]; ok && cs.Running {
+						info[i].stateCounts[cs.Activity]++
+						info[i].activities = append(info[i].activities, cs.Activity)
+					}
+				}
 			}
 		}
 	}
@@ -952,13 +982,27 @@ func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry
 	items := make([]PickerItem, len(m.worktreeItems))
 	copy(items, m.worktreeItems)
 	for i := range items {
-		wtPath := m.worktreeIdx[i].worktreePath
-		for openDir := range openPaths {
-			if strings.HasPrefix(openDir, wtPath) {
-				items[i].Active = true
-				items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, workingStyle)
-				break
-			}
+		wi := info[i]
+
+		// Build description: agent counts + static suffix (merged status).
+		var parts []string
+		if counts := renderStateCounts(wi.stateCounts); counts != "" {
+			parts = append(parts, counts)
+		}
+		// Append the static description (e.g. "[merged: ...]") from scan time.
+		if m.worktreeItems[i].Description != "" {
+			parts = append(parts, m.worktreeItems[i].Description)
+		}
+		items[i].Description = JoinParts(parts)
+
+		// Set icon color and Active based on agent activity.
+		if len(wi.activities) > 0 {
+			items[i].Active = true
+			items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees,
+				ActivityStyle(MostUrgentActivity(wi.activities, stateOrder)))
+		} else if wi.hasPane {
+			items[i].Active = true
+			items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, workingStyle)
 		}
 	}
 	return items, m.worktreeIdx
