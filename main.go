@@ -184,11 +184,12 @@ func main() {
 	w.Start(p.Send)
 	result, err := p.Run()
 	w.Stop()
+	session.SaveAllSnapshots() // best-effort, errors logged
 	if err != nil {
 		exitErr(err)
 	}
 	if rm, ok := result.(tui.RootModel); ok && rm.PostAction() != nil {
-		exitIfErr(executePostAction(rm.PostAction()))
+		exitIfErr(executePostAction(rm.PostAction(), cfg))
 	}
 }
 
@@ -250,7 +251,7 @@ func exitIfErr(err error) {
 	}
 }
 
-func executePostAction(a *tui.PostAction) error {
+func executePostAction(a *tui.PostAction, cfg config.Config) error {
 	// Direct pane switch (from dashboard, queue, pane picker, marks).
 	if a.PaneID != "" {
 		return session.SwitchToPane(a.PaneID)
@@ -264,7 +265,7 @@ func executePostAction(a *tui.PostAction) error {
 		agents := agent.DetectAll(sessions, pt)
 		return session.SmartSwitch(a.SessionName, a.Priority, sessions, agents)
 	case tui.KindProject:
-		return session.OpenProject(a.ProjectPath)
+		return session.OpenProject(a.ProjectPath, cfg.General.ShouldRestore())
 	case tui.KindWorktree:
 		if a.BranchName != "" {
 			return createWorktreeFromTUI(a.BranchName)

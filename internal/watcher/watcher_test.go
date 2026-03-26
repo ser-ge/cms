@@ -1,6 +1,7 @@
 package watcher
 
 import (
+	"fmt"
 	"os/exec"
 	"strconv"
 	"testing"
@@ -13,7 +14,28 @@ import (
 	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/hook"
 	"github.com/serge/cms/internal/tmux"
+	"github.com/serge/cms/internal/trace"
 )
+
+type recordingTrace struct {
+	ingress []trace.IngressEvent
+	tmux    []trace.TmuxSnapshotPayload
+}
+
+func (r *recordingTrace) RecordIngress(kind trace.IngressKind, payload any) {
+	r.ingress = append(r.ingress, trace.IngressEvent{Kind: kind, Payload: payload})
+}
+
+func (r *recordingTrace) RecordTmuxState(reason string, sessions []tmux.Session, current tmux.CurrentTarget) string {
+	id := fmt.Sprintf("snapshot-%d", len(r.tmux)+1)
+	r.tmux = append(r.tmux, trace.TmuxSnapshotPayload{
+		SnapshotID: id,
+		Reason:     reason,
+		Sessions:   trace.NormalizeSessions(sessions),
+		Current:    trace.NormalizeCurrent(current),
+	})
+	return id
+}
 
 // testWatcher sets up a watcher with a message collector for testing.
 func testWatcher() (*Watcher, *[]tea.Msg) {
@@ -90,6 +112,8 @@ func TestHookStats(t *testing.T) {
 
 func TestHandleHookEventSessionStart(t *testing.T) {
 	w, msgs := testWatcher()
+	rec := &recordingTrace{}
+	w.SetRecorder(rec)
 
 	w.handleHookEvent(hook.Event{
 		Kind:      hook.SessionStart,
@@ -116,6 +140,9 @@ func TestHandleHookEventSessionStart(t *testing.T) {
 	}
 	if status.Source != agent.SourceHook {
 		t.Fatalf("source = %v, want SourceHook", status.Source)
+	}
+	if len(rec.ingress) != 1 || rec.ingress[0].Kind != trace.IngressHookEvent {
+		t.Fatalf("expected hook ingress event, got %#v", rec.ingress)
 	}
 }
 
@@ -561,6 +588,8 @@ func TestSmoothingNoDelayForIdleToWorking(t *testing.T) {
 
 func TestSmoothingTimerCommits(t *testing.T) {
 	w, msgs := testWatcherWithSmoothing(0, 50) // 50ms for fast test
+	rec := &recordingTrace{}
+	w.SetRecorder(rec)
 	paneID := "%1"
 
 	w.stateMu.Lock()
@@ -591,6 +620,20 @@ func TestSmoothingTimerCommits(t *testing.T) {
 	status := update.Updates[paneID]
 	if status.Activity != agent.ActivityCompleted {
 		t.Fatalf("committed activity = %v, want Completed", status.Activity)
+	}
+	found := false
+	for _, ev := range rec.ingress {
+		if ev.Kind != trace.IngressTimerFired {
+			continue
+		}
+		payload, ok := ev.Payload.(trace.TimerFiredPayload)
+		if ok && payload.Source == trace.TimerSmoothing && payload.PaneID == paneID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected smoothing timer ingress event")
 	}
 }
 

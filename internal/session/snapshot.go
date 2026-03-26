@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/serge/cms/internal/debug"
+	"github.com/serge/cms/internal/git"
 	"github.com/serge/cms/internal/tmux"
 )
 
@@ -43,7 +45,36 @@ func SaveSnapshot(sessionName, repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	layouts, err := listWindowLayouts(sessionName)
+	return saveSessionSnapshot(sess, repoRoot)
+}
+
+// SaveAllSnapshots saves snapshots for every tmux session that lives in a git repo.
+// Best-effort: errors for individual sessions are logged, not returned.
+func SaveAllSnapshots() {
+	sessions, _, err := tmux.FetchState()
+	if err != nil {
+		debug.Logf("session: save-all: FetchState failed: %v", err)
+		return
+	}
+	for _, sess := range sessions {
+		if len(sess.Windows) == 0 || len(sess.Windows[0].Panes) == 0 {
+			continue
+		}
+		dir := sess.Windows[0].Panes[0].WorkingDir
+		repoRoot, err := git.Cmd(dir, "rev-parse", "--show-toplevel")
+		if err != nil {
+			continue // not a git repo, skip silently
+		}
+		repoRoot = strings.TrimSpace(repoRoot)
+		if err := saveSessionSnapshot(sess, repoRoot); err != nil {
+			debug.Logf("session: save-all: %s: %v", sess.Name, err)
+		}
+	}
+}
+
+// saveSessionSnapshot saves a snapshot for a single session using pre-fetched state.
+func saveSessionSnapshot(sess tmux.Session, repoRoot string) error {
+	layouts, err := listWindowLayouts(sess.Name)
 	if err != nil {
 		return err
 	}
@@ -67,12 +98,12 @@ func SaveSnapshot(sessionName, repoRoot string) error {
 	}
 
 	snap := Snapshot{
-		Session: sessionName,
+		Session: sess.Name,
 		Windows: windows,
 		Focus:   SnapFocus{Window: focus.Window, Pane: focus.Pane},
 	}
 
-	path, err := snapshotPath(repoRoot, sessionName)
+	path, err := snapshotPath(repoRoot, sess.Name)
 	if err != nil {
 		return err
 	}

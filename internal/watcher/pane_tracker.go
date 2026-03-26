@@ -8,6 +8,7 @@ import (
 	"github.com/serge/cms/internal/attention"
 	"github.com/serge/cms/internal/debug"
 	"github.com/serge/cms/internal/tmux"
+	"github.com/serge/cms/internal/trace"
 )
 
 // handleOutput debounces %output events per pane.
@@ -34,6 +35,10 @@ func (w *Watcher) handleOutput(paneID string) {
 
 	// Schedule a settle re-check after output quiesces.
 	w.outputTimers[paneID] = time.AfterFunc(settleRecheckDelay, func() {
+		w.recorder.RecordIngress(trace.IngressTimerFired, trace.TimerFiredPayload{
+			Source: trace.TimerSettleRecheck,
+			PaneID: paneID,
+		})
 		w.settleRecheckPane(paneID)
 	})
 
@@ -87,6 +92,11 @@ func (w *Watcher) recheckPane(paneID, source string) {
 		debug.Logf("watcher: %s recheck capture failed pane=%s err=%v", source, paneID, err)
 		return
 	}
+	w.recorder.RecordIngress(trace.IngressCaptureSnapshot, trace.CaptureSnapshotPayload{
+		PaneID:  paneID,
+		Source:  source,
+		Content: content,
+	})
 
 	var status agent.AgentStatus
 	var prev agent.AgentStatus
@@ -223,6 +233,11 @@ func (w *Watcher) applySmoothing(paneID string, source agent.StatusSource, from,
 
 	delay := time.Duration(delayMs) * time.Millisecond
 	w.smoothingTimers[paneID] = time.AfterFunc(delay, func() {
+		w.recorder.RecordIngress(trace.IngressTimerFired, trace.TimerFiredPayload{
+			Source: trace.TimerSmoothing,
+			PaneID: paneID,
+			Target: to.String(),
+		})
 		w.commitSmoothedTransition(paneID, source, to)
 	})
 
@@ -281,6 +296,10 @@ func (w *Watcher) scheduleCompletedDecayLocked(paneID string) {
 		t.Stop()
 	}
 	w.completedTimers[paneID] = time.AfterFunc(w.completedDecay, func() {
+		w.recorder.RecordIngress(trace.IngressTimerFired, trace.TimerFiredPayload{
+			Source: trace.TimerCompletedDecay,
+			PaneID: paneID,
+		})
 		w.decayCompleted(paneID)
 	})
 }

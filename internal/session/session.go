@@ -155,7 +155,8 @@ func MovePane(srcPaneID, dstPaneID string) error {
 // If a session for this directory already exists, switches to it.
 // Otherwise tries, in order: template bootstrap, snapshot restore, plain create.
 // If the repo has linked worktrees, each becomes a tmux window.
-func OpenProject(path string) error {
+// When restore is false, snapshot restoration is skipped entirely.
+func OpenProject(path string, restore bool) error {
 	projCfg := config.LoadProjectConfig(path)
 	name := NormalizeName(filepath.Base(path))
 	if projCfg.Session.Name != "" {
@@ -177,15 +178,17 @@ func OpenProject(path string) error {
 	}
 
 	// 2. Restore from saved snapshot.
-	restored, err := RestoreSnapshot(name, path)
-	if err != nil {
-		debug.Logf("session: snapshot restore failed: %v", err)
-	}
-	if restored {
-		if shouldRestore(projCfg.Session) {
-			resumeClaudePanes(name, path, projCfg.Session.Claude) // best-effort
+	if restore {
+		restored, err := RestoreSnapshot(name, path)
+		if err != nil {
+			debug.Logf("session: snapshot restore failed: %v", err)
 		}
-		return Switch(name)
+		if restored {
+			if shouldRestore(projCfg.Session) {
+				resumeClaudePanes(name, path, projCfg.Session.Claude) // best-effort
+			}
+			return Switch(name)
+		}
 	}
 
 	// 3. Plain create with worktree windows.

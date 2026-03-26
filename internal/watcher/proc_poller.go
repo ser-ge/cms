@@ -6,6 +6,7 @@ import (
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/debug"
 	"github.com/serge/cms/internal/proc"
+	"github.com/serge/cms/internal/trace"
 )
 
 // runProcessPoll periodically checks for new/exited agent processes.
@@ -99,6 +100,10 @@ func (w *Watcher) pollProcesses() {
 		}
 	}
 	w.mu.Unlock()
+
+	w.recorder.RecordIngress(trace.IngressProcessPollSnapshot, trace.ProcessPollSnapshotPayload{
+		Statuses: trace.NormalizeAgents(updates),
+	})
 
 	if len(updates) > 0 {
 		w.applyAgentUpdate(updates)

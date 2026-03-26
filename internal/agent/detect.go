@@ -35,11 +35,11 @@ var providerSpecs = []providerSpec{
 // Detect checks known providers in a pane and returns the normalized status.
 func Detect(pane tmux.Pane, pt proc.Table) AgentStatus {
 	for _, spec := range providerSpecs {
-		found, args := proc.FindInTree(pt, pane.PID, spec.procMatch, proc.ExtractArgsAfterBinary)
+		found, processPID, args := proc.FindInTree(pt, pane.PID, spec.procMatch, proc.ExtractArgsAfterBinary)
 		if !found {
 			continue
 		}
-		status := AgentStatus{Provider: spec.provider, Running: true, Args: args}
+		status := AgentStatus{Provider: spec.provider, Running: true, ProcessPID: processPID, Args: args}
 		content, err := tmux.CapturePaneBottom(pane.ID)
 		if err != nil {
 			return status

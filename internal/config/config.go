@@ -67,6 +67,7 @@ type GeneralConfig struct {
 	SearchSubmodules bool         `toml:"search_submodules"`
 	SearchPaths      []SearchPath `toml:"search_paths"`
 
+	Restore         *bool `toml:"restore"`            // master switch for snapshot restore on project open (default: true)
 	CompletedDecayS int   `toml:"completed_decay_s"` // Completed->Idle auto-decay in seconds (default 300)
 	AlwaysHooksForStatus *bool `toml:"always_hooks_for_status"` // when true (default), hooks never go stale; observer skips transitions while any hook has been seen
 
@@ -103,6 +104,14 @@ func (g GeneralConfig) SmoothingMs(from, to string) int {
 		return g.Smoothing.CompletedToIdleMs
 	}
 	return 0
+}
+
+// ShouldRestore reports whether session snapshots should be restored on project open.
+func (g GeneralConfig) ShouldRestore() bool {
+	if g.Restore == nil {
+		return true
+	}
+	return *g.Restore
 }
 
 type IconsConfig struct {
@@ -373,6 +382,7 @@ func DefaultGeneralConfig() GeneralConfig {
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
 		},
+		Restore:         boolPtr(true),
 		CompletedDecayS: 300,
 		AlwaysHooksForStatus: boolPtr(true),
 		Smoothing: SmoothingConfig{

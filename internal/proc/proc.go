@@ -96,7 +96,7 @@ func IsShellCommand(cmd string) bool {
 }
 
 // FindInTree walks a pane's process tree and returns the first matching descendant.
-func FindInTree(pt Table, panePID int, match func(Entry) bool, extractArgs func(string) string) (bool, string) {
+func FindInTree(pt Table, panePID int, match func(Entry) bool, extractArgs func(string) string) (bool, int, string) {
 	queue := []int{panePID}
 	for len(queue) > 0 {
 		current := queue[0]
@@ -106,14 +106,14 @@ func FindInTree(pt Table, panePID int, match func(Entry) bool, extractArgs func(
 			child := pt.Procs[childPID]
 			if match(child) {
 				if extractArgs == nil {
-					return true, ""
+					return true, child.PID, ""
 				}
-				return true, extractArgs(child.Args)
+				return true, child.PID, extractArgs(child.Args)
 			}
 			queue = append(queue, childPID)
 		}
 	}
-	return false, ""
+	return false, 0, ""
 }
 
 // ExtractArgsAfterBinary strips the binary name from a full command line

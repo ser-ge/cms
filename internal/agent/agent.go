@@ -79,6 +79,7 @@ type AgentStatus struct {
 	Branch     string
 	Mode       AgentModeKind
 	ModeLabel  string
+	ProcessPID int
 	Args       string
 	Source     StatusSource
 
@@ -134,4 +135,3 @@ func NormalizeParsed(status *AgentStatus) {
 		status.Activity = ActivityIdle
 	}
 }
-

@@ -13,6 +13,7 @@ import (
 	"github.com/serge/cms/internal/hook"
 	"github.com/serge/cms/internal/resume"
 	"github.com/serge/cms/internal/tmux"
+	"github.com/serge/cms/internal/trace"
 )
 
 // Watcher bridges tmux events to bubbletea messages.
@@ -37,7 +38,7 @@ type Watcher struct {
 
 	// Hook integration: when hooks report for a pane, suppress observer updates.
 	hookSeen     map[string]time.Time // paneID -> last hook event time
-	hookCh       chan hook.Event       // receives events from hook listener
+	hookCh       chan hook.Event      // receives events from hook listener
 	hookListener *hook.Listener
 
 	// Cached state for finder to read synchronously.
@@ -58,12 +59,14 @@ type Watcher struct {
 
 	// Transition smoothing: suppress flicker by holding the current state
 	// for a configurable delay before committing a transition.
-	smoothingCfg    config.GeneralConfig   // carries SmoothingMs()
-	smoothingTimers map[string]*time.Timer // paneID -> pending smoothing timer
+	smoothingCfg    config.GeneralConfig      // carries SmoothingMs()
+	smoothingTimers map[string]*time.Timer    // paneID -> pending smoothing timer
 	smoothingTarget map[string]agent.Activity // paneID -> target activity when timer fires
 
 	// Lifecycle.
 	stopCh chan struct{}
+
+	recorder trace.Recorder
 }
 
 const (
@@ -92,6 +95,7 @@ func New() *Watcher {
 		smoothingTimers: map[string]*time.Timer{},
 		smoothingTarget: map[string]agent.Activity{},
 		stopCh:          make(chan struct{}),
+		recorder:        trace.NopRecorder{},
 	}
 }
 
@@ -112,6 +116,14 @@ func (w *Watcher) ApplyConfig(cfg config.GeneralConfig) {
 func (w *Watcher) Start(send func(tea.Msg)) {
 	w.send = send
 	go w.bootstrap()
+}
+
+func (w *Watcher) SetRecorder(rec trace.Recorder) {
+	if rec == nil {
+		w.recorder = trace.NopRecorder{}
+		return
+	}
+	w.recorder = rec
 }
 
 // Stop shuts down the watcher.
@@ -231,6 +243,7 @@ func (w *Watcher) bootstrap() {
 	current, _ := tmux.FetchCurrentTarget()
 	agents := agent.DetectAll(sessions, pt)
 	debug.Logf("watcher: bootstrap sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
+	snapshotID := w.recorder.RecordTmuxState("bootstrap", sessions, current)
 
 	// Track which panes have a known agent and restore persisted timestamps.
 	var agentPaneIDs []string
@@ -272,6 +285,7 @@ func (w *Watcher) bootstrap() {
 	w.mu.Unlock()
 
 	w.updateCache(sessions, agents, current)
+	w.recorder.RecordIngress(trace.IngressBootstrapState, trace.BootstrapStatePayload{SnapshotID: snapshotID})
 	w.send(StateMsg{Sessions: sessions, Agents: agents, Current: current})
 
 	// Start control mode for event-driven updates.
@@ -320,6 +334,7 @@ func (w *Watcher) runEventLoop() {
 }
 
 func (w *Watcher) handleEvent(ev tmux.Event) {
+	w.recorder.RecordIngress(trace.IngressTmuxEvent, trace.TmuxEventPayload{Event: trace.NormalizeTmuxEvent(ev)})
 	switch ev.Kind {
 	case tmux.SessionCreated, tmux.SessionClosed,
 		tmux.WindowAdd, tmux.WindowClose,
@@ -344,7 +359,7 @@ func (w *Watcher) handleEvent(ev tmux.Event) {
 		// Pane produced output -- debounce then re-check agent status.
 		w.handleOutput(ev.PaneID)
 
-	// ClientDetached is handled directly in runEventLoop.
+		// ClientDetached is handled directly in runEventLoop.
 	}
 }
 
@@ -358,6 +373,12 @@ func (w *Watcher) refreshFullState() {
 	current, _ := tmux.FetchCurrentTarget()
 	agents := agent.DetectAll(sessions, pt)
 	debug.Logf("watcher: full refresh sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
+	snapshotID := w.recorder.RecordTmuxState("full_refresh", sessions, current)
+	w.recorder.RecordIngress(trace.IngressFullRefreshSnapshot, trace.FullRefreshSnapshotPayload{
+		SnapshotID: snapshotID,
+		Current:    trace.NormalizeCurrent(current),
+		Agents:     trace.NormalizeAgents(agents),
+	})
 
 	// Preserve hook-sourced agent state -- don't overwrite with observer data.
 	w.mu.Lock()
@@ -402,6 +423,7 @@ func (w *Watcher) runHookLoop() {
 
 // handleHookEvent translates a hook event into an agent status update.
 func (w *Watcher) handleHookEvent(ev hook.Event) {
+	w.recorder.RecordIngress(trace.IngressHookEvent, trace.HookEventPayload{Event: trace.NormalizeHookEvent(ev)})
 	paneID := ev.PaneID
 	if paneID == "" {
 		debug.Logf("watcher: hook event %s has no pane ID, skipping", ev.Kind)

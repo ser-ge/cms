@@ -54,7 +54,7 @@ func smartSwitchCmd(name string, priority []string, sessions []tmux.Session, age
 
 func openProjectCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		session.OpenProject(path)
+		session.OpenProject(path, true)
 		return projectOpenedMsg{Path: path}
 	}
 }
