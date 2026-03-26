@@ -7,16 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/git"
 )
-
-// tomlUnmarshal wraps toml.Unmarshal, ignoring errors for convenience
-// when loading optional config files.
-func tomlUnmarshal(data []byte, v any) {
-	toml.Unmarshal(data, v) //nolint:errcheck
-}
 
 // SanitizeBranch replaces characters that break filesystem paths.
 // "feature/auth" -> "feature-auth", "bug\fix" -> "bug-fix"
@@ -113,20 +106,7 @@ func IsBranchIntegrated(repoRoot, branch, target string) (bool, string) {
 // LoadProjectConfig reads .cms.toml. Searches repoRoot first, then
 // worktreeDir (for bare repos where the checkout is separate from the root).
 func LoadProjectConfig(repoRoot, worktreeDir string) config.ProjectConfig {
-	var proj config.ProjectConfig
-
-	for _, dir := range []string{repoRoot, worktreeDir} {
-		if dir == "" {
-			continue
-		}
-		path := filepath.Join(dir, ".cms.toml")
-		if data, err := os.ReadFile(path); err == nil {
-			tomlUnmarshal(data, &proj)
-			return proj
-		}
-	}
-
-	return proj
+	return config.LoadProjectConfig(repoRoot, worktreeDir)
 }
 
 // ResolveWorktreeConfig merges user config (from ~/.config/cms/config.toml)

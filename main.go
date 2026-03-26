@@ -127,6 +127,29 @@ func main() {
 		case "internal":
 			exitIfErr(runInternal(args[1:]))
 			return
+		case "session":
+			if len(os.Args) > 2 && os.Args[2] == "save" {
+				target, err := tmux.FetchCurrentTarget()
+				if err != nil || target.Session == "" {
+					fmt.Fprintln(os.Stderr, "error: no tmux session to save")
+					os.Exit(1)
+				}
+				// Resolve repo root from the current pane's working directory.
+				repoRoot := "."
+				if target.Session != "" {
+					if root, err := git.Cmd(".", "rev-parse", "--show-toplevel"); err == nil {
+						repoRoot = root
+					}
+				}
+				if err := session.SaveSnapshot(target.Session, repoRoot); err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "saved snapshot for session %q\n", target.Session)
+				return
+			}
+			fmt.Fprintln(os.Stderr, "usage: cms session save")
+			os.Exit(1)
 		}
 	}
 

@@ -179,10 +179,28 @@ type WorktreeConfig struct {
 	CommitCmd  string         `toml:"commit_cmd"` // LLM commit message command (e.g. "llm -m claude-haiku")
 }
 
+// SessionConfig holds session bootstrap and restore settings.
+// Loaded from per-repo .cms.toml [session].
+type SessionConfig struct {
+	Name      string              `toml:"name"`
+	Bootstrap string              `toml:"bootstrap"`
+	Mode      string              `toml:"mode"` // template_only | restore_only | template_then_restore
+	Attach    bool                `toml:"attach"`
+	Claude    SessionClaudeConfig `toml:"claude"`
+}
+
+// SessionClaudeConfig controls Claude Code session resumption.
+type SessionClaudeConfig struct {
+	Resume            bool   `toml:"resume"`
+	Command           string `toml:"command"`
+	OnlyIfPaneEmpty   bool   `toml:"only_if_pane_empty"`
+	OnlyInMarkedPanes bool   `toml:"only_in_marked_panes"`
+}
+
 // ProjectConfig is the per-repo config loaded from .cms.toml at the repo root.
-// Currently only holds worktree settings; extensible for future repo-level config.
 type ProjectConfig struct {
 	Worktree WorktreeConfig `toml:"worktree"`
+	Session  SessionConfig  `toml:"session"`
 }
 
 // WorktreeHook is a shell command that runs at a lifecycle point.
@@ -421,4 +439,23 @@ func WriteDefaultConfigFile() (string, error) {
 		return path, err
 	}
 	return path, nil
+}
+
+// LoadProjectConfig reads .cms.toml from the provided directories in order,
+// returning the first successfully parsed config. Missing files are ignored.
+func LoadProjectConfig(dirs ...string) ProjectConfig {
+	var proj ProjectConfig
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, ".cms.toml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		toml.Unmarshal(data, &proj) //nolint:errcheck
+		return proj
+	}
+	return proj
 }

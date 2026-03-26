@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/serge/cms/internal/agent"
+	"github.com/serge/cms/internal/config"
+	"github.com/serge/cms/internal/debug"
 	"github.com/serge/cms/internal/git"
 	"github.com/serge/cms/internal/tmux"
 )
@@ -151,20 +153,50 @@ func MovePane(srcPaneID, dstPaneID string) error {
 
 // OpenProject opens a project directory as a tmux session.
 // If a session for this directory already exists, switches to it.
-// Otherwise creates a new session and switches.
+// Otherwise tries, in order: template bootstrap, snapshot restore, plain create.
 // If the repo has linked worktrees, each becomes a tmux window.
 func OpenProject(path string) error {
+	projCfg := config.LoadProjectConfig(path)
 	name := NormalizeName(filepath.Base(path))
+	if projCfg.Session.Name != "" {
+		name = NormalizeName(projCfg.Session.Name)
+	}
 
 	if Exists(name) {
 		return Switch(name)
 	}
 
+	// 1. Template bootstrap (tmux source-file).
+	if projCfg.Session.Bootstrap != "" {
+		if err := OpenProjectFromTemplate(name, path, projCfg.Session); err != nil {
+			debug.Logf("session: template bootstrap failed: %v", err)
+			// Fall through to other methods.
+		} else {
+			return Switch(name)
+		}
+	}
+
+	// 2. Restore from saved snapshot.
+	restored, err := RestoreSnapshot(name, path)
+	if err != nil {
+		debug.Logf("session: snapshot restore failed: %v", err)
+	}
+	if restored {
+		if shouldRestore(projCfg.Session) {
+			resumeClaudePanes(name, path, projCfg.Session.Claude) // best-effort
+		}
+		return Switch(name)
+	}
+
+	// 3. Plain create with worktree windows.
 	if err := Create(name, path); err != nil {
 		return err
 	}
-
 	setupWorktreeWindows(name, path)
+
+	if shouldRestore(projCfg.Session) {
+		resumeClaudePanes(name, path, projCfg.Session.Claude) // best-effort
+	}
 
 	return Switch(name)
 }

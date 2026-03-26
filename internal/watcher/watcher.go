@@ -11,6 +11,7 @@ import (
 	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/debug"
 	"github.com/serge/cms/internal/hook"
+	"github.com/serge/cms/internal/resume"
 	"github.com/serge/cms/internal/tmux"
 )
 
@@ -414,6 +415,9 @@ func (w *Watcher) handleHookEvent(ev hook.Event) {
 		status.Running = true
 		status.Activity = agent.ActivityIdle
 		status.SessionID = ev.SessionID
+		if err := resume.SaveClaudeSession(paneID, ev.SessionID); err != nil {
+			debug.Logf("watcher: resume save failed pane=%s err=%v", paneID, err)
+		}
 		debug.Logf("watcher: hook session-start pane=%s session=%s", paneID, ev.SessionID)
 
 	case hook.Stop:
