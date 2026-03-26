@@ -78,7 +78,7 @@ command = "project-hook"
 		Hooks:     []config.WorktreeHook{{Command: "user-hook"}},
 	}
 
-	merged := ResolveWorktreeConfig(dir, userCfg)
+	merged := ResolveWorktreeConfig(dir, dir, userCfg)
 	if merged.BaseDir != "../project-wt" {
 		t.Errorf("base_dir should be project value, got %q", merged.BaseDir)
 	}
@@ -99,7 +99,7 @@ func TestResolveWorktreeConfig_UserFallback(t *testing.T) {
 		Hooks:     []config.WorktreeHook{{Command: "user-hook"}},
 	}
 
-	merged := ResolveWorktreeConfig(dir, userCfg)
+	merged := ResolveWorktreeConfig(dir, dir, userCfg)
 	if merged.BaseDir != "../user-wt" {
 		t.Errorf("base_dir should fall back to user, got %q", merged.BaseDir)
 	}
@@ -124,7 +124,7 @@ command = "project-hook"
 		Hooks:   []config.WorktreeHook{{Command: "user-hook"}},
 	}
 
-	merged := ResolveWorktreeConfig(dir, userCfg)
+	merged := ResolveWorktreeConfig(dir, dir, userCfg)
 	if merged.BaseDir != "../user-wt" {
 		t.Errorf("base_dir should stay as user value, got %q", merged.BaseDir)
 	}

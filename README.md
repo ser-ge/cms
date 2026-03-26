@@ -78,8 +78,6 @@ switch_priority = ["waiting", "idle", "default", "working"]
 escape_chord = "jj"
 escape_chord_ms = 250
 exclusions = []
-attached_last = true           # legacy — use [finder.sessions].demote_current
-last_session_first = true      # legacy — use [finder.sessions].promote_recent
 search_submodules = false
 search_paths = [
   { path = "~/projects", max_depth = 3 }
@@ -95,15 +93,16 @@ demote_current = true          # push active/current item to bottom
 promote_recent = false         # promote last-visited item to top
 promote_active = false         # sort active/open items first
 
-[finder.agents]
-# Agent-specific display settings (queue + session summaries).
-provider_order = ["claude", "codex"]
-state_order = ["idle", "working", "waiting"]
+# Queue urgency sort order (first = closest to input = highest priority).
+state_order = ["waiting", "completed", "working", "idle"]
+use_unseen = false             # unseen attention events boost queue ranking
+
+# Display settings for agent summaries (session descriptions + queue).
+display_provider_order = ["claude", "codex"]
+display_state_order = ["idle", "working", "completed", "waiting"]
 show_context_percentage = true
-# use_seen_in_ranking = false  # unseen attention events boost queue urgency
 
 [finder.active_indicator]
-# Visual indicator for active/open items in the picker.
 icon = "▪"                     # or "●", "◆", "→", etc.
 color = "2"                    # ANSI foreground color (green)
 # background = ""              # ANSI background color
@@ -113,12 +112,13 @@ color = "2"                    # ANSI foreground color (green)
 promote_recent = true          # last-visited session floats up
 
 # Per-section overrides — only specify what differs from global defaults.
+# [finder.queue]
+# state_order = ["waiting", "completed", "working", "idle"]
+# use_unseen = true
 # [finder.worktrees]
-# promote_active = true        # worktrees with tmux windows float up
+# promote_active = true
 # [finder.branches]
-# promote_active = true        # branches with worktrees float up
-# [finder.marks]
-# demote_current = false
+# promote_active = true
 ```
 
 ### Active indicator
@@ -307,7 +307,7 @@ main.go / debuglog.go              CLI entry + debug wiring
 
 internal/
   proc/         Process table + IsShellCommand
-  config/       Config types, FinderConfig, AgentDisplayConfig, TOML loading
+  config/       Config types, FinderConfig, PickerSortConfig, TOML loading
   git/          Git info, branch listing, worktree listing
   tmux/         Session/Window/Pane types, tmux commands, control mode
   agent/        Provider-neutral detection, Claude + Codex parsing

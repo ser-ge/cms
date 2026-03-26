@@ -26,7 +26,10 @@ type jumpCandidate struct {
 
 func main() {
 	initDebugLogger()
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		exitErr(err)
+	}
 	tui.InitStyles(cfg)
 
 	initial := tui.ScreenFinder
@@ -53,19 +56,14 @@ func main() {
 	}
 
 	// Parse flags before subcommand.
-	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
-		switch args[0] {
-		case "-s":
-			sections = []string{"sessions"}
-		case "-p":
-			sections = []string{"projects"}
-		case "-q":
-			sections = []string{"queue"}
-		case "-m":
-			sections = []string{"marks"}
-		default:
+	// Parse flags before subcommand.
+	// Single-letter flags compose: -s = sessions, -swq = sessions+worktrees+queue.
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") && len(args[0]) > 1 && args[0][1] != '-' {
+		parsed := parseShortFlags(args[0][1:])
+		if parsed == nil {
 			exitErr(fmt.Errorf("%s", unknownFlagMsg(args[0])))
 		}
+		sections = parsed
 		args = args[1:]
 	}
 
@@ -186,6 +184,36 @@ func main() {
 	if rm, ok := result.(tui.RootModel); ok && rm.PostAction() != nil {
 		exitIfErr(executePostAction(rm.PostAction()))
 	}
+}
+
+// shortFlagMap maps single-letter flags to section names.
+var shortFlagMap = map[byte]string{
+	's': "sessions",
+	'p': "projects",
+	'q': "queue",
+	'm': "marks",
+	'w': "worktrees",
+	'b': "branches",
+	'W': "windows",
+	'P': "panes",
+}
+
+// parseShortFlags expands a string of single-letter flags into section names.
+// Returns nil if any letter is unknown. E.g. "swq" → ["sessions","worktrees","queue"].
+func parseShortFlags(letters string) []string {
+	seen := map[string]bool{}
+	var result []string
+	for i := 0; i < len(letters); i++ {
+		section, ok := shortFlagMap[letters[i]]
+		if !ok {
+			return nil
+		}
+		if !seen[section] {
+			seen[section] = true
+			result = append(result, section)
+		}
+	}
+	return result
 }
 
 // parseSections splits a comma-separated string into section names.

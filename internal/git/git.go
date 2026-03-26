@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -144,4 +145,13 @@ func Cmd(dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// RunInteractive runs a git command attached to the current terminal.
+func RunInteractive(dir string, args ...string) error {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

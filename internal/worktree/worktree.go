@@ -108,12 +108,23 @@ func LoadProjectConfig(repoRoot string) config.ProjectConfig {
 	return config.LoadProjectConfig(repoRoot)
 }
 
-// ResolveWorktreeConfig merges user config (from ~/.config/cms/config.toml)
-// with per-repo project config (from .cms.toml at repoRoot). Project overrides
-// user: if the project sets hooks, they replace user hooks entirely.
-// Scalars (base_dir, commit_cmd) use project value if non-empty.
-func ResolveWorktreeConfig(repoRoot string, userCfg *config.WorktreeConfig) config.WorktreeConfig {
-	proj := LoadProjectConfig(repoRoot)
+// ResolveWorktreeConfig merges user config with per-repo project config.
+// When cwd is inside the repo, prefer .cms.toml discovered from that directory;
+// otherwise fall back to the repo root.
+func ResolveWorktreeConfig(repoRoot, cwd string, userCfg *config.WorktreeConfig) config.WorktreeConfig {
+	projDir := repoRoot
+	if cwd != "" {
+		projDir = cwd
+	}
+	proj := LoadProjectConfig(projDir)
+	if projDir != repoRoot {
+		if _, err := os.Stat(filepath.Join(projDir, ".cms.toml")); os.IsNotExist(err) {
+			proj = LoadProjectConfig(repoRoot)
+		}
+	}
+	if projDir == "" {
+		proj = LoadProjectConfig(repoRoot)
+	}
 	merged := *userCfg
 
 	p := proj.Worktree

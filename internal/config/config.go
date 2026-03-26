@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,8 +64,6 @@ type GeneralConfig struct {
 	EscapeChord      string       `toml:"escape_chord"`
 	EscapeChordMs    int          `toml:"escape_chord_ms"`
 	Exclusions       []string     `toml:"exclusions"`
-	AttachedLast     bool         `toml:"attached_last"`
-	LastSessionFirst bool         `toml:"last_session_first"`
 	SearchSubmodules bool         `toml:"search_submodules"`
 	SearchPaths      []SearchPath `toml:"search_paths"`
 
@@ -123,21 +122,14 @@ type DashboardConfig struct {
 	ShowContextPercentage bool     `toml:"show_context_percentage"`
 }
 
-// PickerSortConfig controls sort behavior for a single picker type.
-// nil booleans inherit from FinderConfig defaults.
+// PickerSortConfig controls sort behavior for a single picker/section type.
+// nil values inherit from FinderConfig defaults.
 type PickerSortConfig struct {
-	DemoteCurrent *bool `toml:"demote_current"`
-	PromoteRecent *bool `toml:"promote_recent"`
-	PromoteActive *bool `toml:"promote_active"` // sort active/open items first
-}
-
-// AgentDisplayConfig holds agent-specific display settings used by queue
-// and session agent summaries.
-type AgentDisplayConfig struct {
-	ProviderOrder         []string `toml:"provider_order"`
-	StateOrder            []string `toml:"state_order"`
-	ShowContextPercentage bool     `toml:"show_context_percentage"`
-	UseSeenInRanking      bool     `toml:"use_seen_in_ranking"` // unseen attention events boost queue ranking
+	DemoteCurrent *bool    `toml:"demote_current"`
+	PromoteRecent *bool    `toml:"promote_recent"`
+	PromoteActive *bool    `toml:"promote_active"`  // sort active/open items first
+	StateOrder    []string `toml:"state_order"`      // queue urgency order (e.g. ["waiting","completed","working","idle"])
+	UseUnseen     *bool    `toml:"use_unseen"`       // unseen attention events boost queue ranking
 }
 
 // ActiveIndicatorConfig controls the visual indicator for active/open items.
@@ -152,13 +144,17 @@ type FinderConfig struct {
 	// What appears in bare `cms` and in what order.
 	Include []string `toml:"include"`
 
-	// Global sort defaults (per-picker sections override).
-	DemoteCurrent bool `toml:"demote_current"`
-	PromoteRecent bool `toml:"promote_recent"`
-	PromoteActive bool `toml:"promote_active"` // sort active/open items first
+	// Global sort defaults (per-section overrides below).
+	DemoteCurrent bool     `toml:"demote_current"`
+	PromoteRecent bool     `toml:"promote_recent"`
+	PromoteActive bool     `toml:"promote_active"` // sort active/open items first
+	StateOrder    []string `toml:"state_order"`     // queue urgency order
+	UseUnseen     bool     `toml:"use_unseen"`      // unseen attention events boost queue ranking
 
-	// Agent display (queue + summaries).
-	Agents AgentDisplayConfig `toml:"agents"`
+	// Display settings for agent summaries (session descriptions + queue).
+	DisplayProviderOrder  []string `toml:"display_provider_order"`
+	DisplayStateOrder     []string `toml:"display_state_order"`
+	ShowContextPercentage bool     `toml:"show_context_percentage"`
 
 	// Active item visual indicator.
 	ActiveIndicator ActiveIndicatorConfig `toml:"active_indicator"`
@@ -166,6 +162,7 @@ type FinderConfig struct {
 	// Per-section sort overrides.
 	Sessions  PickerSortConfig `toml:"sessions"`
 	Projects  PickerSortConfig `toml:"projects"`
+	Queue     PickerSortConfig `toml:"queue"`
 	Worktrees PickerSortConfig `toml:"worktrees"`
 	Branches  PickerSortConfig `toml:"branches"`
 	Windows   PickerSortConfig `toml:"windows"`
@@ -200,12 +197,31 @@ func (f FinderConfig) ShouldPromoteActive(pickerType string) bool {
 	return f.PromoteActive
 }
 
+// GetStateOrder returns the queue urgency sort order for the given section.
+func (f FinderConfig) GetStateOrder(pickerType string) []string {
+	if psc := f.pickerSort(pickerType); len(psc.StateOrder) > 0 {
+		return psc.StateOrder
+	}
+	return f.StateOrder
+}
+
+// ShouldUseUnseen returns whether unseen attention events should boost
+// queue ranking for the given section.
+func (f FinderConfig) ShouldUseUnseen(pickerType string) bool {
+	if psc := f.pickerSort(pickerType); psc.UseUnseen != nil {
+		return *psc.UseUnseen
+	}
+	return f.UseUnseen
+}
+
 func (f FinderConfig) pickerSort(pickerType string) PickerSortConfig {
 	switch pickerType {
 	case "sessions":
 		return f.Sessions
 	case "projects":
 		return f.Projects
+	case "queue":
+		return f.Queue
 	case "worktrees":
 		return f.Worktrees
 	case "branches":
@@ -331,11 +347,12 @@ func DefaultFinderConfig() FinderConfig {
 		Include:       []string{"sessions", "queue", "worktrees", "marks", "projects"},
 		DemoteCurrent: true,
 		PromoteRecent: false,
-		Agents: AgentDisplayConfig{
-			ProviderOrder:         []string{"claude", "codex"},
-			StateOrder:            []string{"idle", "working", "waiting"},
-			ShowContextPercentage: true,
-		},
+		StateOrder:    []string{"waiting", "completed", "working", "idle"},
+
+		DisplayProviderOrder:  []string{"claude", "codex"},
+		DisplayStateOrder:     []string{"idle", "working", "completed", "waiting"},
+		ShowContextPercentage: true,
+
 		ActiveIndicator: ActiveIndicatorConfig{
 			Icon:  "\u25aa", // ▪
 			Color: "2",      // green
@@ -352,8 +369,6 @@ func DefaultGeneralConfig() GeneralConfig {
 		EscapeChord:      "jj",
 		EscapeChordMs:    250,
 		Exclusions:       []string{},
-		AttachedLast:     true,
-		LastSessionFirst: true,
 		SearchSubmodules: false,
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
@@ -380,17 +395,26 @@ func DefaultConfig() Config {
 
 // Load reads config from ~/.config/cms/config.toml.
 // Returns DefaultConfig if the file doesn't exist.
-func Load() Config {
+// Returns an error if the config is invalid or contains unknown keys.
+func Load() (Config, error) {
 	path := configPath()
 	cfg := DefaultConfig()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return cfg
+		return cfg, nil
 	}
 
-	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return DefaultConfig()
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
+		return cfg, fmt.Errorf("%s: %w", path, err)
+	}
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		var keys []string
+		for _, k := range undecoded {
+			keys = append(keys, k.String())
+		}
+		return cfg, fmt.Errorf("%s: unknown config keys: %s", path, strings.Join(keys, ", "))
 	}
 
 	// Expand ~ in all search paths.
@@ -403,7 +427,7 @@ func Load() Config {
 
 	cfg.normalize()
 
-	return cfg
+	return cfg, nil
 }
 
 func defaultStr(field *string, def string) {
@@ -438,18 +462,11 @@ func (c *Config) normalize() {
 	defaultStr(&c.Dashboard.WindowHeaders, dd.WindowHeaders)
 
 	df := DefaultFinderConfig()
-	defaultSlice(&c.Finder.Agents.ProviderOrder, df.Agents.ProviderOrder)
-	defaultSlice(&c.Finder.Agents.StateOrder, df.Agents.StateOrder)
 	defaultSlice(&c.Finder.Include, df.Include)
+	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
+	defaultSlice(&c.Finder.DisplayProviderOrder, df.DisplayProviderOrder)
+	defaultSlice(&c.Finder.DisplayStateOrder, df.DisplayStateOrder)
 	defaultStr(&c.Finder.ActiveIndicator.Icon, df.ActiveIndicator.Icon)
-
-	// Migrate legacy fields to new finder sort config.
-	if c.General.LastSessionFirst && c.Finder.Sessions.PromoteRecent == nil {
-		c.Finder.Sessions.PromoteRecent = boolPtr(true)
-	}
-	if c.General.AttachedLast && c.Finder.Sessions.DemoteCurrent == nil {
-		c.Finder.Sessions.DemoteCurrent = boolPtr(true)
-	}
 
 	dg := DefaultGeneralConfig()
 	defaultSlice(&c.General.SearchPaths, dg.SearchPaths)
@@ -478,7 +495,16 @@ func ExpandHome(path string) string {
 
 func DefaultConfigTOML() ([]byte, error) {
 	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(DefaultConfig()); err != nil {
+	out := struct {
+		General GeneralConfig `toml:"general"`
+		Finder  FinderConfig  `toml:"finder"`
+	}{
+		General: DefaultGeneralConfig(),
+		Finder:  DefaultFinderConfig(),
+	}
+	enc := toml.NewEncoder(&buf)
+	enc.Indent = ""
+	if err := enc.Encode(out); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

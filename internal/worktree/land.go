@@ -99,8 +99,11 @@ func Land(args []string) error {
 		return err
 	}
 
-	cfg := config.Load()
-	resolved := ResolveWorktreeConfig(root, &cfg.Worktree)
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	resolved := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
 	wtCfg := &resolved
 	mainWt, _ := FindMainWorktree(root)
 
@@ -160,7 +163,7 @@ func Land(args []string) error {
 	// Handle --continue: resume from step 6 (rebase --continue, then merge).
 	if opts.Continue {
 		fmt.Fprintf(os.Stderr, "%s rebase\n", green("continuing"))
-		if _, err := git.Cmd(cwd, "rebase", "--continue"); err != nil {
+		if err := git.RunInteractive(cwd, "rebase", "--continue"); err != nil {
 			return fmt.Errorf("rebase --continue failed: %w\nresolve remaining conflicts and run: cms land --continue", err)
 		}
 		return landMergeAndCleanup(cwd, root, currentBranch, target, mainWt, currentWt, targetWt, opts, wtCfg)

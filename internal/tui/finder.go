@@ -87,7 +87,7 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, wi
 	want := sectionSet(sections)
 
 	// Cache the last session name once at init (avoid subprocess per rebuild).
-	if cfg.General.LastSessionFirst {
+	if cfg.Finder.ShouldPromoteRecent("sessions") {
 		m.lastSessionName = tmux.FetchLastSession()
 	}
 
@@ -296,12 +296,13 @@ func currentPaneWorkingDir(sessions []tmux.Session, current tmux.CurrentTarget) 
 }
 
 type providerSummary struct {
-	total   int
-	working int
-	waiting int
-	idle    int
-	maxCtx  int
-	hasCtx  bool
+	total     int
+	working   int
+	waiting   int
+	completed int
+	idle      int
+	maxCtx    int
+	hasCtx    bool
 }
 
 // buildSessionItems populates session picker items from raw session data.
@@ -333,7 +334,7 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 	if agents == nil {
 		return ""
 	}
-	if len(m.cfg.Finder.Agents.ProviderOrder) == 0 {
+	if len(m.cfg.Finder.DisplayProviderOrder) == 0 {
 		return ""
 	}
 
@@ -355,6 +356,8 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 				s.working++
 			case agent.ActivityWaitingInput:
 				s.waiting++
+			case agent.ActivityCompleted:
+				s.completed++
 			default:
 				s.idle++
 			}
@@ -366,7 +369,7 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 	}
 
 	var parts []string
-	for _, provider := range orderedProviders(m.cfg.Finder.Agents.ProviderOrder) {
+	for _, provider := range orderedProviders(m.cfg.Finder.DisplayProviderOrder) {
 		s := summaries[provider]
 		if s == nil {
 			continue
@@ -374,15 +377,15 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 		if s.total == 0 {
 			continue
 		}
-		parts = append(parts, renderProviderSummary(provider, *s, m.cfg.Finder.Agents))
+		parts = append(parts, renderProviderSummary(provider, *s, m.cfg.Finder))
 	}
 	return JoinParts(parts)
 }
 
-func renderProviderSummary(provider agent.Provider, s providerSummary, cfg config.AgentDisplayConfig) string {
+func renderProviderSummary(provider agent.Provider, s providerSummary, cfg config.FinderConfig) string {
 	label := ProviderAccent(provider).Render(provider.String())
 	var states []string
-	for _, state := range cfg.StateOrder {
+	for _, state := range cfg.DisplayStateOrder {
 		switch state {
 		case "total":
 			states = append(states, ProviderAccent(provider).Render(fmt.Sprintf("%d", s.total)))
@@ -393,6 +396,10 @@ func renderProviderSummary(provider agent.Provider, s providerSummary, cfg confi
 		case "working":
 			if s.working > 0 {
 				states = append(states, workingStyle.Render(fmt.Sprintf("\u26a1%d", s.working)))
+			}
+		case "completed":
+			if s.completed > 0 {
+				states = append(states, waitingStyle.Render(fmt.Sprintf("✓%d", s.completed)))
 			}
 		case "waiting":
 			if s.waiting > 0 {
@@ -460,7 +467,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 
 	case watcher.FocusChangedMsg:
 		// User switched session -- refresh cached last session name.
-		if m.cfg.General.LastSessionFirst {
+		if m.cfg.Finder.ShouldPromoteRecent("sessions") {
 			m.lastSessionName = tmux.FetchLastSession()
 		}
 		m.rebuildPicker()
@@ -980,6 +987,19 @@ func (m *finderModel) buildPaneItems() {
 
 // buildQueueItems constructs urgency-sorted agent pane items for the queue view.
 // Ported from the former queueModel.rebuildPicker().
+// stateRank returns the sort priority for an activity based on the configured
+// state order. Lower rank = closer to input (higher priority). States not in
+// the order list get max rank.
+func stateRank(a agent.Activity, order []string) int {
+	name := a.String()
+	for i, s := range order {
+		if s == name {
+			return i
+		}
+	}
+	return len(order)
+}
+
 func (m *finderModel) buildQueueItems() {
 	m.queueItems = nil
 	m.queueIdx = nil
@@ -999,6 +1019,9 @@ func (m *finderModel) buildQueueItems() {
 			unseenReason[ev.PaneID] = ev.Reason
 		}
 	}
+
+	stateOrder := m.cfg.Finder.GetStateOrder("queue")
+	useUnseen := m.cfg.Finder.ShouldUseUnseen("queue")
 
 	type queueItem struct {
 		item     PickerItem
@@ -1046,21 +1069,10 @@ func (m *finderModel) buildQueueItems() {
 				unseen := unseenSet[pane.ID]
 				reason, hasReason := unseenReason[pane.ID]
 
-				// Sort key: unseen waiting (0), unseen finished (1), working (2), idle (3).
-				sortKey := 3
-				if unseen && hasReason && m.cfg.Finder.Agents.UseSeenInRanking {
+				// Sort key from state_order config (lower = closer to input).
+				sortKey := stateRank(cs.Activity, stateOrder)
+				if unseen && hasReason && useUnseen {
 					sortKey = int(reason)
-				} else {
-					switch cs.Activity {
-					case agent.ActivityWaitingInput:
-						sortKey = 0
-					case agent.ActivityCompleted:
-						sortKey = 1
-					case agent.ActivityWorking:
-						sortKey = 2
-					case agent.ActivityIdle:
-						sortKey = 3
-					}
 				}
 
 				var sortTime int64

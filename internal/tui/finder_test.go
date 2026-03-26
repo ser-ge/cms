@@ -12,7 +12,10 @@ import (
 )
 
 func TestFinderFlow(t *testing.T) {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Skipf("config error: %v", err)
+	}
 	fmt.Printf("Config search paths: %+v\n", cfg.General.SearchPaths)
 
 	t0 := time.Now()

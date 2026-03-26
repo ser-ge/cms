@@ -69,7 +69,10 @@ func TestRenderHarnessLive(t *testing.T) {
 		t.Skip("set CMS_LIVE_HARNESS=1 to print live finder/dashboard render output")
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	InitStyles(cfg)
 	sessions, pt, err := tmux.FetchState()
 	if err != nil {
@@ -224,7 +227,7 @@ func TestRenderHarnessProviderSummaryIncludesZeroContext(t *testing.T) {
 		idle:   1,
 		maxCtx: 0,
 		hasCtx: true,
-	}, cfg.Finder.Agents)
+	}, cfg.Finder)
 	if !strings.Contains(out, "0%") {
 		t.Fatalf("summary %q missing 0%% context", out)
 	}
@@ -235,15 +238,15 @@ func TestRenderHarnessFinderSummaryConfigVariants(t *testing.T) {
 	InitStyles(cfg)
 
 	totalOnly := cfg
-	totalOnly.Finder.Agents.StateOrder = []string{"total"}
-	totalOnly.Finder.Agents.ShowContextPercentage = false
-	out := renderProviderSummary(agent.ProviderCodex, providerSummary{total: 3, idle: 1, working: 1, waiting: 1, maxCtx: 37, hasCtx: true}, totalOnly.Finder.Agents)
+	totalOnly.Finder.DisplayStateOrder = []string{"total"}
+	totalOnly.Finder.ShowContextPercentage = false
+	out := renderProviderSummary(agent.ProviderCodex, providerSummary{total: 3, idle: 1, working: 1, waiting: 1, maxCtx: 37, hasCtx: true}, totalOnly.Finder)
 	if !strings.Contains(out, "3") || strings.Contains(out, "37%") {
 		t.Fatalf("total-only summary = %q, want total without context", out)
 	}
 
 	noProviders := cfg
-	noProviders.Finder.Agents.ProviderOrder = []string{}
+	noProviders.Finder.DisplayProviderOrder = []string{}
 	m := finderModel{cfg: noProviders}
 	if got := m.agentSummary(harnessSessions()[0], harnessAgents()); got != "" {
 		t.Fatalf("agentSummary with no providers = %q, want empty", got)

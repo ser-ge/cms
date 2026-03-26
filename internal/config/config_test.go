@@ -13,10 +13,14 @@ func TestDefaultConfigTOML(t *testing.T) {
 		t.Fatalf("DefaultConfigTOML: %v", err)
 	}
 	text := string(data)
-	for _, section := range []string{"[general]", "[dashboard]", "[finder]", "[icons]", "[worktree]"} {
-		if !strings.Contains(text, section) {
-			t.Fatalf("default config missing %s: %q", section, text)
-		}
+	if !strings.Contains(text, "[general]") {
+		t.Fatalf("default config missing [general]: %q", text)
+	}
+	if !strings.Contains(text, "[finder]") {
+		t.Fatalf("default config missing [finder]: %q", text)
+	}
+	if strings.Contains(text, "[dashboard]") || strings.Contains(text, "[icons]") {
+		t.Fatalf("default config should only expose [general] and [finder], got %q", text)
 	}
 }
 
