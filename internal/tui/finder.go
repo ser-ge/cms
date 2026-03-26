@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/config"
@@ -310,25 +311,66 @@ type providerSummary struct {
 func (m *finderModel) buildSessionItems(agents map[string]agent.AgentStatus) {
 	m.sessions = nil
 	m.sessIdx = nil
+	stateOrder := m.cfg.Finder.GetStateOrder("sessions")
 	for _, sess := range m.sessData {
-		desc := fmt.Sprintf("%d windows", len(sess.Windows))
-		if cs := m.agentSummary(sess, agents); cs != "" {
-			desc += " \u00b7 " + cs
+		// Count agents per activity state.
+		stateCounts := map[agent.Activity]int{}
+		var activities []agent.Activity
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				if cs, ok := agents[pane.ID]; ok && cs.Running {
+					stateCounts[cs.Activity]++
+					activities = append(activities, cs.Activity)
+				}
+			}
+		}
+
+		var parts []string
+		parts = append(parts, fmt.Sprintf("%dw", len(sess.Windows)))
+		if counts := renderStateCounts(stateCounts); counts != "" {
+			parts = append(parts, counts)
 		}
 		if sess.Attached {
-			desc += " \u00b7 attached"
+			parts = append(parts, "attached")
 		}
+		desc := JoinParts(parts)
+
+		// Icon color: most urgent agent activity, or dim.
+		iconStyle := dimStyle
+		if len(activities) > 0 {
+			iconStyle = ActivityStyle(MostUrgentActivity(activities, stateOrder))
+		}
+
 		m.sessions = append(m.sessions, PickerItem{
 			Title:       sess.Name,
 			Description: desc,
 			FilterValue: sess.Name,
 			Active:      sess.Attached,
+			Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Sessions, iconStyle),
 		})
 		m.sessIdx = append(m.sessIdx, finderEntry{
 			kind:        KindSession,
 			sessionName: sess.Name,
 		})
 	}
+}
+
+// renderStateCounts renders non-zero activity counts as styled text.
+func renderStateCounts(counts map[agent.Activity]int) string {
+	// Order: waiting, completed, working, idle (matches default state_order).
+	order := []agent.Activity{
+		agent.ActivityWaitingInput,
+		agent.ActivityCompleted,
+		agent.ActivityWorking,
+		agent.ActivityIdle,
+	}
+	var parts []string
+	for _, a := range order {
+		if n := counts[a]; n > 0 {
+			parts = append(parts, ActivityStyle(a).Render(fmt.Sprintf("%d %s", n, a.String())))
+		}
+	}
+	return JoinParts(parts)
 }
 
 func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.AgentStatus) string {
@@ -478,18 +520,21 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.projects = nil
 		m.projIdx = nil
 		for _, p := range msg.projects {
-			desc := ShortenHome(p.Path)
+			var parts []string
+			parts = append(parts, ShortenHome(p.Path))
 			if p.Git.Branch != "" {
 				g := p.Git.Branch
 				if p.Git.Dirty {
 					g += "*"
 				}
-				desc += " \u00b7 " + g
+				parts = append(parts, g)
 			}
+			// Icon: dim by default; Active set later by filteredProjectItems.
 			m.projects = append(m.projects, PickerItem{
 				Title:       p.Name,
-				Description: desc,
+				Description: JoinParts(parts),
 				FilterValue: p.Name + " " + p.Path,
+				Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Projects, dimStyle),
 			})
 			m.projIdx = append(m.projIdx, finderEntry{
 				kind:        KindProject,
@@ -521,11 +566,13 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 					desc += " [merged: " + reason + "]"
 				}
 			}
+			// Icon: dim by default; Active updated later by worktreeItemsWithOpenStatus.
 			m.worktreeItems = append(m.worktreeItems, PickerItem{
 				Title:       branch,
 				Description: desc,
 				FilterValue: branch + " " + wt.Path,
 				Active:      wt.IsMain,
+				Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, dimStyle),
 			})
 			m.worktreeIdx = append(m.worktreeIdx, finderEntry{
 				kind:           KindWorktree,
@@ -546,11 +593,16 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			if hasWT {
 				desc = "has worktree"
 			}
+			iconStyle := dimStyle
+			if hasWT {
+				iconStyle = workingStyle
+			}
 			m.branchItems = append(m.branchItems, PickerItem{
 				Title:       branch,
 				Description: desc,
 				FilterValue: branch,
 				Active:      hasWT,
+				Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Branches, iconStyle),
 			})
 			m.branchIdx = append(m.branchIdx, finderEntry{
 				kind:           KindBranch,
@@ -570,11 +622,16 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			if !alive {
 				desc += " (dead)"
 			}
+			iconStyle := dimStyle
+			if alive {
+				iconStyle = workingStyle
+			}
 			m.markItems = append(m.markItems, PickerItem{
 				Title:       label,
 				Description: desc,
 				FilterValue: label + " " + mk.Session + " " + mk.Window,
 				Active:      alive,
+				Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Marks, iconStyle),
 			})
 			m.markIdx = append(m.markIdx, finderEntry{
 				kind:      KindMark,
@@ -685,18 +742,38 @@ func (m *finderModel) rebuildPicker() {
 	var items []PickerItem
 	var entries []finderEntry
 
-	// Determine which sections to include.
-	// Dedicated modes show their single type; FinderAll uses config include order.
-	sections := m.activeSections()
+	// Track section boundaries for per-section title padding.
+	type sectionRange struct{ start, end int }
+	var ranges []sectionRange
 
+	sections := m.activeSections()
 	for _, section := range sections {
+		startIdx := len(items)
 		si, se := m.sectionItems(section)
 		items = append(items, si...)
 		entries = append(entries, se...)
+		ranges = append(ranges, sectionRange{startIdx, len(items)})
+	}
+
+	// Pad titles within each section for columnar alignment.
+	for _, r := range ranges {
+		maxW := 0
+		for i := r.start; i < r.end; i++ {
+			if w := lipgloss.Width(items[i].Title); w > maxW {
+				maxW = w
+			}
+		}
+		for i := r.start; i < r.end; i++ {
+			if w := lipgloss.Width(items[i].Title); w < maxW {
+				items[i].Title += strings.Repeat(" ", maxW-w)
+			}
+		}
 	}
 
 	m.entries = entries
 	m.picker = m.picker.resetWith(items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
+	m.picker.width = m.width
+	m.picker.height = m.height
 }
 
 // activeSections returns which item type sections to include.
@@ -879,6 +956,7 @@ func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry
 		for openDir := range openPaths {
 			if strings.HasPrefix(openDir, wtPath) {
 				items[i].Active = true
+				items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, workingStyle)
 				break
 			}
 		}
@@ -905,6 +983,9 @@ func (m *finderModel) filteredProjectItems() ([]PickerItem, []finderEntry) {
 		}
 		item := p
 		item.Active = isOpen
+		if isOpen {
+			item.Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Projects, workingStyle)
+		}
 		items = append(items, item)
 		entries = append(entries, m.projIdx[i])
 	}
@@ -948,26 +1029,27 @@ func (m *finderModel) filteredBranchItems() ([]PickerItem, []finderEntry) {
 func (m *finderModel) buildWindowItems() {
 	m.windowItems = nil
 	m.windowIdx = nil
+	stateOrder := m.cfg.Finder.GetStateOrder("windows")
 	for _, sess := range m.sessData {
 		for _, win := range sess.Windows {
 			title := fmt.Sprintf("%s:%s", sess.Name, win.Name)
-			desc := fmt.Sprintf("%d panes", len(win.Panes))
 
-			// Summarize agent activity in this window.
-			var agentParts []string
+			// Count agents per activity state in this window.
+			stateCounts := map[agent.Activity]int{}
+			var activities []agent.Activity
 			for _, pane := range win.Panes {
 				if cs, ok := m.agentData[pane.ID]; ok && cs.Running {
-					agentParts = append(agentParts, cs.Provider.String()+" "+RenderActivity(cs.Activity))
+					stateCounts[cs.Activity]++
+					activities = append(activities, cs.Activity)
 				}
 			}
-			if len(agentParts) > 0 {
-				desc += " · " + JoinParts(agentParts)
-			}
 
-			// Use first pane's working dir for context.
-			if len(win.Panes) > 0 {
-				desc += " · " + ShortenHome(win.Panes[0].WorkingDir)
+			var parts []string
+			parts = append(parts, fmt.Sprintf("%dp", len(win.Panes)))
+			if counts := renderStateCounts(stateCounts); counts != "" {
+				parts = append(parts, counts)
 			}
+			desc := JoinParts(parts)
 
 			// Target the first pane in the window for switching.
 			var paneID string
@@ -975,11 +1057,18 @@ func (m *finderModel) buildWindowItems() {
 				paneID = win.Panes[0].ID
 			}
 
+			// Icon color: most urgent agent activity, or dim.
+			iconStyle := dimStyle
+			if len(activities) > 0 {
+				iconStyle = ActivityStyle(MostUrgentActivity(activities, stateOrder))
+			}
+
 			m.windowItems = append(m.windowItems, PickerItem{
 				Title:       title,
 				Description: desc,
 				FilterValue: sess.Name + " " + win.Name,
-				Active:      len(agentParts) > 0,
+				Active:      len(activities) > 0,
+				Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Windows, iconStyle),
 			})
 			m.windowIdx = append(m.windowIdx, finderEntry{
 				kind:   KindWindow,
@@ -991,41 +1080,124 @@ func (m *finderModel) buildWindowItems() {
 }
 
 // buildPaneItems populates pane picker items from session data.
+// Agent panes get columnar descriptions: path  provider  context%  activity  mode.
 func (m *finderModel) buildPaneItems() {
 	m.paneItems = nil
 	m.paneIdx = nil
+
+	// First pass: collect items and find max path width for alignment.
+	type paneEntry struct {
+		title, filterVal string
+		path             string
+		cs               agent.AgentStatus
+		hasAgent         bool
+		command          string
+		paneID           string
+	}
+	var pending []paneEntry
+
 	for _, sess := range m.sessData {
 		for _, win := range sess.Windows {
 			for _, pane := range win.Panes {
 				title := fmt.Sprintf("%s:%s.%d", sess.Name, win.Name, pane.Index)
-				desc := ShortenHome(pane.WorkingDir)
-				cs, hasRunning := m.agentData[pane.ID]
-				hasRunning = hasRunning && cs.Running
-				if hasRunning {
-					desc += " · " + cs.Provider.String() + " " + RenderActivity(cs.Activity)
-				} else if pane.Command != "" {
-					desc += " · " + pane.Command
-				}
-				m.paneItems = append(m.paneItems, PickerItem{
-					Title:       title,
-					Description: desc,
-					FilterValue: sess.Name + " " + win.Name + " " + pane.Command + " " + pane.WorkingDir,
-					Active:      hasRunning,
-				})
-				m.paneIdx = append(m.paneIdx, finderEntry{
-					kind:   KindPane,
-					paneID: pane.ID,
+				cs, hasAgent := m.agentData[pane.ID]
+				hasAgent = hasAgent && cs.Running
+				pending = append(pending, paneEntry{
+					title:    title,
+					filterVal: sess.Name + " " + win.Name + " " + pane.Command + " " + pane.WorkingDir,
+					path:     ShortenHome(pane.WorkingDir),
+					cs:       cs,
+					hasAgent: hasAgent,
+					command:  pane.Command,
+					paneID:   pane.ID,
 				})
 			}
 		}
 	}
+
+	// Find max path width for columnar alignment.
+	maxPathW := 0
+	for _, pe := range pending {
+		if w := len(pe.path); w > maxPathW {
+			maxPathW = w
+		}
+	}
+
+	for _, pe := range pending {
+		var desc string
+		iconStyle := dimStyle
+
+		if pe.hasAgent {
+			iconStyle = ActivityStyle(pe.cs.Activity)
+			desc = buildPaneDescription(pe.path, pe.cs, maxPathW)
+		} else {
+			paddedPath := fmt.Sprintf("%-*s", maxPathW, pe.path)
+			if pe.command != "" {
+				desc = paddedPath + "  " + pe.command
+			} else {
+				desc = pe.path
+			}
+		}
+
+		m.paneItems = append(m.paneItems, PickerItem{
+			Title:       pe.title,
+			Description: desc,
+			FilterValue: pe.filterVal,
+			Active:      pe.hasAgent,
+			Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Panes, iconStyle),
+		})
+		m.paneIdx = append(m.paneIdx, finderEntry{
+			kind:   KindPane,
+			paneID: pe.paneID,
+		})
+	}
 	m.hasPane = true
+}
+
+// buildPaneDescription returns a columnar description for an agent pane:
+// path  provider  context%  activity  mode
+func buildPaneDescription(path string, cs agent.AgentStatus, maxPathW int) string {
+	const (
+		providerW = 6
+		contextW  = 4
+		activityW = 9
+		modeW     = 15
+	)
+
+	paddedPath := fmt.Sprintf("%-*s", maxPathW, path)
+
+	provider := ""
+	if cs.Provider != agent.ProviderUnknown {
+		provider = cs.Provider.String()
+	}
+
+	context := ""
+	if cs.ContextSet {
+		context = fmt.Sprintf("%d%%", cs.ContextPct)
+	}
+
+	activity := RenderActivity(cs.Activity)
+	activity += strings.Repeat(" ", max(0, activityW-len(cs.Activity.String())))
+
+	mode := ""
+	modePad := ""
+	if cs.ModeLabel != "" {
+		mode = RenderMode(cs)
+		modePad = strings.Repeat(" ", max(0, modeW-len(cs.ModeLabel)))
+	}
+
+	return fmt.Sprintf("%s  %-*s  %*s  %s  %s%s",
+		paddedPath,
+		providerW, provider,
+		contextW, context,
+		activity,
+		mode, modePad,
+	)
 }
 
 // buildQueueItems constructs agent pane items for the queue view.
 // Sorting is handled by sortedSectionItems via config-driven sort keys;
 // this method only builds items and populates sort data on finderEntry.
-//
 // stateRank returns the sort priority for an activity based on the configured
 // state order. Lower rank = higher priority. States not in the order list
 // get max rank.
@@ -1104,11 +1276,20 @@ func (m *finderModel) buildQueueItems() {
 					desc += fmt.Sprintf("  [rank=%d t=%d]", rank, sortTime)
 				}
 
+				// Icon: activity-colored, bold if unseen, faint if seen.
+				iconStyle := ActivityStyle(cs.Activity)
+				if unseen {
+					iconStyle = iconStyle.Bold(true)
+				} else {
+					iconStyle = iconStyle.Faint(true)
+				}
+
 				m.queueItems = append(m.queueItems, PickerItem{
 					Title:       title,
 					Description: desc,
 					FilterValue: filterVal,
 					Active:      unseen,
+					Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Queue, iconStyle),
 				})
 				m.queueIdx = append(m.queueIdx, finderEntry{
 					kind:           KindQueue,
@@ -1135,13 +1316,14 @@ func (m *finderModel) buildQueueItems() {
 }
 
 // buildQueueDescription returns a fixed-width columnar description.
-// Columns: provider  context%  activity  duration
+// Columns: provider  context%  activity  mode  duration
 func buildQueueDescription(cs agent.AgentStatus, elapsed time.Duration, hasSince bool) string {
 	const (
-		providerW = 6 // "claude"
-		contextW  = 4 // "100%"
-		activityW = 9 // "completed"
-		durationW = 4 // "999m"
+		providerW = 6  // "claude"
+		contextW  = 4  // "100%"
+		activityW = 9  // "completed"
+		modeW     = 15 // "workspace-write"
+		durationW = 4  // "999m"
 	)
 
 	provider := ""
@@ -1158,15 +1340,25 @@ func buildQueueDescription(cs agent.AgentStatus, elapsed time.Duration, hasSince
 	activity := RenderActivity(cs.Activity)
 	activity += strings.Repeat(" ", max(0, activityW-len(cs.Activity.String())))
 
+	// Mode is ANSI-styled — pad after rendering based on plain text width.
+	mode := ""
+	if cs.ModeLabel != "" {
+		mode = RenderMode(cs)
+		mode += strings.Repeat(" ", max(0, modeW-len(cs.ModeLabel)))
+	} else {
+		mode = strings.Repeat(" ", modeW)
+	}
+
 	duration := ""
 	if hasSince {
 		duration = formatDuration(elapsed)
 	}
 
-	return fmt.Sprintf("%-*s  %*s  %s  %*s",
+	return fmt.Sprintf("%-*s  %*s  %s  %s  %*s",
 		providerW, provider,
 		contextW, context,
 		activity,
+		mode,
 		durationW, duration,
 	)
 }

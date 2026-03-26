@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/lipgloss"
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/config"
@@ -51,10 +49,8 @@ var (
 	pickerCountStyle    lipgloss.Style
 	pickerConfirmStyle  lipgloss.Style
 
-	// Active indicator.
-	activeIndicatorIcon    string
-	activeIndicatorStyled  string // pre-rendered icon with style
-	activeIndicatorPadding string // spaces matching icon width
+	// Section icon padding (1 cell space for items with no icon).
+	sectionIconPadding string
 )
 
 // InitStyles initializes all shared styles from a loaded config.
@@ -104,21 +100,8 @@ func InitStyles(cfg config.Config) {
 	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
 	pickerConfirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting)).Bold(true)
 
-	// Active indicator.
-	ai := cfg.Finder.ActiveIndicator
-	activeIndicatorIcon = ai.Icon
-	aiStyle := lipgloss.NewStyle()
-	if ai.Color != "" {
-		aiStyle = aiStyle.Foreground(lipgloss.Color(ai.Color))
-	}
-	if ai.Background != "" {
-		aiStyle = aiStyle.Background(lipgloss.Color(ai.Background))
-	}
-	if ai.Bold != nil && *ai.Bold {
-		aiStyle = aiStyle.Bold(true)
-	}
-	activeIndicatorStyled = aiStyle.Render(activeIndicatorIcon)
-	activeIndicatorPadding = strings.Repeat(" ", lipgloss.Width(activeIndicatorStyled))
+	// Section icon padding — single space matching a 1-cell icon.
+	sectionIconPadding = " "
 
 	workingFramesUI = append([]string(nil), cfg.Icons.WorkingFrames...)
 	waitingIndicator = cfg.Icons.Waiting
@@ -128,13 +111,55 @@ func InitStyles(cfg config.Config) {
 	footerSeparatorUI = cfg.Icons.FooterSeparator
 }
 
-// RenderActiveIndicator returns the styled active indicator icon.
-// Returns the padding string (same width, all spaces) when not active.
-func RenderActiveIndicator(active bool) string {
-	if active {
-		return activeIndicatorStyled
+// RenderSectionIcon renders a section icon with the given lipgloss style.
+func RenderSectionIcon(icon string, style lipgloss.Style) string {
+	return style.Render(icon)
+}
+
+// SectionIconPadding returns a space matching a 1-cell icon width.
+func SectionIconPadding() string {
+	return sectionIconPadding
+}
+
+// ActivityStyle returns the lipgloss style for the given agent activity.
+func ActivityStyle(a agent.Activity) lipgloss.Style {
+	switch a {
+	case agent.ActivityWorking:
+		return workingStyle
+	case agent.ActivityWaitingInput:
+		return waitingStyle
+	case agent.ActivityCompleted:
+		return waitingStyle
+	case agent.ActivityIdle:
+		return idleStyle
+	default:
+		return dimStyle
 	}
-	return activeIndicatorPadding
+}
+
+// MostUrgentActivity returns the most urgent activity from a list,
+// using the provided state_order (first = most urgent).
+func MostUrgentActivity(activities []agent.Activity, stateOrder []string) agent.Activity {
+	best := agent.Activity(-1)
+	bestRank := len(stateOrder) + 1
+	for _, a := range activities {
+		name := a.String()
+		rank := len(stateOrder) // default: least urgent
+		for i, s := range stateOrder {
+			if s == name {
+				rank = i
+				break
+			}
+		}
+		if rank < bestRank {
+			bestRank = rank
+			best = a
+		}
+	}
+	if best < 0 {
+		return agent.ActivityIdle
+	}
+	return best
 }
 
 // ProviderAccent returns the accent style for a given provider.

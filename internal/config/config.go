@@ -138,12 +138,18 @@ type PickerSortConfig struct {
 	StateOrder []string `toml:"state_order"` // queue urgency order (e.g. ["waiting","completed","working","idle"])
 }
 
-// ActiveIndicatorConfig controls the visual indicator for active/open items.
-type ActiveIndicatorConfig struct {
-	Icon       string `toml:"icon"`       // default "▪"
-	Color      string `toml:"color"`      // foreground color (ANSI), default "" (inherits)
-	Background string `toml:"background"` // background color (ANSI), default "" (none)
-	Bold       *bool  `toml:"bold"`       // default nil (false)
+// SectionIconsConfig holds the icon glyph for each finder section.
+// The icon's color is determined by state (activity-colored for agent-bearing
+// sections, active/dim for others).
+type SectionIconsConfig struct {
+	Sessions  string `toml:"sessions"`  // default "S"
+	Queue     string `toml:"queue"`     // default "*"
+	Worktrees string `toml:"worktrees"` // default "⎇"
+	Branches  string `toml:"branches"`  // default "B"
+	Panes     string `toml:"panes"`     // default ">"
+	Windows   string `toml:"windows"`   // default "W"
+	Marks     string `toml:"marks"`     // default "M"
+	Projects  string `toml:"projects"`  // default "P"
 }
 
 type FinderConfig struct {
@@ -162,8 +168,8 @@ type FinderConfig struct {
 	DisplayStateOrder     []string `toml:"display_state_order"`
 	ShowContextPercentage bool     `toml:"show_context_percentage"`
 
-	// Active item visual indicator.
-	ActiveIndicator ActiveIndicatorConfig `toml:"active_indicator"`
+	// Per-section icons (glyph identifies type, color encodes state).
+	SectionIcons SectionIconsConfig `toml:"section_icons"`
 
 	// Per-section sort overrides.
 	Sessions  PickerSortConfig `toml:"sessions"`
@@ -331,9 +337,15 @@ func DefaultFinderConfig() FinderConfig {
 		DisplayStateOrder:     []string{"idle", "working", "completed", "waiting"},
 		ShowContextPercentage: true,
 
-		ActiveIndicator: ActiveIndicatorConfig{
-			Icon:  "\u25aa", // ▪
-			Color: "2",      // green
+		SectionIcons: SectionIconsConfig{
+			Sessions:  "S",
+			Queue:     "*",
+			Worktrees: "\u2387", // ⎇
+			Branches:  "B",
+			Panes:     ">",
+			Windows:   "W",
+			Marks:     "M",
+			Projects:  "P",
 		},
 		Sessions: PickerSortConfig{Sort: []string{"recent", "-current"}},
 		Queue:    PickerSortConfig{Sort: []string{"state", "unseen", "oldest"}},
@@ -447,7 +459,14 @@ func (c *Config) normalize() {
 	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
 	defaultSlice(&c.Finder.DisplayProviderOrder, df.DisplayProviderOrder)
 	defaultSlice(&c.Finder.DisplayStateOrder, df.DisplayStateOrder)
-	defaultStr(&c.Finder.ActiveIndicator.Icon, df.ActiveIndicator.Icon)
+	defaultStr(&c.Finder.SectionIcons.Sessions, df.SectionIcons.Sessions)
+	defaultStr(&c.Finder.SectionIcons.Queue, df.SectionIcons.Queue)
+	defaultStr(&c.Finder.SectionIcons.Worktrees, df.SectionIcons.Worktrees)
+	defaultStr(&c.Finder.SectionIcons.Branches, df.SectionIcons.Branches)
+	defaultStr(&c.Finder.SectionIcons.Panes, df.SectionIcons.Panes)
+	defaultStr(&c.Finder.SectionIcons.Windows, df.SectionIcons.Windows)
+	defaultStr(&c.Finder.SectionIcons.Marks, df.SectionIcons.Marks)
+	defaultStr(&c.Finder.SectionIcons.Projects, df.SectionIcons.Projects)
 
 	dg := DefaultGeneralConfig()
 	defaultSlice(&c.General.SearchPaths, dg.SearchPaths)
@@ -532,11 +551,15 @@ func DefaultConfigTOML() ([]byte, error) {
 	w(fmt.Sprintf("show_context_percentage = %v\n", f.ShowContextPercentage))
 	w("\n")
 
-	w("[finder.active_indicator]\n")
-	w(fmt.Sprintf("icon = %q\n", f.ActiveIndicator.Icon))
-	w(fmt.Sprintf("color = %q\n", f.ActiveIndicator.Color))
-	w("# background = \"\"              # ANSI background color\n")
-	w("# bold = false\n")
+	w("[finder.section_icons]\n")
+	w(fmt.Sprintf("sessions = %q\n", f.SectionIcons.Sessions))
+	w(fmt.Sprintf("queue = %q\n", f.SectionIcons.Queue))
+	w(fmt.Sprintf("worktrees = %q\n", f.SectionIcons.Worktrees))
+	w(fmt.Sprintf("branches = %q\n", f.SectionIcons.Branches))
+	w(fmt.Sprintf("panes = %q\n", f.SectionIcons.Panes))
+	w(fmt.Sprintf("windows = %q\n", f.SectionIcons.Windows))
+	w(fmt.Sprintf("marks = %q\n", f.SectionIcons.Marks))
+	w(fmt.Sprintf("projects = %q\n", f.SectionIcons.Projects))
 	w("\n")
 
 	w("# Per-section sort overrides — only specify what differs from global.\n")

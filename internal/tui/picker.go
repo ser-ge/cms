@@ -19,7 +19,8 @@ type PickerItem struct {
 	Title       string
 	Description string
 	FilterValue string // searched by fuzzy match
-	Active      bool   // true for active sessions (rendered distinctly)
+	Active      bool   // true for active items (used for sorting)
+	Icon        string // pre-rendered section icon with state-based styling
 }
 
 // fzfMatch holds a matched item with its score and matched positions.
@@ -447,7 +448,10 @@ func (m pickerModel) View() string {
 			title = highlightMatches(src, idxs, nil)
 		}
 
-		icon := RenderActiveIndicator(item.Active)
+		icon := item.Icon
+		if icon == "" {
+			icon = SectionIconPadding()
+		}
 
 		line := " " + icon + " " + title + desc
 

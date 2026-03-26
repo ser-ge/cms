@@ -64,15 +64,28 @@ func TestRenderHarnessQueue(t *testing.T) {
 	t.Log("\n" + m.View())
 }
 
+func TestRenderHarnessAllSections(t *testing.T) {
+	if os.Getenv("CMS_RENDER_HARNESS") == "" {
+		t.Skip("set CMS_RENDER_HARNESS=1 to print all-sections render output")
+	}
+
+	cfg := config.DefaultConfig()
+	InitStyles(cfg)
+	w := harnessWatcher()
+
+	for _, section := range []string{"sessions", "queue", "windows", "panes"} {
+		m := newFinderModel(cfg, w, []string{section}, 140, 24)
+		t.Logf("=== %s ===", section)
+		t.Log("\n" + m.View())
+	}
+}
+
 func TestRenderHarnessLive(t *testing.T) {
 	if os.Getenv("CMS_LIVE_HARNESS") == "" {
 		t.Skip("set CMS_LIVE_HARNESS=1 to print live finder/dashboard render output")
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	cfg := config.DefaultConfig()
 	InitStyles(cfg)
 	sessions, pt, err := tmux.FetchState()
 	if err != nil {
