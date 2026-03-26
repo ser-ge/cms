@@ -38,14 +38,14 @@ var commands = []command{
 	{Name: "jump", Args: "<label>", Short: "Switch to marked pane", Group: "Navigation"},
 
 	// Worktree operations.
-	{Name: "go", Args: "<branch> [path]", Short: "Switch to worktree (create if needed)", Long: "Switch to an existing worktree for the given branch, or create\na new one if it doesn't exist.", Group: "Worktree"},
-	{Name: "add", Args: "[--no-open] <branch> [path]", Short: "Create worktree", Long: "Create a new git worktree for the given branch.\n\nFlags:\n  --no-open   Don't open a tmux window for the worktree", Group: "Worktree"},
-	{Name: "rm", Args: "<branch>", Short: "Remove worktree", Long: "Remove a worktree by branch name or path.\n\nFlags:\n  -f, --force        Force removal even with changes\n  --keep-branch      Don't delete the branch after removing the worktree", Group: "Worktree"},
-	{Name: "merge", Args: "[flags] [branch]", Short: "Merge worktree", Long: "Merge a worktree branch into the base branch.\n\nFlags:\n  --no-delete   Don't delete worktree after merge\n  --squash      Squash commits before merging", Group: "Worktree"},
+	{Name: "go", Args: "<branch> [start-point] [prompt]", Short: "Switch to worktree (create if needed)", Long: "Switch to an existing worktree, or create a new one from base branch.\nIf a prompt is given and go_cmd is configured, runs it in the new worktree.\n\nFlags:\n  --path <dir>    Override worktree directory\n  -f, --force     Force checkout\n  --no-open       Don't open a tmux window", Group: "Worktree"},
+	{Name: "switch", Args: "<branch>", Aliases: []string{"add"}, Short: "Switch to worktree (explicit control)", Long: "Switch to a worktree by branch name. Use -c to create a new branch.\n\nFlags:\n  -c <branch>     Create new branch\n  -C <branch>     Force-create new branch (reset if exists)\n  --path <dir>    Override worktree directory\n  -f, --force     Force checkout\n  --no-open       Don't open a tmux window", Group: "Worktree"},
+	{Name: "rm", Args: "<branch>", Short: "Remove worktree", Long: "Remove a worktree by branch name or path.\n\nFlags:\n  -f, --force        Force removal even with changes\n  -D                 Force-delete the branch\n  --keep-branch      Keep the branch after removing the worktree\n  --dry-run          Show what would be removed", Group: "Worktree"},
+	{Name: "land", Args: "[branch]", Aliases: []string{"merge"}, Short: "Land worktree branch into base", Long: "Rebase and merge the current (or specified) worktree branch into the\nbase branch, then clean up the worktree.\n\nFlags:\n  --squash        Squash commits before merging\n  --no-ff         Create a merge commit (no fast-forward)\n  --keep          Keep worktree after landing\n  --no-edit       Don't edit the commit message\n  -m <message>    Override commit message\n  --abort         Abort an in-progress rebase\n  --continue      Continue an in-progress rebase", Group: "Worktree"},
 	{Name: "ls", Short: "List worktrees (paths, branches, merge status)", Group: "Worktree"},
 
 	// Config.
-	{Name: "config", Args: "init", Short: "Write default config file", Group: "Config"},
+	{Name: "config", Args: "{init|default}", Short: "Manage config", Long: "  init      Write default config file\n  default   Print default config to stdout", Group: "Config"},
 	{Name: "hook-setup", Short: "Print Claude Code hook config", Group: "Config"},
 	{Name: "completion", Args: "<fish|bash|zsh>", Short: "Print shell completion script", Group: "Config"},
 
@@ -113,14 +113,23 @@ func renderHelp() string {
 	return b.String()
 }
 
+func findCommand(name string) *command {
+	for i := range commands {
+		if commands[i].Name == name {
+			return &commands[i]
+		}
+		for _, alias := range commands[i].Aliases {
+			if alias == name {
+				return &commands[i]
+			}
+		}
+	}
+	return nil
+}
+
 func renderCommandHelp(name string) string {
-	for _, c := range commands {
-		if c.Name != name {
-			continue
-		}
-		if c.Hidden {
-			break
-		}
+	c := findCommand(name)
+	if c != nil && !c.Hidden {
 		var b strings.Builder
 		usage := "cms " + c.Name
 		if c.Args != "" {
@@ -252,9 +261,9 @@ func completionFish() string {
 	}
 	b.WriteString("\n")
 
-	// Dynamic branch/worktree completion for go, add, rm, merge.
+	// Dynamic branch/worktree completion for worktree commands.
 	b.WriteString("# Dynamic branch completion for worktree commands.\n")
-	branchCmds := []string{"go", "add", "rm", "merge"}
+	branchCmds := []string{"go", "switch", "add", "rm", "land", "merge"}
 	for _, cmd := range branchCmds {
 		// Complete with existing worktree branches.
 		b.WriteString(fmt.Sprintf(
@@ -276,15 +285,37 @@ func completionFish() string {
 
 	// Flags for specific commands.
 	b.WriteString("# Command-specific flags.\n")
-	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from add' -l no-open -d 'Don\\'t open tmux window'\n")
+
+	// go
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from go' -l path -r -d 'Override worktree directory'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from go' -s f -l force -d 'Force checkout'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from go' -l no-open -d 'Don\\'t open tmux window'\n")
+
+	// switch / add
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from switch add' -s c -r -d 'Create new branch'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from switch add' -s C -r -d 'Force-create branch'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from switch add' -l path -r -d 'Override worktree directory'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from switch add' -s f -l force -d 'Force checkout'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from switch add' -l no-open -d 'Don\\'t open tmux window'\n")
+
+	// rm
 	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from rm' -s f -l force -d 'Force removal'\n")
-	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from rm' -l keep-branch -d 'Keep the branch after removal'\n")
-	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from merge' -l no-delete -d 'Don\\'t delete worktree after merge'\n")
-	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from merge' -l squash -d 'Squash commits before merging'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from rm' -s D -d 'Force-delete branch'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from rm' -l keep-branch -d 'Keep the branch'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from rm' -l dry-run -d 'Show what would be removed'\n")
+
+	// land / merge
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from land merge' -l squash -d 'Squash commits'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from land merge' -l no-ff -d 'No fast-forward'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from land merge' -l keep -d 'Keep worktree after landing'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from land merge' -l no-edit -d 'Don\\'t edit commit message'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from land merge' -s m -r -d 'Override commit message'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from land merge' -l abort -d 'Abort in-progress rebase'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from land merge' -l continue -d 'Continue in-progress rebase'\n")
 	b.WriteString("\n")
 
 	// Completion for 'config' subcommand.
-	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from config' -a init -d 'Write default config file'\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from config' -a 'init default' -d 'Config subcommand'\n")
 
 	// Completion for 'completion' subcommand.
 	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from completion' -a 'fish bash zsh' -d 'Shell type'\n")
@@ -315,7 +346,7 @@ func completionBash() string {
     fi
 
     case "${words[1]}" in
-        go|add|rm|merge)
+        go|switch|add|rm|land|merge)
             # Complete with branches and worktree branches.
             local branches
             branches=$(git branch --format="%(refname:short)" 2>/dev/null)
@@ -331,7 +362,7 @@ func completionBash() string {
             fi
             ;;
         config)
-            COMPREPLY=($(compgen -W "init" -- "$cur"))
+            COMPREPLY=($(compgen -W "init default" -- "$cur"))
             ;;
         completion)
             COMPREPLY=($(compgen -W "fish bash zsh" -- "$cur"))
@@ -371,7 +402,7 @@ _cms() {
     fi
 
     case "${words[2]}" in
-        go|add|rm|merge)
+        go|switch|add|rm|land|merge)
             local -a branches
             branches=(${(f)"$(git branch --format='%(refname:short)' 2>/dev/null)"})
             branches+=(${(f)"$(git worktree list --porcelain 2>/dev/null | grep '^branch ' | sed 's|branch refs/heads/||')"})
@@ -385,7 +416,7 @@ _cms() {
             fi
             ;;
         config)
-            compadd init
+            compadd init default
             ;;
         completion)
             compadd fish bash zsh
