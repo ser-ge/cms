@@ -97,8 +97,8 @@ func New() *Watcher {
 
 // ApplyConfig sets timing from user configuration.
 func (w *Watcher) ApplyConfig(cfg config.GeneralConfig) {
-	if cfg.CompletedDecayMs > 0 {
-		w.completedDecay = time.Duration(cfg.CompletedDecayMs) * time.Millisecond
+	if cfg.CompletedDecayS > 0 {
+		w.completedDecay = time.Duration(cfg.CompletedDecayS) * time.Second
 	}
 	if cfg.AlwaysHooksForStatus != nil {
 		w.hookPersist = *cfg.AlwaysHooksForStatus

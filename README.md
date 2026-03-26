@@ -82,7 +82,7 @@ search_submodules = false
 search_paths = [
   { path = "~/projects", max_depth = 3 }
 ]
-completed_decay_ms = 30000
+completed_decay_s = 300
 
 [finder]
 # What bare `cms` shows and in what order.

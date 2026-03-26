@@ -67,7 +67,7 @@ type GeneralConfig struct {
 	SearchSubmodules bool         `toml:"search_submodules"`
 	SearchPaths      []SearchPath `toml:"search_paths"`
 
-	CompletedDecayMs int   `toml:"completed_decay_ms"` // Completed->Idle auto-decay in ms (default 30000)
+	CompletedDecayS int   `toml:"completed_decay_s"` // Completed->Idle auto-decay in seconds (default 300)
 	AlwaysHooksForStatus *bool `toml:"always_hooks_for_status"` // when true (default), hooks never go stale; observer skips transitions while any hook has been seen
 
 	// Transition smoothing: delay state changes to suppress flicker.
@@ -82,7 +82,7 @@ type SmoothingConfig struct {
 	WorkingToIdleMs      int `toml:"working_to_idle_ms"`      // suppress brief idle flickers during multi-step work
 	WorkingToCompletedMs int `toml:"working_to_completed_ms"` // don't show "completed" too eagerly
 	IdleToWorkingMs      int `toml:"idle_to_working_ms"`      // going TO working (usually instant)
-	CompletedToIdleMs    int `toml:"completed_to_idle_ms"`    // controlled by completed_decay_ms already
+	CompletedToIdleMs    int `toml:"completed_to_idle_ms"`    // controlled by completed_decay_s already
 }
 
 // SmoothingMs returns the smoothing delay in ms for a transition,
@@ -373,7 +373,7 @@ func DefaultGeneralConfig() GeneralConfig {
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
 		},
-		CompletedDecayMs: 300000,
+		CompletedDecayS: 300,
 		AlwaysHooksForStatus: boolPtr(true),
 		Smoothing: SmoothingConfig{
 			WorkingToIdleMs:      3000,
@@ -473,7 +473,7 @@ func (c *Config) normalize() {
 	defaultSlice(&c.General.SwitchPriority, dg.SwitchPriority)
 	defaultStr(&c.General.EscapeChord, dg.EscapeChord)
 	defaultInt(&c.General.EscapeChordMs, dg.EscapeChordMs)
-	defaultInt(&c.General.CompletedDecayMs, dg.CompletedDecayMs)
+	defaultInt(&c.General.CompletedDecayS, dg.CompletedDecayS)
 }
 
 func configPath() string {
