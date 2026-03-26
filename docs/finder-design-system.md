@@ -4,6 +4,25 @@ The finder is the universal fuzzy picker in cms. It composes 8 section types
 into a single searchable list. This document describes the visual design
 system used to render each section consistently.
 
+## Design Rationale
+
+The finder's hierarchy mirrors the tmux/git structure:
+- **Session** = project/repo (one session per repo)
+- **Worktree** = a window within a session (opened via `cms go`)
+- **Window/Pane** = explicit tmux-level views
+
+Sessions, windows, and worktrees show **aggregate** state counts (not
+per-agent detail) because they are containers. Panes and queue show
+**per-agent detail** because they are leaf items where you need provider,
+context%, mode, and duration to decide what to act on.
+
+Icons default to ASCII (`S W > B M P *`) for universal terminal font
+compatibility. The exception is `⎇` for worktrees (the standard git
+branch symbol). Users can override with Unicode glyphs via config.
+
+This replaces the previous `[finder.active_indicator]` config which used
+a single `▪` icon for all sections with no type distinction.
+
 ## Section Icons
 
 Each section has a distinct icon glyph that identifies the item type. The
@@ -26,7 +45,7 @@ icon's **color** encodes the item's state. Icons are configurable via
 Icon color comes from the existing activity style palette. There are two
 categories of sections:
 
-### Agent-bearing sections (sessions, queue, windows, panes)
+### Agent-bearing sections (sessions, queue, worktrees, windows, panes)
 
 The icon is colored by the agent's activity state using the same styles
 that color activity text in the dashboard:
@@ -49,7 +68,17 @@ For **queue** items specifically:
 - **Unseen** attention: activity color + **bold**
 - **Seen**: activity color + **faint**
 
-### Non-agent sections (worktrees, branches, marks, projects)
+### Worktrees (aggregate, like sessions)
+
+Worktrees use the same icon-color-by-urgency logic as sessions and
+windows. When agents are running inside a worktree, the icon takes the
+color of the most urgent activity. When panes exist but no agents are
+running, icon uses `workingStyle`. Otherwise `dimStyle`.
+
+"Active" means: has tmux panes inside the worktree path, or has running
+agents.
+
+### Non-agent sections (branches, marks, projects)
 
 | State    | Style          |
 |----------|----------------|
@@ -57,14 +86,13 @@ For **queue** items specifically:
 | Inactive | `dimStyle`     |
 
 "Active" means:
-- Worktrees: has tmux panes inside the worktree path
 - Branches: has an associated worktree
 - Marks: the marked pane is still alive
 - Projects: has an open tmux session
 
 ## Two Presentation Tiers
 
-### Aggregate (sessions, windows)
+### Aggregate (sessions, windows, worktrees)
 
 Shows counts, not per-agent detail. Format:
 
@@ -124,15 +152,28 @@ Examples:
 - `~/projects/gather_git` → `~/p/gather_git`
 - `~/notes` → `~/notes` (only 2 components, no abbreviation)
 
-When `maxLen > 0`, abbreviation only triggers if the path exceeds that
-length. With `maxLen=0` (current default), always abbreviate.
+Abbreviation only triggers when the path exceeds `maxLen` (currently 25
+characters). Short paths like `~/projects/cms` stay full; longer paths
+like `~/projects/cms/worktrees/feature` (31 chars) get abbreviated.
 
-### Simple (worktrees, branches, marks, projects)
+### Worktrees (aggregate counts)
+
+Title is `project/branch`. Description shows agent state counts (from
+live data, recomputed on every picker rebuild) plus static merged status
+(computed once at scan time):
+
+```
+ ⎇ cms/main
+ ⎇ cms/ui          1 waiting · 1 completed
+ ⎇ cms/work        1 working · [merged: ancestor of main]
+ ⎇ cms/restore     [merged: same commit as main]
+```
+
+### Simple (branches, marks, projects)
 
 Free-form descriptions with middle-dot separators via `JoinParts()`:
 
 ```
- ⎇ main     ~/p/cms
  B fix/typo  local branch
  M build     cms:fish
  P notes     ~/notes · main*
