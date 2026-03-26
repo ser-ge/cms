@@ -157,6 +157,11 @@ func MovePane(srcPaneID, dstPaneID string) error {
 // If the repo has linked worktrees, each becomes a tmux window.
 // When restore is false, snapshot restoration is skipped entirely.
 func OpenProject(path string, restore bool) error {
+	// Normalize to canonical repo root so the snapshot key matches
+	// regardless of whether path is a worktree or the main repo.
+	if root, err := canonicalRepoRoot(path); err == nil {
+		path = root
+	}
 	projCfg := config.LoadProjectConfig(path)
 	name := NormalizeName(filepath.Base(path))
 	if projCfg.Session.Name != "" {

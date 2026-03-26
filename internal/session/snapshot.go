@@ -61,11 +61,10 @@ func SaveAllSnapshots() {
 			continue
 		}
 		dir := sess.Windows[0].Panes[0].WorkingDir
-		repoRoot, err := git.Cmd(dir, "rev-parse", "--show-toplevel")
+		repoRoot, err := canonicalRepoRoot(dir)
 		if err != nil {
 			continue // not a git repo, skip silently
 		}
-		repoRoot = strings.TrimSpace(repoRoot)
 		if err := saveSessionSnapshot(sess, repoRoot); err != nil {
 			debug.Logf("session: save-all: %s: %v", sess.Name, err)
 		}
@@ -209,6 +208,20 @@ func snapshotPath(repoRoot, sessionName string) (string, error) {
 	}
 	sum := sha1.Sum([]byte(repoRoot + "\x00" + sessionName))
 	return filepath.Join(base, "snapshots", hex.EncodeToString(sum[:])+".json"), nil
+}
+
+// canonicalRepoRoot resolves the canonical repo root from any directory,
+// consistent across worktrees. Uses --git-common-dir so that linked worktrees
+// and the main worktree (or bare repo) all resolve to the same path.
+func canonicalRepoRoot(dir string) (string, error) {
+	commonDir, err := git.Cmd(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	if filepath.Base(commonDir) == ".git" {
+		return filepath.Dir(commonDir), nil
+	}
+	return commonDir, nil
 }
 
 func stateDir() (string, error) {

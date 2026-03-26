@@ -9,7 +9,6 @@ import (
 
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/config"
-	"github.com/serge/cms/internal/git"
 	"github.com/serge/cms/internal/hook"
 	"github.com/serge/cms/internal/mark"
 	"github.com/serge/cms/internal/session"
@@ -150,11 +149,10 @@ func main() {
 					os.Exit(1)
 				}
 				// Resolve repo root from the current pane's working directory.
-				repoRoot := "."
-				if target.Session != "" {
-					if root, err := git.Cmd(".", "rev-parse", "--show-toplevel"); err == nil {
-						repoRoot = root
-					}
+				repoRoot, err := worktree.FindRepoRoot(".")
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "error: not inside a git repository")
+					os.Exit(1)
 				}
 				if err := session.SaveSnapshot(target.Session, repoRoot); err != nil {
 					fmt.Fprintf(os.Stderr, "error: %v\n", err)
