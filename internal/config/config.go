@@ -412,12 +412,7 @@ func ExpandHome(path string) string {
 
 func DefaultConfigTOML() ([]byte, error) {
 	var buf bytes.Buffer
-	out := struct {
-		General GeneralConfig `toml:"general"`
-	}{
-		General: DefaultGeneralConfig(),
-	}
-	if err := toml.NewEncoder(&buf).Encode(out); err != nil {
+	if err := toml.NewEncoder(&buf).Encode(DefaultConfig()); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

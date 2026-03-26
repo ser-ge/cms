@@ -102,18 +102,26 @@ func main() {
 
 		// Config.
 		case "config":
-			if len(args) > 1 && args[1] == "init" {
-				path, err := config.WriteDefaultConfigFile()
-				if err != nil {
-					if err == os.ErrExist {
-						exitErr(fmt.Errorf("config already exists at %s", path))
+			if len(args) > 1 {
+				switch args[1] {
+				case "init":
+					path, err := config.WriteDefaultConfigFile()
+					if err != nil {
+						if err == os.ErrExist {
+							exitErr(fmt.Errorf("config already exists at %s", path))
+						}
+						exitErr(err)
 					}
-					exitErr(err)
+					fmt.Println(path)
+					return
+				case "default":
+					data, err := config.DefaultConfigTOML()
+					exitIfErr(err)
+					os.Stdout.Write(data)
+					return
 				}
-				fmt.Println(path)
-				return
 			}
-			exitErr(fmt.Errorf("usage: cms config init"))
+			exitErr(fmt.Errorf("usage: cms config {init|default}"))
 
 		// TUI screens.
 		case "new":

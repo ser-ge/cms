@@ -33,6 +33,7 @@ cms ls                           # worktree table
 
 # Config
 cms config init                  # scaffold default config
+cms config default               # print default config (TOML) to stdout
 cms hook-setup                   # print hook configuration for Claude Code
 
 # Internal (hidden)
@@ -55,6 +56,13 @@ cms config init
 ```
 
 This writes to `$XDG_CONFIG_HOME/cms/config.toml` (or `~/.config/cms/config.toml`).
+
+Print the full default config to stdout (useful for piping or reviewing):
+
+```bash
+cms config default
+cms config default > ~/.config/cms/config.toml
+```
 
 ```toml
 [general]

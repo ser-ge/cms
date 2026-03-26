@@ -34,6 +34,7 @@ cms ls                           Worktree table (paths, branches, merge status)
 
 # Config
 cms config init                  Write default config file
+cms config default               Print default config (TOML) to stdout
 cms hook-setup                   Print Claude Code hook config
 
 # Internal (hidden)
