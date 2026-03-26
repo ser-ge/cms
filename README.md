@@ -26,7 +26,7 @@ cms jump <label>                 # switch to marked pane
 # Worktree operations (top-level)
 cms switch <branch>              # switch to existing branch's worktree
 cms switch -c <branch> [start]   # create new branch + worktree
-cms go <branch> [start-point]    # switch or create from base_branch
+cms go <branch> [start-point] [prompt]  # switch or create; optional prompt runs go_cmd
 cms rm <branch>                  # remove worktree
 cms land [target]                # land current branch into target
 cms ls                           # worktree table
@@ -132,17 +132,21 @@ If the branch has a worktree, switches to it. If the branch exists but has no wo
 
 ### `cms go` — opinionated switch-or-create
 
-The daily driver. Same worktree/tmux behavior as switch, but auto-creates new branches from the configured `base_branch`.
+The daily driver. Same worktree/tmux behavior as switch, but auto-creates new branches from the configured `base_branch`. Optionally runs a configured command with a prompt string.
 
 ```bash
-cms go feature                 # switch if exists, create from base_branch if not
-cms go feature main            # override start-point for this invocation
-cms go -                       # switch to previous branch's worktree
+cms go feature                              # switch if exists, create from base_branch if not
+cms go feature main                         # override start-point for this invocation
+cms go -                                    # switch to previous branch's worktree
+cms go feature "implement feature A"        # create worktree + run go_cmd with prompt
+cms go feature main "implement feature A"   # start-point + prompt
 ```
 
 Options: `--force`/`-f`, `--path <dir>`, `--no-open`.
 
 Default base branch: `[worktree].base_branch` config, then `origin/HEAD`, then `main`/`master`.
+
+The prompt (arg with spaces) is passed to the command configured in `[worktree].go_cmd`. The prompt is available as `$CMS_PROMPT` in the command's environment. If the command string doesn't reference `$CMS_PROMPT`, the prompt is appended as an argument.
 
 ### `cms land` — land current branch into target
 
@@ -200,6 +204,7 @@ Settings merge from user config (`~/.config/cms/config.toml`) and per-repo confi
 base_dir = "../worktrees"
 base_branch = "main"               # default start-point for cms go
 commit_cmd = "llm -m claude-haiku"  # LLM commit message generation
+go_cmd = "claude -p \"$CMS_PROMPT\""  # command to run when prompt is given to cms go
 
 [[worktree.hooks]]           # post-create hooks
 command = "npm install"
@@ -211,7 +216,7 @@ command = "npm run lint"
 command = "npm test"
 ```
 
-Hooks receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment variables.
+Hooks and `go_cmd` receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment variables. `go_cmd` also receives `CMS_PROMPT`.
 
 ## Claude Code Hooks (optional)
 

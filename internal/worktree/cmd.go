@@ -3,6 +3,7 @@ package worktree
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -102,6 +103,7 @@ type SwitchOpts struct {
 	Force       bool   // --force: force worktree creation
 	Path        string // --path: override auto-resolved worktree dir
 	StartPoint  string // positional start-point (only with -c/-C)
+	Prompt      string // prompt string to pass to go_cmd after worktree setup
 }
 
 // SwitchWorktree switches to a branch's worktree, creating it if needed.
@@ -200,7 +202,7 @@ func GoWorktree(root, branch string, opts SwitchOpts) error {
 				switchOrOpenTmuxWindow(wt.Path, wt.Branch)
 			}
 			fmt.Println(wt.Path)
-			return nil
+			return maybeRunGoCmd(wt.Path, root, opts.Prompt, &wtCfg)
 		}
 	}
 
@@ -243,7 +245,7 @@ func GoWorktree(root, branch string, opts SwitchOpts) error {
 
 	runPostCreateHooksAndOpen(path, branch, &wtCfg, opts.NoOpen)
 	fmt.Println(path)
-	return nil
+	return maybeRunGoCmd(path, root, opts.Prompt, &wtCfg)
 }
 
 // runPostCreateHooksAndOpen runs post-create hooks and opens a tmux window.
@@ -389,7 +391,7 @@ func RunGo(args []string) error {
 	}
 
 	if len(positional) == 0 {
-		return fmt.Errorf("usage: cms go <branch> [<start-point>]")
+		return fmt.Errorf("usage: cms go <branch> [<start-point>] [<prompt>]")
 	}
 
 	cwd, err := os.Getwd()
@@ -405,12 +407,23 @@ func RunGo(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(positional) > 1 {
-		sp, err := ResolveWorktreeSymbol(root, positional[1])
-		if err != nil {
-			return err
+
+	// Remaining positional args: distinguish start-point (no spaces) from prompt (has spaces).
+	// - 1 extra arg with spaces → prompt
+	// - 1 extra arg without spaces → start-point
+	// - 2+ extra args → first without spaces is start-point, next is prompt
+	for _, arg := range positional[1:] {
+		if strings.ContainsRune(arg, ' ') {
+			opts.Prompt = arg
+		} else if opts.StartPoint == "" {
+			sp, err := ResolveWorktreeSymbol(root, arg)
+			if err != nil {
+				return err
+			}
+			opts.StartPoint = sp
+		} else {
+			opts.Prompt = arg
 		}
-		opts.StartPoint = sp
 	}
 
 	return GoWorktree(root, branch, opts)
@@ -425,6 +438,42 @@ func openTmuxWindow(branch, wtPath string) {
 	}
 	windowName := SanitizeBranch(branch)
 	_, _ = tmux.Run("new-window", "-t", target.Session, "-n", windowName, "-c", wtPath)
+}
+
+// maybeRunGoCmd runs the configured go_cmd with the given prompt.
+// The prompt is always available as $CMS_PROMPT in the command's environment.
+// If go_cmd does not reference $CMS_PROMPT or ${CMS_PROMPT}, the prompt is
+// appended as a shell-quoted argument.
+// Returns nil if no prompt is provided.
+func maybeRunGoCmd(wtPath, repoRoot, prompt string, wtCfg *config.WorktreeConfig) error {
+	if prompt == "" {
+		return nil
+	}
+	if wtCfg.GoCmd == "" {
+		return fmt.Errorf("prompt provided but [worktree] go_cmd is not configured")
+	}
+
+	shellCmd := wtCfg.GoCmd
+	if !strings.Contains(shellCmd, "$CMS_PROMPT") &&
+		!strings.Contains(shellCmd, "${CMS_PROMPT}") {
+		shellCmd += " " + shellQuote(prompt)
+	}
+	cmd := exec.Command("sh", "-c", shellCmd)
+	cmd.Dir = wtPath
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(),
+		"CMS_WORKTREE_PATH="+wtPath,
+		"CMS_REPO_ROOT="+repoRoot,
+		"CMS_PROMPT="+prompt,
+	)
+	return cmd.Run()
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // RunRemove parses flags and removes a worktree.

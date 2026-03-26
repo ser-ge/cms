@@ -27,7 +27,7 @@ cms jump <label>                 Switch to marked pane
 cms switch <branch>              Switch to existing branch's worktree (strict git switch semantics)
 cms switch -c <branch> [start]   Create new branch + worktree (error if exists)
 cms switch -C <branch> [start]   Force-create/reset branch + worktree
-cms go <branch> [start-point]    Switch or create from base_branch (opinionated shortcut)
+cms go <branch> [start-point] [prompt]  Switch or create from base_branch; optional prompt runs go_cmd
 cms rm <branch>                  Remove worktree (+ merged branch)
 cms land [target]                Land current branch into target (rebase + merge + cleanup)
 cms ls                           Worktree table (paths, branches, merge status)

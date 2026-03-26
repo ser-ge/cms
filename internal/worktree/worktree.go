@@ -125,6 +125,9 @@ func ResolveWorktreeConfig(repoRoot, worktreeDir string, userCfg *config.Worktre
 	if p.CommitCmd != "" {
 		merged.CommitCmd = p.CommitCmd
 	}
+	if p.GoCmd != "" {
+		merged.GoCmd = p.GoCmd
+	}
 	if len(p.Hooks) > 0 {
 		merged.Hooks = p.Hooks
 	}

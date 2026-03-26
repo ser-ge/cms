@@ -180,6 +180,7 @@ type WorktreeConfig struct {
 	PostMerge  []WorktreeHook `toml:"post_merge"`
 	AutoOpen   bool           `toml:"auto_open"`
 	CommitCmd  string         `toml:"commit_cmd"` // LLM commit message command (e.g. "llm -m claude-haiku")
+	GoCmd      string         `toml:"go_cmd"`     // command to run with prompt after "cms go <branch> <prompt>"
 }
 
 // SessionConfig holds session bootstrap and restore settings.
