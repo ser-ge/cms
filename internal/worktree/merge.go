@@ -220,6 +220,14 @@ func Merge(args []string) error {
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "merged %s into %s\n", currentBranch, target)
+
+	// Wait for confirmation before closing the window.
+	if !opts.Keep && currentWt != nil && !currentWt.IsMain {
+		fmt.Fprintf(os.Stderr, "press enter to close worktree window...")
+		fmt.Scanln()
+	}
+
 	// Step 9: Clean up worktree + branch.
 	if !opts.Keep && currentWt != nil && !currentWt.IsMain {
 		fmt.Fprintf(os.Stderr, "cleaning up worktree %s\n", ShortenHome(currentWt.Path))
@@ -250,7 +258,6 @@ func Merge(args []string) error {
 		SwitchToTmuxWindow(windowName)
 	}
 
-	fmt.Fprintf(os.Stderr, "merged %s into %s\n", currentBranch, target)
 	return nil
 }
 
