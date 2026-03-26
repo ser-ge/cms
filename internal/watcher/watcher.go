@@ -290,12 +290,19 @@ func (w *Watcher) bootstrap() {
 
 // runEventLoop reads control mode events and dispatches them.
 func (w *Watcher) runEventLoop() {
+	ctrl := w.ctrl
 	for {
 		select {
 		case <-w.stopCh:
 			return
-		case ev, ok := <-w.ctrl.Events:
+		case ev, ok := <-ctrl.Events:
 			if !ok {
+				return
+			}
+			if ev.Kind == tmux.ClientDetached {
+				debug.Logf("watcher: control client detached, falling back to polling")
+				ctrl.Stop()
+				w.ctrl = nil
 				return
 			}
 			w.handleEvent(ev)
@@ -328,12 +335,7 @@ func (w *Watcher) handleEvent(ev tmux.Event) {
 		// Pane produced output -- debounce then re-check agent status.
 		w.handleOutput(ev.PaneID)
 
-	case tmux.ClientDetached:
-		// Control client was kicked -- nil out so poll fallback takes over.
-		// Return so runEventLoop exits (w.ctrl.Events would panic after nil).
-		debug.Logf("watcher: control client detached, falling back to polling")
-		w.ctrl = nil
-		return
+	// ClientDetached is handled directly in runEventLoop.
 	}
 }
 
