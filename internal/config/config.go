@@ -128,28 +128,46 @@ type DashboardConfig struct {
 type PickerSortConfig struct {
 	DemoteCurrent *bool `toml:"demote_current"`
 	PromoteRecent *bool `toml:"promote_recent"`
-	PromoteOpen   *bool `toml:"promote_open"` // promote items with active agent/window activity
+	PromoteActive *bool `toml:"promote_active"` // sort active/open items first
 }
 
-type FinderConfig struct {
+// AgentDisplayConfig holds agent-specific display settings used by queue
+// and session agent summaries.
+type AgentDisplayConfig struct {
 	ProviderOrder         []string `toml:"provider_order"`
 	StateOrder            []string `toml:"state_order"`
 	ShowContextPercentage bool     `toml:"show_context_percentage"`
+	UseSeenInRanking      bool     `toml:"use_seen_in_ranking"` // unseen attention events boost queue ranking
+}
 
+// ActiveIndicatorConfig controls the visual indicator for active/open items.
+type ActiveIndicatorConfig struct {
+	Icon       string `toml:"icon"`       // default "▪"
+	Color      string `toml:"color"`      // foreground color (ANSI), default "" (inherits)
+	Background string `toml:"background"` // background color (ANSI), default "" (none)
+	Bold       *bool  `toml:"bold"`       // default nil (false)
+}
+
+type FinderConfig struct {
 	// What appears in bare `cms` and in what order.
 	Include []string `toml:"include"`
 
 	// Global sort defaults (per-picker sections override).
 	DemoteCurrent bool `toml:"demote_current"`
 	PromoteRecent bool `toml:"promote_recent"`
-	PromoteOpen   bool `toml:"promote_open"` // promote items that are open (have tmux session/window)
+	PromoteActive bool `toml:"promote_active"` // sort active/open items first
 
-	UseSeenStatusInRanking bool `toml:"use_seen_status_in_ranking"` // when true, unseen attention events boost queue ranking
+	// Agent display (queue + summaries).
+	Agents AgentDisplayConfig `toml:"agents"`
 
-	// Per-picker overrides.
+	// Active item visual indicator.
+	ActiveIndicator ActiveIndicatorConfig `toml:"active_indicator"`
+
+	// Per-section sort overrides.
 	Sessions  PickerSortConfig `toml:"sessions"`
 	Projects  PickerSortConfig `toml:"projects"`
 	Worktrees PickerSortConfig `toml:"worktrees"`
+	Branches  PickerSortConfig `toml:"branches"`
 	Windows   PickerSortConfig `toml:"windows"`
 	Panes     PickerSortConfig `toml:"panes"`
 	Marks     PickerSortConfig `toml:"marks"`
@@ -173,13 +191,13 @@ func (f FinderConfig) ShouldPromoteRecent(pickerType string) bool {
 	return f.PromoteRecent
 }
 
-// ShouldPromoteOpen returns whether items that are "open" (have a tmux
-// session or window) should be promoted above unopened items.
-func (f FinderConfig) ShouldPromoteOpen(pickerType string) bool {
-	if psc := f.pickerSort(pickerType); psc.PromoteOpen != nil {
-		return *psc.PromoteOpen
+// ShouldPromoteActive returns whether active/open items should be
+// promoted above inactive items in the given section.
+func (f FinderConfig) ShouldPromoteActive(pickerType string) bool {
+	if psc := f.pickerSort(pickerType); psc.PromoteActive != nil {
+		return *psc.PromoteActive
 	}
-	return f.PromoteOpen
+	return f.PromoteActive
 }
 
 func (f FinderConfig) pickerSort(pickerType string) PickerSortConfig {
@@ -190,6 +208,8 @@ func (f FinderConfig) pickerSort(pickerType string) PickerSortConfig {
 		return f.Projects
 	case "worktrees":
 		return f.Worktrees
+	case "branches":
+		return f.Branches
 	case "windows":
 		return f.Windows
 	case "panes":
@@ -308,13 +328,19 @@ func boolPtr(b bool) *bool { return &b }
 
 func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
-		ProviderOrder:         []string{"claude", "codex"},
-		StateOrder:            []string{"idle", "working", "waiting"},
-		ShowContextPercentage: true,
-		Include:               []string{"sessions", "queue", "worktrees", "marks", "projects"},
-		DemoteCurrent:         true,
-		PromoteRecent:         false,
-		Sessions:              PickerSortConfig{PromoteRecent: boolPtr(true)},
+		Include:       []string{"sessions", "queue", "worktrees", "marks", "projects"},
+		DemoteCurrent: true,
+		PromoteRecent: false,
+		Agents: AgentDisplayConfig{
+			ProviderOrder:         []string{"claude", "codex"},
+			StateOrder:            []string{"idle", "working", "waiting"},
+			ShowContextPercentage: true,
+		},
+		ActiveIndicator: ActiveIndicatorConfig{
+			Icon:  "\u25aa", // ▪
+			Color: "2",      // green
+		},
+		Sessions: PickerSortConfig{PromoteRecent: boolPtr(true)},
 	}
 }
 
@@ -412,9 +438,10 @@ func (c *Config) normalize() {
 	defaultStr(&c.Dashboard.WindowHeaders, dd.WindowHeaders)
 
 	df := DefaultFinderConfig()
-	defaultSlice(&c.Finder.ProviderOrder, df.ProviderOrder)
-	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
+	defaultSlice(&c.Finder.Agents.ProviderOrder, df.Agents.ProviderOrder)
+	defaultSlice(&c.Finder.Agents.StateOrder, df.Agents.StateOrder)
 	defaultSlice(&c.Finder.Include, df.Include)
+	defaultStr(&c.Finder.ActiveIndicator.Icon, df.ActiveIndicator.Icon)
 
 	// Migrate legacy fields to new finder sort config.
 	if c.General.LastSessionFirst && c.Finder.Sessions.PromoteRecent == nil {

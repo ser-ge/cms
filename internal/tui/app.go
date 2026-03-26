@@ -16,19 +16,11 @@ const (
 	ScreenNewWorktree
 )
 
-// FinderKind controls what the finder shows.
-type FinderKind int
-
-const (
-	FinderAll      FinderKind = iota // sessions + projects + worktrees + marks
-	FinderSessions                   // sessions only
-	FinderProjects                   // projects only
-	FinderWorktrees                  // worktrees only (current repo)
-	FinderPanes                      // panes only
-	FinderWindows                    // windows only
-	FinderQueue                      // attention queue (urgency-sorted)
-	FinderMarks                      // marks only
-)
+// ValidSections lists all known finder section names.
+var ValidSections = []string{
+	"sessions", "projects", "queue", "worktrees", "branches",
+	"panes", "windows", "marks",
+}
 
 // ItemKind distinguishes session entries from project entries.
 type ItemKind int
@@ -37,6 +29,7 @@ const (
 	KindSession  ItemKind = iota
 	KindProject
 	KindWorktree
+	KindBranch
 	KindPane
 	KindMark
 	KindWindow
@@ -68,7 +61,7 @@ type RootModel struct {
 	dashboard   dashboardModel
 	finder      finderModel
 	newWorktree newWorktreeModel
-	finderKind  FinderKind
+	sections    []string // which finder sections to show
 	watcher     *watcher.Watcher
 	cfg         config.Config
 	width       int
@@ -82,19 +75,19 @@ func (m RootModel) PostAction() *PostAction {
 }
 
 // NewRootModel creates a new root TUI model.
-func NewRootModel(initial Screen, fk FinderKind, cfg config.Config, w *watcher.Watcher) RootModel {
+func NewRootModel(initial Screen, sections []string, cfg config.Config, w *watcher.Watcher) RootModel {
 	dash := newDashboardModel(cfg)
 	dash.watcher = w
 	m := RootModel{
-		screen:     initial,
-		initial:    initial,
-		dashboard:  dash,
-		finderKind: fk,
-		watcher:    w,
-		cfg:        cfg,
+		screen:   initial,
+		initial:  initial,
+		dashboard: dash,
+		sections: sections,
+		watcher:  w,
+		cfg:      cfg,
 	}
 	if initial == ScreenFinder {
-		m.finder = newFinderModel(cfg, w, fk, 0, 0)
+		m.finder = newFinderModel(cfg, w, sections, 0, 0)
 	}
 	if initial == ScreenNewWorktree {
 		m.newWorktree = newNewWorktreeModel(cfg)
@@ -134,7 +127,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "/":
 				return m.switchTo(ScreenFinder)
 			case "a":
-				return m.switchToFinder(FinderQueue)
+				return m.switchToFinder([]string{"queue"})
 			case "q":
 				return m, tea.Quit
 			}
@@ -215,12 +208,12 @@ func (m *RootModel) initNewWorktree() tea.Cmd {
 }
 
 func (m *RootModel) initFinder() tea.Cmd {
-	m.finder = newFinderModel(m.cfg, m.watcher, FinderAll, m.width, m.height)
+	m.finder = newFinderModel(m.cfg, m.watcher, m.cfg.Finder.Include, m.width, m.height)
 	return m.finder.Init()
 }
 
-func (m RootModel) switchToFinder(kind FinderKind) (tea.Model, tea.Cmd) {
+func (m RootModel) switchToFinder(sections []string) (tea.Model, tea.Cmd) {
 	m.screen = ScreenFinder
-	m.finder = newFinderModel(m.cfg, m.watcher, kind, m.width, m.height)
+	m.finder = newFinderModel(m.cfg, m.watcher, sections, m.width, m.height)
 	return m, m.finder.Init()
 }

@@ -7,13 +7,15 @@ Tmux session picker and dashboard with Claude/Codex agent awareness.
 ```
 # Default (finder — universal fuzzy switcher)
 cms                              Finder (configurable via [finder].include)
-cms -s  / cms sessions           Sessions only
-cms -p  / cms projects           Projects only
-cms -q  / cms queue              Attention queue (urgency-sorted agent panes)
-cms -m  / cms marks              Marks only
+cms sessions                     Sessions only (also: cms -s)
+cms projects                     Projects only (also: cms -p)
+cms queue                        Attention queue (also: cms -q)
+cms marks                        Marks only (also: cms -m)
 cms worktrees                    Worktrees only (current repo)
+cms branches                     Local branches (current repo)
 cms windows                      Windows only (all sessions)
 cms panes                        Panes only (all sessions)
+cms sessions,worktrees           Composable: comma-separated section names
 
 # Views
 cms dash                         Dashboard (session/pane grid with agent status)
@@ -60,6 +62,7 @@ internal/
 
   git/
     git.go                        Info, Cache, DetectAll, Cmd
+    branch.go                     ListLocalBranches
     worktree.go                   Worktree, ListWorktrees, IsWorktreeCheckout
 
   tmux/
@@ -109,7 +112,7 @@ internal/
     util.go                       ShortenHome, JoinParts
     picker.go                     PickerItem, PickerAction, pickerModel (fuzzy-find, fzf algo, normal-mode actions)
     actions.go                    tea.Cmd factories bridging views to session/tmux/mark ops
-    app.go                        RootModel, Screen enum, FinderKind, PostAction
+    app.go                        RootModel, Screen enum, ValidSections, PostAction
     dashboard.go                  dashboardModel (session/pane grid with agent status)
     finder.go                     finderModel (universal fuzzy picker: sessions/projects/worktrees/windows/panes/marks/queue)
     newworktree.go                newWorktreeModel (text input for quick worktree creation)
@@ -147,12 +150,15 @@ Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
 - **Shared styles in one place.** All lipgloss styles live in `tui/styles.go`, initialized once by `InitStyles(cfg)`. No view imports another view for styles.
 - **Config types are centralized.** `WorktreeConfig`, `ProjectConfig`, `WorktreeHook` live in the config package alongside all other config types, even though worktree operations use them.
 - **`debug.Logf` is a package-level var.** Set by main after init. Internal packages call `debug.Logf(...)` without importing the logger implementation.
-- **PostAction is the exit contract between TUI and main.** Screens that trigger tmux mutations (switch, open, worktree create) set a `PostAction` and quit. `main.go:executePostAction()` handles the actual infra calls after bubbletea's alt screen is torn down. New `ItemKind` values extend this: `KindSession`, `KindProject`, `KindWorktree`, `KindPane`, `KindMark`, `KindWindow`, `KindQueue`.
+- **PostAction is the exit contract between TUI and main.** Screens that trigger tmux mutations (switch, open, worktree create) set a `PostAction` and quit. `main.go:executePostAction()` handles the actual infra calls after bubbletea's alt screen is torn down. New `ItemKind` values extend this: `KindSession`, `KindProject`, `KindWorktree`, `KindBranch`, `KindPane`, `KindMark`, `KindWindow`, `KindQueue`.
 - **New TUI screens follow the done/action pattern.** Each sub-model exposes `done bool` and `action *PostAction`. When `done` is true, `updateActive` in app.go checks `action`: non-nil means quit-with-action, nil means cancelled. See `newWorktreeModel` as the minimal example.
 - **`CreateWorktreeOpts.StartPoint` vs `Track`.** Use `StartPoint` for local base branches (e.g. `main`). Use `Track` only when checking out a remote branch that needs upstream tracking. Don't assume `origin/<branch>` exists.
 - **`WorktreeConfig.BaseBranch`** is configurable in `[worktree]` (user or project config). Empty means auto-detect via `DefaultBranch()` (origin/HEAD → main → master).
-- **Finder is the universal switcher.** FinderKind controls which item types appear. Queue, worktree, window, pane, and mark items are all finder modes (not separate screens). `rebuildPicker()` assembles sections driven by `[finder].include` config. Queue urgency sorting lives in `buildQueueItems()`.
-- **Finder sort is config-driven.** `PickerSortConfig` (per-picker section overrides with global defaults) controls `demote_current`, `promote_recent`, and `promote_open`. Each section uses `sortedSectionItems()` with pluggable `isCurrent`/`isRecent` predicates. Queue has its own urgency sort.
+- **Finder is the universal switcher.** A `[]string` of section names (passed from CLI or config) controls which item types appear. Sections are composable via comma-separated CLI args (e.g. `cms sessions,worktrees`). `rebuildPicker()` assembles sections in order. Valid sections: `sessions`, `projects`, `queue`, `worktrees`, `branches`, `panes`, `windows`, `marks`.
+- **Finder sort is config-driven.** `PickerSortConfig` (per-picker section overrides with global defaults) controls `demote_current`, `promote_recent`, and `promote_active`. Each section uses `sortedSectionItems()` with pluggable `isCurrent`/`isRecent` predicates. Queue has its own urgency sort.
+- **Active is always computed.** Every item gets `Active` set based on its "live presence" (sessions: attached, worktrees: has tmux pane, projects: has session, panes: has agent, windows: has agent, branches: has worktree, queue: unseen events, marks: pane alive). `promote_active` controls only sort order, not whether Active is computed. The Active indicator visual is configurable via `[finder.active_indicator]`.
+- **Cross-section dedup.** When overlapping sections are composed, the "more specific" section wins: branches with worktrees are hidden from branches when worktrees section is visible; projects with sessions are hidden from projects when sessions section is visible.
+- **Agent config is separated.** `[finder.agents]` holds `provider_order`, `state_order`, `show_context_percentage`, and `use_seen_in_ranking`. These are agent-specific display settings used by queue and session summaries.
 - **Queue renders fixed-width columns.** Title is `session/branch`, description columns are provider (6), context% (4), activity (9, padded for ANSI), duration (4). Titles padded to longest across all items.
 - **Picker supports normal-mode actions.** `PickerAction` enum (e.g. `PickerActionDelete`) with y/n confirmation prompt. Picker sets `action` + `chosen`; finder dispatches by item kind (kill session/pane, remove mark).
 - **Marks are file-backed.** Stored as JSON at `~/.config/cms/marks.json`. Pane IDs are globally addressable in tmux; session/window stored for display only.

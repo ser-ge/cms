@@ -53,15 +53,18 @@ type finderModel struct {
 	windowIdx     []finderEntry
 	markItems     []PickerItem
 	markIdx       []finderEntry
+	branchItems   []PickerItem
+	branchIdx     []finderEntry
 	hasSess       bool
 	hasProj       bool
 	hasQueue      bool
 	hasWorktree   bool
+	hasBranch     bool
 	hasPane       bool
 	hasWindow     bool
 	hasMark       bool
 
-	kind            FinderKind
+	sections        []string
 	done            bool
 	action          *PostAction // action to run after TUI exits
 	focusSession    string      // session name to focus in dashboard on esc
@@ -72,24 +75,26 @@ type finderModel struct {
 	height          int
 }
 
-func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, width, height int) finderModel {
+func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, width, height int) finderModel {
 	m := finderModel{
-		kind:    kind,
-		cfg:     cfg,
-		watcher: w,
-		width:   width,
-		height:  height,
+		sections: sections,
+		cfg:      cfg,
+		watcher:  w,
+		width:    width,
+		height:   height,
 	}
+
+	want := sectionSet(sections)
 
 	// Cache the last session name once at init (avoid subprocess per rebuild).
 	if cfg.General.LastSessionFirst {
 		m.lastSessionName = tmux.FetchLastSession()
 	}
 
-	// Pre-populate sessions from watcher cache if this mode needs them.
-	// Most modes need session data: queue reads agents, panes flatten sessions,
-	// worktrees need the current pane's working dir. Only projects mode skips.
-	needsSessions := kind != FinderProjects
+	// Pre-populate sessions from watcher cache. Most sections need session
+	// data (queue reads agents, panes flatten sessions, worktrees need
+	// current pane's working dir). Only "projects" alone can skip.
+	needsSessions := len(want) != 1 || !want["projects"]
 	if needsSessions {
 		sessions, agents, _ := w.CachedState()
 		if len(sessions) > 0 {
@@ -100,97 +105,77 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, kind FinderKind, widt
 		}
 	}
 
-	// Mark data sources as "done" when this mode doesn't need them.
-	// For FinderAll, we load everything.
-	switch kind {
-	case FinderSessions:
-		m.hasProj = true
-		m.hasQueue = true
-		m.hasWorktree = true
-		m.hasPane = true
-		m.hasWindow = true
-		m.hasMark = true
-	case FinderProjects:
+	// Mark unwanted data sources as "done" so rebuildPicker doesn't wait.
+	if !want["sessions"] {
 		m.hasSess = true
-		m.hasQueue = true
-		m.hasWorktree = true
-		m.hasPane = true
-		m.hasWindow = true
-		m.hasMark = true
-	case FinderQueue:
+	}
+	if !want["projects"] {
 		m.hasProj = true
-		m.buildQueueItems()
+	}
+	if !want["queue"] {
 		m.hasQueue = true
+	}
+	if !want["worktrees"] {
 		m.hasWorktree = true
+	}
+	if !want["branches"] {
+		m.hasBranch = true
+	}
+	if !want["panes"] {
 		m.hasPane = true
+	}
+	if !want["windows"] {
 		m.hasWindow = true
+	}
+	if !want["marks"] {
 		m.hasMark = true
-	case FinderWorktrees:
-		m.hasSess = true
-		m.hasProj = true
-		m.hasQueue = true
-		m.hasPane = true
-		m.hasWindow = true
-		m.hasMark = true
-		// Worktrees loaded async via Init.
-	case FinderPanes:
-		m.hasSess = true
-		m.hasProj = true
-		m.hasQueue = true
-		m.hasWorktree = true
-		m.hasWindow = true
-		m.hasMark = true
-		m.buildPaneItems()
-		m.hasPane = true
-	case FinderWindows:
-		m.hasSess = true
-		m.hasProj = true
-		m.hasQueue = true
-		m.hasWorktree = true
-		m.hasPane = true
-		m.hasMark = true
-		m.buildWindowItems()
-		m.hasWindow = true
-	case FinderMarks:
-		m.hasSess = true
-		m.hasProj = true
-		m.hasQueue = true
-		m.hasWorktree = true
-		m.hasPane = true
-		m.hasWindow = true
-		// Marks loaded async via Init.
-	case FinderAll:
-		m.buildQueueItems()
-		m.hasQueue = true
-		m.buildPaneItems()
-		m.hasPane = true
-		m.hasWindow = true
-		// Worktrees and marks loaded async via Init.
 	}
 
-	if m.hasSess || m.hasProj || m.hasQueue || m.hasWorktree || m.hasPane || m.hasMark {
+	// Build sync data sources that are wanted.
+	if want["queue"] {
+		m.buildQueueItems()
+		m.hasQueue = true
+	}
+	if want["panes"] {
+		m.buildPaneItems()
+		m.hasPane = true
+	}
+	if want["windows"] {
+		m.buildWindowItems()
+		m.hasWindow = true
+	}
+
+	if m.hasSess || m.hasProj || m.hasQueue || m.hasWorktree || m.hasBranch || m.hasPane || m.hasMark {
 		m.rebuildPicker()
 	}
 
 	return m
 }
 
+// sectionSet builds a lookup map from a sections slice.
+func sectionSet(sections []string) map[string]bool {
+	m := make(map[string]bool, len(sections))
+	for _, s := range sections {
+		m[s] = true
+	}
+	return m
+}
+
 func (m finderModel) Init() tea.Cmd {
+	want := sectionSet(m.sections)
 	var cmds []tea.Cmd
 
-	switch m.kind {
-	case FinderSessions, FinderQueue, FinderPanes, FinderWindows:
-		// No async work needed.
-	case FinderWorktrees:
-		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher))
-	case FinderMarks:
-		cmds = append(cmds, loadMarksCmd(m.sessData))
-	case FinderAll:
+	if want["projects"] {
 		cmds = append(cmds, scanProjectsCmd(m.cfg))
+	}
+	if want["worktrees"] || want["branches"] {
 		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher))
+	}
+	if want["branches"] {
+		cmds = append(cmds, scanBranchesCmd(m.sessData, m.watcher))
+	}
+	if want["marks"] {
 		cmds = append(cmds, loadMarksCmd(m.sessData))
-	case FinderProjects:
-		cmds = append(cmds, scanProjectsCmd(m.cfg))
 	}
 
 	if len(cmds) == 0 {
@@ -239,6 +224,44 @@ func scanWorktreesCmd(sessions []tmux.Session, agents map[string]agent.AgentStat
 		}
 		return worktreesScannedMsg{worktrees: wts, repoRoot: root}
 	}
+}
+
+// scanBranchesCmd lists local branches and cross-references with worktrees.
+func scanBranchesCmd(sessions []tmux.Session, w *watcher.Watcher) tea.Cmd {
+	return func() tea.Msg {
+		_, _, current := w.CachedState()
+		cwd := currentPaneWorkingDir(sessions, current)
+		if cwd == "" {
+			cwd, _ = os.Getwd()
+		}
+		if cwd == "" {
+			return branchesScannedMsg{}
+		}
+		root, err := worktree.FindRepoRoot(cwd)
+		if err != nil {
+			return branchesScannedMsg{}
+		}
+		branches, err := git.ListLocalBranches(root)
+		if err != nil {
+			return branchesScannedMsg{}
+		}
+		// Build set of branches that have worktrees.
+		wtBranches := map[string]bool{}
+		wts, _ := git.ListWorktrees(root)
+		for _, wt := range wts {
+			if wt.Branch != "" {
+				wtBranches[wt.Branch] = true
+			}
+		}
+		return branchesScannedMsg{branches: branches, repoRoot: root, worktreeBranches: wtBranches}
+	}
+}
+
+type branchesScannedMsg struct {
+	branches []string
+	repoRoot string
+	// Branches that have worktrees (for Active marking).
+	worktreeBranches map[string]bool
 }
 
 type marksLoadedMsg struct {
@@ -297,7 +320,7 @@ func (m *finderModel) buildSessionItems(agents map[string]agent.AgentStatus) {
 			Title:       sess.Name,
 			Description: desc,
 			FilterValue: sess.Name,
-			Active:      true,
+			Active:      sess.Attached,
 		})
 		m.sessIdx = append(m.sessIdx, finderEntry{
 			kind:        KindSession,
@@ -310,7 +333,7 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 	if agents == nil {
 		return ""
 	}
-	if len(m.cfg.Finder.ProviderOrder) == 0 {
+	if len(m.cfg.Finder.Agents.ProviderOrder) == 0 {
 		return ""
 	}
 
@@ -343,7 +366,7 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 	}
 
 	var parts []string
-	for _, provider := range orderedProviders(m.cfg.Finder.ProviderOrder) {
+	for _, provider := range orderedProviders(m.cfg.Finder.Agents.ProviderOrder) {
 		s := summaries[provider]
 		if s == nil {
 			continue
@@ -351,12 +374,12 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 		if s.total == 0 {
 			continue
 		}
-		parts = append(parts, renderProviderSummary(provider, *s, m.cfg.Finder))
+		parts = append(parts, renderProviderSummary(provider, *s, m.cfg.Finder.Agents))
 	}
 	return JoinParts(parts)
 }
 
-func renderProviderSummary(provider agent.Provider, s providerSummary, cfg config.FinderConfig) string {
+func renderProviderSummary(provider agent.Provider, s providerSummary, cfg config.AgentDisplayConfig) string {
 	label := ProviderAccent(provider).Render(provider.String())
 	var states []string
 	for _, state := range cfg.StateOrder {
@@ -506,6 +529,30 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.rebuildPicker()
 		return m, nil
 
+	case branchesScannedMsg:
+		m.branchItems = nil
+		m.branchIdx = nil
+		for _, branch := range msg.branches {
+			desc := "local branch"
+			hasWT := msg.worktreeBranches[branch]
+			if hasWT {
+				desc = "has worktree"
+			}
+			m.branchItems = append(m.branchItems, PickerItem{
+				Title:       branch,
+				Description: desc,
+				FilterValue: branch,
+				Active:      hasWT,
+			})
+			m.branchIdx = append(m.branchIdx, finderEntry{
+				kind:           KindBranch,
+				worktreeBranch: branch,
+			})
+		}
+		m.hasBranch = true
+		m.rebuildPicker()
+		return m, nil
+
 	case marksLoadedMsg:
 		m.markItems = nil
 		m.markIdx = nil
@@ -547,7 +594,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		return m, nil
 	}
 
-	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasWindow && !m.hasMark {
+	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasBranch && !m.hasPane && !m.hasWindow && !m.hasMark {
 		return m, nil
 	}
 
@@ -596,6 +643,12 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 						WorktreePath:   entry.worktreePath,
 						WorktreeBranch: entry.worktreeBranch,
 					}
+				case KindBranch:
+					// Create/switch to worktree for this branch.
+					m.action = &PostAction{
+						Kind:       KindWorktree,
+						BranchName: entry.worktreeBranch,
+					}
 				default:
 					m.action = &PostAction{
 						Kind:        entry.kind,
@@ -626,7 +679,7 @@ func (m *finderModel) rebuildPicker() {
 
 	// Determine which sections to include.
 	// Dedicated modes show their single type; FinderAll uses config include order.
-	sections := m.sectionsForKind()
+	sections := m.activeSections()
 
 	for _, section := range sections {
 		si, se := m.sectionItems(section)
@@ -638,26 +691,9 @@ func (m *finderModel) rebuildPicker() {
 	m.picker = m.picker.resetWith(items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
 }
 
-// sectionsForKind returns which item type sections to include.
-func (m *finderModel) sectionsForKind() []string {
-	switch m.kind {
-	case FinderSessions:
-		return []string{"sessions"}
-	case FinderProjects:
-		return []string{"projects"}
-	case FinderQueue:
-		return []string{"queue"}
-	case FinderWorktrees:
-		return []string{"worktrees"}
-	case FinderPanes:
-		return []string{"panes"}
-	case FinderWindows:
-		return []string{"windows"}
-	case FinderMarks:
-		return []string{"marks"}
-	default:
-		return m.cfg.Finder.Include
-	}
+// activeSections returns which item type sections to include.
+func (m *finderModel) activeSections() []string {
+	return m.sections
 }
 
 // sectionItems returns sorted picker items + entries for a given section name.
@@ -679,6 +715,8 @@ func (m *finderModel) sectionItems(section string) ([]PickerItem, []finderEntry)
 		return m.sortedSectionItems(m.paneItems, m.paneIdx, "panes", m.paneIsCurrent, nil)
 	case "projects":
 		return m.filteredProjectItems()
+	case "branches":
+		return m.filteredBranchItems()
 	}
 	return nil, nil
 }
@@ -697,9 +735,9 @@ func (m *finderModel) sortedSectionItems(
 
 	demote := m.cfg.Finder.ShouldDemoteCurrent(pickerType)
 	promote := m.cfg.Finder.ShouldPromoteRecent(pickerType)
-	promoteOpen := m.cfg.Finder.ShouldPromoteOpen(pickerType)
+	promoteActive := m.cfg.Finder.ShouldPromoteActive(pickerType)
 
-	if !demote && !promote && !promoteOpen {
+	if !demote && !promote && !promoteActive {
 		return items, idx
 	}
 
@@ -712,7 +750,7 @@ func (m *finderModel) sortedSectionItems(
 	sort.SliceStable(order, func(a, b int) bool {
 		ia, ib := order[a], order[b]
 		// Open items first (Active == true means open).
-		if promoteOpen {
+		if promoteActive {
 			oa, ob := items[ia].Active, items[ib].Active
 			if oa != ob {
 				return oa
@@ -773,16 +811,11 @@ func (m *finderModel) paneIsCurrent(i int) bool {
 }
 
 // worktreeItemsWithOpenStatus returns worktree items with Active set to true
-// for worktrees that have a tmux window open. With promote_open, open
-// worktrees sort first via the Active field in sortedSectionItems.
+// for worktrees that have a tmux pane inside them. Active is always computed;
+// promote_active controls only whether Active items sort first.
 func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry) {
 	if len(m.worktreeItems) == 0 {
 		return nil, nil
-	}
-
-	promoteOpen := m.cfg.Finder.ShouldPromoteOpen("worktrees")
-	if !promoteOpen {
-		return m.worktreeItems, m.worktreeIdx
 	}
 
 	// Build set of worktree paths that have tmux panes inside them.
@@ -809,53 +842,62 @@ func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry
 	return items, m.worktreeIdx
 }
 
-// filteredProjectItems returns projects. With promote_open, projects that
-// already have a tmux session are marked Active and sorted first.
-// Without promote_open, those projects are excluded (legacy behavior).
+// filteredProjectItems returns projects with Active marking. When the sessions
+// section is also visible, projects with open sessions are hidden (deduped).
 func (m *finderModel) filteredProjectItems() ([]PickerItem, []finderEntry) {
 	activeNames := map[string]bool{}
 	for _, e := range m.sessIdx {
 		activeNames[normalizeName(e.sessionName)] = true
 	}
 
-	promoteOpen := m.cfg.Finder.ShouldPromoteOpen("projects")
+	dedupSessions := sectionSet(m.sections)["sessions"]
 
 	var items []PickerItem
 	var entries []finderEntry
 	for i, p := range m.projects {
 		isOpen := activeNames[normalizeName(p.Title)]
-		if isOpen && !promoteOpen {
-			// Legacy: exclude projects that already have a session.
-			continue
+		if isOpen && dedupSessions {
+			continue // shown in sessions section
 		}
 		item := p
-		if isOpen {
-			item.Active = true
-		}
+		item.Active = isOpen
 		items = append(items, item)
 		entries = append(entries, m.projIdx[i])
 	}
 
-	// With promote_open, sort open projects first.
-	if promoteOpen && len(items) > 0 {
-		order := make([]int, len(items))
-		for i := range order {
-			order[i] = i
+	return m.sortedSectionItems(items, entries, "projects", nil, nil)
+}
+
+// filteredBranchItems returns branches with Active marking. When the worktrees
+// section is also visible, branches with worktrees are hidden (deduped).
+func (m *finderModel) filteredBranchItems() ([]PickerItem, []finderEntry) {
+	dedupWorktrees := sectionSet(m.sections)["worktrees"]
+
+	var items []PickerItem
+	var entries []finderEntry
+	for i, b := range m.branchItems {
+		if b.Active && dedupWorktrees {
+			continue // shown in worktrees section
 		}
-		sort.SliceStable(order, func(a, b int) bool {
-			return items[order[a]].Active && !items[order[b]].Active
-		})
-		sorted := make([]PickerItem, len(items))
-		sortedE := make([]finderEntry, len(entries))
-		for i, o := range order {
-			sorted[i] = items[o]
-			sortedE[i] = entries[o]
-		}
-		items = sorted
-		entries = sortedE
+		items = append(items, b)
+		entries = append(entries, m.branchIdx[i])
 	}
 
-	return items, entries
+	// isCurrent needs to work on the filtered entries, not m.branchIdx.
+	isCurrent := func(i int) bool {
+		_, _, current := m.watcher.CachedState()
+		cwd := currentPaneWorkingDir(m.sessData, current)
+		if cwd == "" {
+			return false
+		}
+		branch, err := git.Cmd(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return false
+		}
+		return strings.TrimSpace(branch) == entries[i].worktreeBranch
+	}
+
+	return m.sortedSectionItems(items, entries, "branches", isCurrent, nil)
 }
 
 // buildWindowItems populates window picker items from session data.
@@ -893,7 +935,7 @@ func (m *finderModel) buildWindowItems() {
 				Title:       title,
 				Description: desc,
 				FilterValue: sess.Name + " " + win.Name,
-				Active:      win.Active && sess.Attached,
+				Active:      len(agentParts) > 0,
 			})
 			m.windowIdx = append(m.windowIdx, finderEntry{
 				kind:   KindWindow,
@@ -913,7 +955,9 @@ func (m *finderModel) buildPaneItems() {
 			for _, pane := range win.Panes {
 				title := fmt.Sprintf("%s:%s.%d", sess.Name, win.Name, pane.Index)
 				desc := ShortenHome(pane.WorkingDir)
-				if cs, ok := m.agentData[pane.ID]; ok && cs.Running {
+				cs, hasRunning := m.agentData[pane.ID]
+				hasRunning = hasRunning && cs.Running
+				if hasRunning {
 					desc += " · " + cs.Provider.String() + " " + RenderActivity(cs.Activity)
 				} else if pane.Command != "" {
 					desc += " · " + pane.Command
@@ -922,7 +966,7 @@ func (m *finderModel) buildPaneItems() {
 					Title:       title,
 					Description: desc,
 					FilterValue: sess.Name + " " + win.Name + " " + pane.Command + " " + pane.WorkingDir,
-					Active:      pane.Active,
+					Active:      hasRunning,
 				})
 				m.paneIdx = append(m.paneIdx, finderEntry{
 					kind:   KindPane,
@@ -1004,7 +1048,7 @@ func (m *finderModel) buildQueueItems() {
 
 				// Sort key: unseen waiting (0), unseen finished (1), working (2), idle (3).
 				sortKey := 3
-				if unseen && hasReason && m.cfg.Finder.UseSeenStatusInRanking {
+				if unseen && hasReason && m.cfg.Finder.Agents.UseSeenInRanking {
 					sortKey = int(reason)
 				} else {
 					switch cs.Activity {
@@ -1131,10 +1175,11 @@ func formatDuration(d time.Duration) string {
 }
 
 func (m finderModel) View() string {
-	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasPane && !m.hasWindow && !m.hasMark {
+	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasBranch && !m.hasPane && !m.hasWindow && !m.hasMark {
 		return "  Loading...\n"
 	}
-	if m.kind == FinderQueue && len(m.queueItems) == 0 {
+	want := sectionSet(m.sections)
+	if len(want) == 1 && want["queue"] && len(m.queueItems) == 0 {
 		return "  No agent sessions\n"
 	}
 	return m.picker.View()

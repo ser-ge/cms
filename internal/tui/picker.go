@@ -447,12 +447,9 @@ func (m pickerModel) View() string {
 			title = highlightMatches(src, idxs, nil)
 		}
 
-		icon := "  "
-		if item.Active {
-			icon = "\u25aa "
-		}
+		icon := RenderActiveIndicator(item.Active)
 
-		line := " " + icon + title + desc
+		line := " " + icon + " " + title + desc
 
 		if isSelected {
 			lineW := lipgloss.Width(line)

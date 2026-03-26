@@ -45,7 +45,7 @@ func TestRenderHarnessFinder(t *testing.T) {
 	InitStyles(cfg)
 	w := harnessWatcher()
 
-	m := newFinderModel(cfg, w, FinderSessions, 120, 18)
+	m := newFinderModel(cfg, w, []string{"sessions"}, 120, 18)
 	t.Log("=== finder harness ===")
 	t.Log("\n" + m.View())
 }
@@ -59,7 +59,7 @@ func TestRenderHarnessQueue(t *testing.T) {
 	InitStyles(cfg)
 	w := harnessWatcher()
 
-	m := newFinderModel(cfg, w, FinderQueue, 120, 18)
+	m := newFinderModel(cfg, w, []string{"queue"}, 120, 18)
 	t.Log("=== queue harness ===")
 	t.Log("\n" + m.View())
 }
@@ -94,8 +94,8 @@ func TestRenderHarnessLive(t *testing.T) {
 			w.Attention.Add(id, attention.Waiting)
 		}
 	}
-	finder := newFinderModel(cfg, w, FinderSessions, 140, 24)
-	queue := newFinderModel(cfg, w, FinderQueue, 140, 24)
+	finder := newFinderModel(cfg, w, []string{"sessions"}, 140, 24)
+	queue := newFinderModel(cfg, w, []string{"queue"}, 140, 24)
 
 	t.Logf("live sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 	t.Log("=== live dashboard ===")
@@ -224,7 +224,7 @@ func TestRenderHarnessProviderSummaryIncludesZeroContext(t *testing.T) {
 		idle:   1,
 		maxCtx: 0,
 		hasCtx: true,
-	}, cfg.Finder)
+	}, cfg.Finder.Agents)
 	if !strings.Contains(out, "0%") {
 		t.Fatalf("summary %q missing 0%% context", out)
 	}
@@ -235,15 +235,15 @@ func TestRenderHarnessFinderSummaryConfigVariants(t *testing.T) {
 	InitStyles(cfg)
 
 	totalOnly := cfg
-	totalOnly.Finder.StateOrder = []string{"total"}
-	totalOnly.Finder.ShowContextPercentage = false
-	out := renderProviderSummary(agent.ProviderCodex, providerSummary{total: 3, idle: 1, working: 1, waiting: 1, maxCtx: 37, hasCtx: true}, totalOnly.Finder)
+	totalOnly.Finder.Agents.StateOrder = []string{"total"}
+	totalOnly.Finder.Agents.ShowContextPercentage = false
+	out := renderProviderSummary(agent.ProviderCodex, providerSummary{total: 3, idle: 1, working: 1, waiting: 1, maxCtx: 37, hasCtx: true}, totalOnly.Finder.Agents)
 	if !strings.Contains(out, "3") || strings.Contains(out, "37%") {
 		t.Fatalf("total-only summary = %q, want total without context", out)
 	}
 
 	noProviders := cfg
-	noProviders.Finder.ProviderOrder = []string{}
+	noProviders.Finder.Agents.ProviderOrder = []string{}
 	m := finderModel{cfg: noProviders}
 	if got := m.agentSummary(harnessSessions()[0], harnessAgents()); got != "" {
 		t.Fatalf("agentSummary with no providers = %q, want empty", got)

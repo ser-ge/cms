@@ -30,7 +30,7 @@ func main() {
 	tui.InitStyles(cfg)
 
 	initial := tui.ScreenFinder
-	fk := tui.FinderAll
+	sections := cfg.Finder.Include // default: config-driven
 
 	args := os.Args[1:]
 
@@ -56,13 +56,13 @@ func main() {
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case "-s":
-			fk = tui.FinderSessions
+			sections = []string{"sessions"}
 		case "-p":
-			fk = tui.FinderProjects
+			sections = []string{"projects"}
 		case "-q":
-			fk = tui.FinderQueue
+			sections = []string{"queue"}
 		case "-m":
-			fk = tui.FinderMarks
+			sections = []string{"marks"}
 		default:
 			exitErr(fmt.Errorf("%s", unknownFlagMsg(args[0])))
 		}
@@ -71,21 +71,6 @@ func main() {
 
 	if len(args) > 0 {
 		switch args[0] {
-		// Filtered finders (long forms).
-		case "sessions":
-			fk = tui.FinderSessions
-		case "projects":
-			fk = tui.FinderProjects
-		case "queue":
-			fk = tui.FinderQueue
-		case "marks":
-			fk = tui.FinderMarks
-		case "worktrees":
-			fk = tui.FinderWorktrees
-		case "panes":
-			fk = tui.FinderPanes
-		case "windows":
-			fk = tui.FinderWindows
 
 		// Views.
 		case "dash":
@@ -178,13 +163,19 @@ func main() {
 			os.Exit(1)
 
 		default:
-			exitErr(fmt.Errorf("%s", unknownCommandMsg(args[0])))
+			// Try to parse as comma-separated section names (e.g. "sessions,worktrees").
+			parsed := parseSections(args[0])
+			if parsed != nil {
+				sections = parsed
+			} else {
+				exitErr(fmt.Errorf("%s", unknownCommandMsg(args[0])))
+			}
 		}
 	}
 
 	w := watcher.New()
 	w.ApplyConfig(cfg.General)
-	m := tui.NewRootModel(initial, fk, cfg, w)
+	m := tui.NewRootModel(initial, sections, cfg, w)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	w.Start(p.Send)
 	result, err := p.Run()
@@ -195,6 +186,23 @@ func main() {
 	if rm, ok := result.(tui.RootModel); ok && rm.PostAction() != nil {
 		exitIfErr(executePostAction(rm.PostAction()))
 	}
+}
+
+// parseSections splits a comma-separated string into section names.
+// Returns nil if any name is not a valid section.
+func parseSections(arg string) []string {
+	valid := make(map[string]bool, len(tui.ValidSections))
+	for _, s := range tui.ValidSections {
+		valid[s] = true
+	}
+
+	parts := strings.Split(arg, ",")
+	for _, p := range parts {
+		if !valid[p] {
+			return nil
+		}
+	}
+	return parts
 }
 
 func exitErr(err error) {

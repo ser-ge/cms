@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/config"
@@ -48,6 +50,11 @@ var (
 	pickerTitleStyle    lipgloss.Style
 	pickerCountStyle    lipgloss.Style
 	pickerConfirmStyle  lipgloss.Style
+
+	// Active indicator.
+	activeIndicatorIcon    string
+	activeIndicatorStyled  string // pre-rendered icon with style
+	activeIndicatorPadding string // spaces matching icon width
 )
 
 // InitStyles initializes all shared styles from a loaded config.
@@ -97,12 +104,37 @@ func InitStyles(cfg config.Config) {
 	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
 	pickerConfirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting)).Bold(true)
 
+	// Active indicator.
+	ai := cfg.Finder.ActiveIndicator
+	activeIndicatorIcon = ai.Icon
+	aiStyle := lipgloss.NewStyle()
+	if ai.Color != "" {
+		aiStyle = aiStyle.Foreground(lipgloss.Color(ai.Color))
+	}
+	if ai.Background != "" {
+		aiStyle = aiStyle.Background(lipgloss.Color(ai.Background))
+	}
+	if ai.Bold != nil && *ai.Bold {
+		aiStyle = aiStyle.Bold(true)
+	}
+	activeIndicatorStyled = aiStyle.Render(activeIndicatorIcon)
+	activeIndicatorPadding = strings.Repeat(" ", lipgloss.Width(activeIndicatorStyled))
+
 	workingFramesUI = append([]string(nil), cfg.Icons.WorkingFrames...)
 	waitingIndicator = cfg.Icons.Waiting
 	idleIndicator = cfg.Icons.Idle
 	unknownIndicator = cfg.Icons.Unknown
 	columnSeparatorUI = cfg.Icons.ColumnSeparator
 	footerSeparatorUI = cfg.Icons.FooterSeparator
+}
+
+// RenderActiveIndicator returns the styled active indicator icon.
+// Returns the padding string (same width, all spaces) when not active.
+func RenderActiveIndicator(active bool) string {
+	if active {
+		return activeIndicatorStyled
+	}
+	return activeIndicatorPadding
 }
 
 // ProviderAccent returns the accent style for a given provider.

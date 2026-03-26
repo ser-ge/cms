@@ -6,14 +6,19 @@
 
 ```bash
 # Universal fuzzy switcher (default)
-cms                              # finder (sessions + projects + worktrees + marks)
-cms -s  / cms sessions           # sessions only
-cms -p  / cms projects           # projects only
-cms -q  / cms queue              # attention queue (urgency-sorted agent panes)
-cms -m  / cms marks              # marks only
+cms                              # finder (configurable via [finder].include)
+cms sessions                     # sessions only (also: cms -s)
+cms projects                     # projects only (also: cms -p)
+cms queue                        # attention queue (also: cms -q)
+cms marks                        # marks only (also: cms -m)
 cms worktrees                    # worktrees only (current repo)
+cms branches                     # local branches (current repo)
 cms windows                      # windows only (all sessions)
 cms panes                        # panes only (all sessions)
+
+# Composable — comma-separated section names
+cms sessions,worktrees           # sessions + worktrees
+cms queue,branches               # queue + branches
 
 # Views
 cms dash                         # dashboard (session/pane grid with agent status)
@@ -40,6 +45,8 @@ cms hook-setup                   # print hook configuration for Claude Code
 cms internal hook <event>        # forward Claude Code hook event
 cms internal refresh [name]      # refresh worktrees for tmux session
 ```
+
+Valid section names: `sessions`, `projects`, `queue`, `worktrees`, `branches`, `panes`, `windows`, `marks`.
 
 ### Picker keybindings
 
@@ -83,20 +90,62 @@ completed_decay_ms = 30000
 # What bare `cms` shows and in what order.
 include = ["sessions", "queue", "worktrees", "marks", "projects"]
 
-# Global sort defaults (per-picker sections override).
+# Global sort defaults (per-section overrides below).
 demote_current = true          # push active/current item to bottom
 promote_recent = false         # promote last-visited item to top
-promote_open = false           # promote items with tmux session/window
+promote_active = false         # sort active/open items first
+
+[finder.agents]
+# Agent-specific display settings (queue + session summaries).
+provider_order = ["claude", "codex"]
+state_order = ["idle", "working", "waiting"]
+show_context_percentage = true
+# use_seen_in_ranking = false  # unseen attention events boost queue urgency
+
+[finder.active_indicator]
+# Visual indicator for active/open items in the picker.
+icon = "▪"                     # or "●", "◆", "→", etc.
+color = "2"                    # ANSI foreground color (green)
+# background = ""              # ANSI background color
+# bold = false
 
 [finder.sessions]
 promote_recent = true          # last-visited session floats up
 
-# Per-picker overrides — only specify what differs from global defaults.
+# Per-section overrides — only specify what differs from global defaults.
 # [finder.worktrees]
-# promote_open = true          # worktrees with tmux windows float up
+# promote_active = true        # worktrees with tmux windows float up
+# [finder.branches]
+# promote_active = true        # branches with worktrees float up
 # [finder.marks]
 # demote_current = false
 ```
+
+### Active indicator
+
+Every item in the picker gets an "Active" status based on its live presence:
+
+| Section | Active means |
+|---------|-------------|
+| sessions | attached |
+| worktrees | has tmux pane inside |
+| projects | has tmux session |
+| branches | has worktree checked out |
+| panes | has running agent |
+| windows | has running agent |
+| queue | unseen attention events |
+| marks | pane still alive |
+
+Active items show the configured indicator icon. `promote_active` controls whether they sort first.
+
+### Cross-section dedup
+
+When composing sections that overlap, duplicates are hidden from the less-specific section:
+
+- **branches + worktrees**: branches with worktrees are hidden from the branches section
+- **projects + sessions**: projects with sessions are hidden from the projects section
+
+When a section is shown alone (e.g. `cms branches`), all items appear with Active marking.
 
 ## Marks
 
@@ -258,8 +307,8 @@ main.go / debuglog.go              CLI entry + debug wiring
 
 internal/
   proc/         Process table + IsShellCommand
-  config/       Config types, FinderConfig, PickerSortConfig, TOML loading
-  git/          Git info, worktree listing
+  config/       Config types, FinderConfig, AgentDisplayConfig, TOML loading
+  git/          Git info, branch listing, worktree listing
   tmux/         Session/Window/Pane types, tmux commands, control mode
   agent/        Provider-neutral detection, Claude + Codex parsing
   attention/    Attention queue + tmux pane persistence
