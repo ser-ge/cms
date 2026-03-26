@@ -1,13 +1,30 @@
 package worktree
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
 
+// cmdTestDir creates a temp directory outside any git repo and chdirs into it.
+// The original working directory is restored on cleanup.
+func cmdTestDir(t *testing.T) {
+	t.Helper()
+	tmp := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+}
+
 // --- §11: CLI command routing and flag parsing ---
 
 func TestRunWorktreeCmd_UnknownCommand(t *testing.T) {
+	cmdTestDir(t)
 	err := RunCmd([]string{"bogus"})
 	if err == nil {
 		t.Fatal("expected error for unknown command")
@@ -21,6 +38,7 @@ func TestRunWorktreeCmd_UnknownCommand(t *testing.T) {
 }
 
 func TestRunWorktreeCmd_AddNoArgs(t *testing.T) {
+	cmdTestDir(t)
 	err := RunCmd([]string{"add"})
 	if err == nil {
 		t.Fatal("expected error for 'add' with no branch")
@@ -31,6 +49,7 @@ func TestRunWorktreeCmd_AddNoArgs(t *testing.T) {
 }
 
 func TestRunWorktreeCmd_RemoveNoArgs(t *testing.T) {
+	cmdTestDir(t)
 	err := RunCmd([]string{"rm"})
 	if err == nil {
 		t.Fatal("expected error for 'rm' with no target")
@@ -41,11 +60,12 @@ func TestRunWorktreeCmd_RemoveNoArgs(t *testing.T) {
 }
 
 func TestRunWorktreeCmd_MergeAlias(t *testing.T) {
+	cmdTestDir(t)
 	// "m" should route to merge, which will fail because we're not in a repo,
 	// but the error should NOT be "unknown worktree command".
 	err := RunCmd([]string{"m"})
 	if err == nil {
-		t.Skip("merge succeeded unexpectedly (probably in a repo)")
+		t.Fatal("merge should fail outside a git repo")
 	}
 	if strings.Contains(err.Error(), "unknown worktree command") {
 		t.Errorf("'m' should be recognized as merge alias, got: %v", err)
@@ -53,10 +73,11 @@ func TestRunWorktreeCmd_MergeAlias(t *testing.T) {
 }
 
 func TestRunWorktreeCmd_ListAlias(t *testing.T) {
-	// "ls" should be recognized.
+	cmdTestDir(t)
+	// "ls" should be recognized — it will fail (not a repo) but not as "unknown command".
 	err := RunCmd([]string{"ls"})
 	if err == nil {
-		return // worked, we're in a repo
+		t.Fatal("list should fail outside a git repo")
 	}
 	if strings.Contains(err.Error(), "unknown worktree command") {
 		t.Errorf("'ls' should be recognized as list alias, got: %v", err)
@@ -64,10 +85,11 @@ func TestRunWorktreeCmd_ListAlias(t *testing.T) {
 }
 
 func TestRunWorktreeCmd_AddAlias(t *testing.T) {
+	cmdTestDir(t)
 	// "a" should be recognized.
 	err := RunCmd([]string{"a"})
 	if err == nil {
-		t.Skip("add succeeded unexpectedly")
+		t.Fatal("add should fail with no args")
 	}
 	// Should be a usage error, not "unknown command".
 	if strings.Contains(err.Error(), "unknown worktree command") {
