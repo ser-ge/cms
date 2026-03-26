@@ -9,6 +9,7 @@ import (
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/attention"
 	"github.com/serge/cms/internal/config"
+	"github.com/serge/cms/internal/debug"
 	"github.com/serge/cms/internal/git"
 	"github.com/serge/cms/internal/tmux"
 	"github.com/serge/cms/internal/watcher"
@@ -62,6 +63,13 @@ func TestRenderHarnessQueue(t *testing.T) {
 	m := newFinderModel(cfg, w, []string{"queue"}, 120, 18)
 	t.Log("=== queue harness ===")
 	t.Log("\n" + m.View())
+
+	// Also test with debug enabled to verify debug overlay.
+	debug.Enabled = true
+	defer func() { debug.Enabled = false }()
+	m2 := newFinderModel(cfg, w, []string{"queue"}, 120, 18)
+	t.Log("=== queue harness (debug) ===")
+	t.Log("\n" + m2.View())
 }
 
 func TestRenderHarnessAllSections(t *testing.T) {

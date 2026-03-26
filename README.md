@@ -396,3 +396,17 @@ Render harness (visual debugging):
 CMS_RENDER_HARNESS=1 go test ./internal/tui/ -run 'TestRenderHarness(Dashboard|Finder|Queue)' -v
 CMS_LIVE_HARNESS=1 go test ./internal/tui/ -run TestRenderHarnessLive -v
 ```
+
+Integration harness (isolated tmux with test repos):
+
+```bash
+./scripts/harness.sh                          # worktrees section (default)
+./scripts/harness.sh sessions,worktrees       # multiple sections
+./scripts/harness.sh --agents worktrees       # with real claude agents
+./scripts/harness.sh dash                     # dashboard view
+```
+
+Creates bare-repo worktree layouts under `/tmp/cms-harness/repos`, starts an
+isolated tmux server with its own config, and drops you into the TUI. Use
+`--agents` to launch real `claude -p` processes in some panes for agent
+detection testing. See `scripts/create-test-repos.sh` for the repo layout.

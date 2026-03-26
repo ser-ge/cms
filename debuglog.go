@@ -16,7 +16,8 @@ var (
 
 func initDebugLogger() {
 	debugLogOnce.Do(func() {
-		if os.Getenv("CMS_DEBUG") == "" {
+		v := os.Getenv("CMS_DEBUG")
+		if v == "" || v == "0" || v == "false" {
 			return
 		}
 

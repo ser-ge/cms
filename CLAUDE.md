@@ -116,6 +116,10 @@ internal/
     dashboard.go                  dashboardModel (session/pane grid with agent status)
     finder.go                     finderModel (universal fuzzy picker: sessions/projects/worktrees/windows/panes/marks/queue)
     newworktree.go                newWorktreeModel (text input for quick worktree creation)
+
+scripts/
+  create-test-repos.sh            Generate bare-repo worktree layouts for testing
+  harness.sh                      Integration harness: isolated tmux + config + test repos
 ```
 
 ## Architecture Layers

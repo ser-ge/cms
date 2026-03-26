@@ -245,12 +245,64 @@ Likely try `--bare` and stricter MCP disabling.
 - pane capture dir
 - key hook kinds seen
 
+## Integration Harness (scripts/harness.sh)
+
+A standalone bash harness that runs the real `cms` binary against an
+isolated tmux server with its own config and test worktree repos.
+
+### What it sets up
+
+- **Test repos** via `scripts/create-test-repos.sh`: 4 bare-repo projects
+  (`project_a` through `project_d`) with multiple worktrees, diverging
+  branches, and merged branches.
+- **Isolated tmux server** (`-L cms-harness -f <minimal.conf>`): separate
+  from the user's tmux, with `base-index 0` and status bar off.
+- **Isolated config** (`XDG_CONFIG_HOME` override): points `search_paths`
+  at the test repos.
+- **Optional real agents** (`--agents`): launches `claude -p '...'` in
+  some panes for agent detection testing.
+
+### Usage
+
+```bash
+./scripts/harness.sh                          # worktrees (default)
+./scripts/harness.sh sessions,worktrees       # multiple sections
+./scripts/harness.sh --agents worktrees       # with real claude agents
+./scripts/harness.sh dash                     # dashboard view
+```
+
+Attaches to the harness tmux on exit. `Ctrl-b d` to detach (cleanup
+tears down the server). Inside, re-run with `cms <section>`.
+
+### Test repo layout
+
+| Project     | Worktrees                          | Notes                    |
+|-------------|------------------------------------|--------------------------|
+| `project_a` | main, feature-auth, feature-api, bugfix-login | 3 feature branches |
+| `project_b` | main, shipped-v2, feature-dashboard, refactor-db | shipped-v2 merged into main |
+| `project_c` | main only                          | single worktree          |
+| `project_d` | main + 8 branches                  | scrolling/filtering test |
+
 ## Quick Commands
 
 Run all regular tests:
 
 ```bash
 go test ./...
+```
+
+Render harness (visual debugging, synthetic data):
+
+```bash
+CMS_RENDER_HARNESS=1 go test ./internal/tui/ -run 'TestRenderHarness(Dashboard|Finder|Queue)' -v
+CMS_LIVE_HARNESS=1 go test ./internal/tui/ -run TestRenderHarnessLive -v
+```
+
+Integration harness (real tmux + real repos):
+
+```bash
+./scripts/harness.sh worktrees
+./scripts/harness.sh --agents sessions,worktrees,queue
 ```
 
 Run live tmux smoke:
