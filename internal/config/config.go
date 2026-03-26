@@ -323,9 +323,9 @@ func boolPtr(b bool) *bool { return &b }
 
 func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
-		Include:    []string{"sessions", "queue", "worktrees", "marks", "projects"},
+		Include:    []string{"sessions", "queue", "worktrees", "projects"},
 		Sort:       []string{"active", "-current"},
-		StateOrder: []string{"waiting", "completed", "working", "idle"},
+		StateOrder: []string{"waiting", "completed", "idle", "working"},
 
 		DisplayProviderOrder:  []string{"claude", "codex"},
 		DisplayStateOrder:     []string{"idle", "working", "completed", "waiting"},
@@ -344,7 +344,7 @@ func DefaultGeneralConfig() GeneralConfig {
 	home, _ := os.UserHomeDir()
 	return GeneralConfig{
 		DefaultSession:   "",
-		SwitchPriority:   []string{"waiting", "idle", "default", "working"},
+		SwitchPriority:   []string{"waiting", "completed", "idle", "default", "working"},
 		EscapeChord:      "jj",
 		EscapeChordMs:    250,
 		Exclusions:       []string{},
@@ -352,9 +352,9 @@ func DefaultGeneralConfig() GeneralConfig {
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
 		},
-		Restore:         boolPtr(true),
-		CompletedDecayS: 300,
-		AlwaysHooksForStatus: boolPtr(true),
+		Restore:              boolPtr(true),
+		CompletedDecayS:      30000,
+		AlwaysHooksForStatus: boolPtr(false),
 		Smoothing: SmoothingConfig{
 			WorkingToIdleMs:      3000,
 			WorkingToCompletedMs: 2000,
@@ -475,20 +475,106 @@ func ExpandHome(path string) string {
 }
 
 func DefaultConfigTOML() ([]byte, error) {
+	g := DefaultGeneralConfig()
+	f := DefaultFinderConfig()
+
 	var buf bytes.Buffer
-	out := struct {
-		General GeneralConfig `toml:"general"`
-		Finder  FinderConfig  `toml:"finder"`
-	}{
-		General: DefaultGeneralConfig(),
-		Finder:  DefaultFinderConfig(),
+	w := func(s string) { buf.WriteString(s) }
+
+	w("[general]\n")
+	w(fmt.Sprintf("default_session = %q\n", g.DefaultSession))
+	w("# Priority order for `cms next` — jump to agent panes in this state order.\n")
+	w(fmt.Sprintf("switch_priority = %s\n", tomlStringArray(g.SwitchPriority)))
+	w("# Two-key chord to exit insert mode in the TUI.\n")
+	w(fmt.Sprintf("escape_chord = %q\n", g.EscapeChord))
+	w(fmt.Sprintf("escape_chord_ms = %d\n", g.EscapeChordMs))
+	w("# Session names to hide from the picker.\n")
+	w(fmt.Sprintf("exclusions = %s\n", tomlStringArray(g.Exclusions)))
+	w("# Scan git submodules when discovering projects.\n")
+	w(fmt.Sprintf("search_submodules = %v\n", g.SearchSubmodules))
+	w("# Restore tmux session snapshots when opening a project.\n")
+	w(fmt.Sprintf("restore = %v\n", g.ShouldRestore()))
+	w("# Seconds before a Completed agent decays to Idle (0 = never).\n")
+	w(fmt.Sprintf("completed_decay_s = %d\n", g.CompletedDecayS))
+	w("# When false, hooks go stale after initial detection; when true, hooks suppress transitions.\n")
+	w(fmt.Sprintf("always_hooks_for_status = %v\n", *g.AlwaysHooksForStatus))
+	w("# Global smoothing delay (ms) for all state transitions (0 = use per-transition values).\n")
+	w("# transition_smoothing_ms = 0\n")
+	w("\n")
+
+	w("# Directories to scan for git projects.\n")
+	for _, sp := range g.SearchPaths {
+		w("[[general.search_paths]]\n")
+		w(fmt.Sprintf("path = %q\n", abbreviateHome(sp.Path)))
+		w(fmt.Sprintf("max_depth = %d\n", sp.MaxDepth))
 	}
-	enc := toml.NewEncoder(&buf)
-	enc.Indent = ""
-	if err := enc.Encode(out); err != nil {
-		return nil, err
+
+	w("\n# Per-transition smoothing delays (ms). Suppresses flicker from rapid state changes.\n")
+	w("[general.smoothing]\n")
+	w(fmt.Sprintf("working_to_idle_ms = %d\n", g.Smoothing.WorkingToIdleMs))
+	w(fmt.Sprintf("working_to_completed_ms = %d\n", g.Smoothing.WorkingToCompletedMs))
+	w(fmt.Sprintf("idle_to_working_ms = %d\n", g.Smoothing.IdleToWorkingMs))
+	w(fmt.Sprintf("completed_to_idle_ms = %d\n", g.Smoothing.CompletedToIdleMs))
+	w("\n")
+
+	w("[finder]\n")
+	w("# What bare `cms` shows and in what order.\n")
+	w(fmt.Sprintf("include = %s\n", tomlStringArray(f.Include)))
+	w("\n# Global sort key priority list. Per-section overrides below.\n")
+	w("# Keys evaluated left-to-right; first difference wins.\n")
+	w("# Prefix \"-\" demotes (pushes matching items to bottom).\n")
+	w(fmt.Sprintf("sort = %s\n", tomlStringArray(f.Sort)))
+	w("\n# Queue urgency order (used by \"state\" sort key).\n")
+	w(fmt.Sprintf("state_order = %s\n", tomlStringArray(f.StateOrder)))
+	w("\n# Display settings for agent summaries (session descriptions + queue).\n")
+	w(fmt.Sprintf("display_provider_order = %s\n", tomlStringArray(f.DisplayProviderOrder)))
+	w(fmt.Sprintf("display_state_order = %s\n", tomlStringArray(f.DisplayStateOrder)))
+	w(fmt.Sprintf("show_context_percentage = %v\n", f.ShowContextPercentage))
+	w("\n")
+
+	w("[finder.active_indicator]\n")
+	w(fmt.Sprintf("icon = %q\n", f.ActiveIndicator.Icon))
+	w(fmt.Sprintf("color = %q\n", f.ActiveIndicator.Color))
+	w("# background = \"\"              # ANSI background color\n")
+	w("# bold = false\n")
+	w("\n")
+
+	w("# Per-section sort overrides — only specify what differs from global.\n")
+	w("[finder.sessions]\n")
+	w(fmt.Sprintf("sort = %s  # last-visited first, attached last\n", tomlStringArray(f.Sessions.Sort)))
+	w("\n")
+
+	w("[finder.queue]\n")
+	w(fmt.Sprintf("sort = %s  # urgency sort\n", tomlStringArray(f.Queue.Sort)))
+	w("\n")
+
+	w("# [finder.worktrees]\n")
+	w("# sort = [\"active\", \"-current\"]\n")
+	w("# [finder.branches]\n")
+	w("# sort = [\"active\"]\n")
+
+	return buf.Bytes(), nil
+}
+
+// tomlStringArray formats a string slice as a TOML inline array.
+func tomlStringArray(ss []string) string {
+	if len(ss) == 0 {
+		return "[]"
 	}
-	return stripEmptySections(buf.Bytes()), nil
+	parts := make([]string, len(ss))
+	for i, s := range ss {
+		parts[i] = fmt.Sprintf("%q", s)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// abbreviateHome replaces the home directory prefix with ~/ for display.
+func abbreviateHome(path string) string {
+	home, _ := os.UserHomeDir()
+	if home != "" && strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 // stripEmptySections removes TOML section headers that are immediately

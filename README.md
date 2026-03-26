@@ -74,19 +74,39 @@ cms config default > ~/.config/cms/config.toml
 ```toml
 [general]
 default_session = ""
-switch_priority = ["waiting", "idle", "default", "working"]
+# Priority order for `cms next` — jump to agent panes in this state order.
+switch_priority = ["waiting", "completed", "idle", "default", "working"]
+# Two-key chord to exit insert mode in the TUI.
 escape_chord = "jj"
 escape_chord_ms = 250
+# Session names to hide from the picker.
 exclusions = []
+# Scan git submodules when discovering projects.
 search_submodules = false
-search_paths = [
-  { path = "~/projects", max_depth = 3 }
-]
-completed_decay_s = 300
+# Restore tmux session snapshots when opening a project.
+restore = true
+# Seconds before a Completed agent decays to Idle (0 = never).
+completed_decay_s = 30000
+# When false, hooks go stale after initial detection; when true, hooks suppress transitions.
+always_hooks_for_status = false
+# Global smoothing delay (ms) for all state transitions (0 = use per-transition values).
+# transition_smoothing_ms = 0
+
+# Directories to scan for git projects.
+[[general.search_paths]]
+path = "~/projects"
+max_depth = 3
+
+# Per-transition smoothing delays (ms). Suppresses flicker from rapid state changes.
+[general.smoothing]
+working_to_idle_ms = 3000
+working_to_completed_ms = 2000
+idle_to_working_ms = 0
+completed_to_idle_ms = 0
 
 [finder]
 # What bare `cms` shows and in what order.
-include = ["sessions", "queue", "worktrees", "marks", "projects"]
+include = ["sessions", "queue", "worktrees", "projects"]
 
 # Global sort key priority list. Per-section overrides below.
 # Keys evaluated left-to-right; first difference wins.
@@ -94,7 +114,7 @@ include = ["sessions", "queue", "worktrees", "marks", "projects"]
 sort = ["active", "-current"]
 
 # Queue urgency order (used by "state" sort key).
-state_order = ["waiting", "completed", "working", "idle"]
+state_order = ["waiting", "completed", "idle", "working"]
 
 # Display settings for agent summaries (session descriptions + queue).
 display_provider_order = ["claude", "codex"]
@@ -107,13 +127,13 @@ color = "2"                    # ANSI foreground color (green)
 # background = ""              # ANSI background color
 # bold = false
 
+# Per-section sort overrides — only specify what differs from global.
 [finder.sessions]
 sort = ["recent", "-current"]  # last-visited first, attached last
 
 [finder.queue]
 sort = ["state", "unseen", "oldest"]  # urgency sort
 
-# Per-section overrides — only specify what differs from global.
 # [finder.worktrees]
 # sort = ["active", "-current"]
 # [finder.branches]
@@ -314,6 +334,24 @@ echo '{"session_id":"test"}' | cms internal hook session-start
 echo '{"tool_name":"Edit"}' | cms internal hook pre-tool-use
 echo '{}' | cms internal hook stop
 ```
+
+## Shell Completions
+
+```bash
+# Fish
+cms completion fish > ~/.config/fish/completions/cms.fish
+
+# Bash
+eval "$(cms completion bash)"
+# Or persist: cms completion bash >> ~/.bashrc
+
+# Zsh
+cms completion zsh > ~/.zfunc/_cms
+# Then ensure ~/.zfunc is in fpath and run compinit:
+#   fpath+=(~/.zfunc); autoload -Uz compinit; compinit
+```
+
+Completions include subcommands, short flags, dynamic branch/worktree names for worktree commands, and mark labels for `jump`.
 
 ## Architecture
 
