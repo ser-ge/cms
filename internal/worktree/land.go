@@ -100,7 +100,7 @@ func Land(args []string) error {
 	}
 
 	cfg := config.Load()
-	resolved := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
+	resolved := ResolveWorktreeConfig(root, &cfg.Worktree)
 	wtCfg := &resolved
 	mainWt, _ := FindMainWorktree(root)
 

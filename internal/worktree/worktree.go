@@ -103,19 +103,17 @@ func IsBranchIntegrated(repoRoot, branch, target string) (bool, string) {
 	return false, ""
 }
 
-// LoadProjectConfig reads .cms.toml. Searches repoRoot first, then
-// worktreeDir (for bare repos where the checkout is separate from the root).
-func LoadProjectConfig(repoRoot, worktreeDir string) config.ProjectConfig {
-	return config.LoadProjectConfig(repoRoot, worktreeDir)
+// LoadProjectConfig reads .cms.toml from repoRoot.
+func LoadProjectConfig(repoRoot string) config.ProjectConfig {
+	return config.LoadProjectConfig(repoRoot)
 }
 
 // ResolveWorktreeConfig merges user config (from ~/.config/cms/config.toml)
-// with per-repo project config (from .cms.toml). Project overrides user:
-// if the project sets hooks, they replace user hooks entirely.
+// with per-repo project config (from .cms.toml at repoRoot). Project overrides
+// user: if the project sets hooks, they replace user hooks entirely.
 // Scalars (base_dir, commit_cmd) use project value if non-empty.
-// worktreeDir is the current worktree checkout (may differ from repoRoot for bare repos).
-func ResolveWorktreeConfig(repoRoot, worktreeDir string, userCfg *config.WorktreeConfig) config.WorktreeConfig {
-	proj := LoadProjectConfig(repoRoot, worktreeDir)
+func ResolveWorktreeConfig(repoRoot string, userCfg *config.WorktreeConfig) config.WorktreeConfig {
+	proj := LoadProjectConfig(repoRoot)
 	merged := *userCfg
 
 	p := proj.Worktree

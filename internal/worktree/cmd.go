@@ -109,13 +109,8 @@ type SwitchOpts struct {
 // SwitchWorktree switches to a branch's worktree, creating it if needed.
 // With strict git switch semantics: unknown branches require -c/-C.
 func SwitchWorktree(root, branch string, opts SwitchOpts) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-
 	cfg := config.Load()
-	wtCfg := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
+	wtCfg := ResolveWorktreeConfig(root, &cfg.Worktree)
 
 	// Check if worktree already exists for this branch — switch to it.
 	wts, err := git.ListWorktrees(root)
@@ -182,13 +177,8 @@ func SwitchWorktree(root, branch string, opts SwitchOpts) error {
 // GoWorktree switches to a branch's worktree, auto-creating from base_branch if needed.
 // This is the opinionated shortcut — unknown branches are created automatically.
 func GoWorktree(root, branch string, opts SwitchOpts) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-
 	cfg := config.Load()
-	wtCfg := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
+	wtCfg := ResolveWorktreeConfig(root, &cfg.Worktree)
 
 	// Check if worktree already exists — switch to it.
 	wts, err := git.ListWorktrees(root)
@@ -569,7 +559,7 @@ func RunRemove(args []string) error {
 
 	// Run pre-remove hooks.
 	cfg := config.Load()
-	wtCfg := ResolveWorktreeConfig(root, cwd, &cfg.Worktree)
+	wtCfg := ResolveWorktreeConfig(root, &cfg.Worktree)
 	mainWt, _ := FindMainWorktree(root)
 	if len(wtCfg.PreRemove) > 0 {
 		fmt.Fprintf(os.Stderr, "running %d pre-remove hooks\n", len(wtCfg.PreRemove))

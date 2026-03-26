@@ -479,21 +479,18 @@ func WriteDefaultConfigFile() (string, error) {
 	return path, nil
 }
 
-// LoadProjectConfig reads .cms.toml from the provided directories in order,
-// returning the first successfully parsed config. Missing files are ignored.
-func LoadProjectConfig(dirs ...string) ProjectConfig {
+// LoadProjectConfig reads .cms.toml from the given directory (typically the
+// repo root). Returns a zero-value config when the file is missing.
+func LoadProjectConfig(dir string) ProjectConfig {
 	var proj ProjectConfig
-	for _, dir := range dirs {
-		if dir == "" {
-			continue
-		}
-		path := filepath.Join(dir, ".cms.toml")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		toml.Unmarshal(data, &proj) //nolint:errcheck
+	if dir == "" {
 		return proj
 	}
+	path := filepath.Join(dir, ".cms.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return proj
+	}
+	toml.Unmarshal(data, &proj) //nolint:errcheck
 	return proj
 }
