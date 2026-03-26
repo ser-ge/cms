@@ -314,17 +314,12 @@ func TestTransitionAgentObserverIdleFromIdle(t *testing.T) {
 
 func tmuxAvailable() bool {
 	_, err := exec.LookPath("tmux")
-	if err != nil {
-		return false
-	}
-	// Check if a tmux server is actually running.
-	cmd := exec.Command("tmux", "list-sessions")
-	return cmd.Run() == nil
+	return err == nil
 }
 
 func TestPersistActivitySinceRestoredOnBootstrap(t *testing.T) {
 	if !tmuxAvailable() {
-		t.Skip("tmux not available or no server running")
+		t.Skip("tmux not available")
 	}
 
 	// Get real pane to set options on.
@@ -375,7 +370,7 @@ func TestPersistActivitySinceRestoredOnBootstrap(t *testing.T) {
 
 func TestPersistActivitySinceMismatchIgnored(t *testing.T) {
 	if !tmuxAvailable() {
-		t.Skip("tmux not available or no server running")
+		t.Skip("tmux not available")
 	}
 
 	out, err := tmux.Run("display-message", "-p", "#{pane_id}")

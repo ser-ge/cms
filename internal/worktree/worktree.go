@@ -96,8 +96,21 @@ func IsBranchIntegrated(repoRoot, branch, target string) (bool, string) {
 
 	// Check if merging branch into target would add nothing.
 	cherry, err := git.Cmd(repoRoot, "cherry", target, branch)
-	if err == nil && strings.TrimSpace(cherry) == "" {
-		return true, "no unique commits vs " + target
+	if err == nil {
+		hasUnique := false
+		for _, line := range strings.Split(strings.TrimSpace(cherry), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "+") {
+				hasUnique = true
+				break
+			}
+		}
+		if !hasUnique {
+			return true, "no unique commits vs " + target
+		}
 	}
 
 	return false, ""

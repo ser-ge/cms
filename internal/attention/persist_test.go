@@ -11,17 +11,12 @@ import (
 
 func tmuxAvailable() bool {
 	_, err := exec.LookPath("tmux")
-	if err != nil {
-		return false
-	}
-	// Check if a tmux server is actually running.
-	cmd := exec.Command("tmux", "list-sessions")
-	return cmd.Run() == nil
+	return err == nil
 }
 
 func TestPersistActivitySinceRoundTrip(t *testing.T) {
 	if !tmuxAvailable() {
-		t.Skip("tmux not available or no server running")
+		t.Skip("tmux not available")
 	}
 
 	// Get a real pane ID to test with.
