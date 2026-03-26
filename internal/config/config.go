@@ -68,7 +68,8 @@ type GeneralConfig struct {
 	SearchSubmodules bool         `toml:"search_submodules"`
 	SearchPaths      []SearchPath `toml:"search_paths"`
 
-	CompletedDecayMs int `toml:"completed_decay_ms"` // Completed->Idle auto-decay in ms (default 30000)
+	CompletedDecayMs int   `toml:"completed_decay_ms"` // Completed->Idle auto-decay in ms (default 30000)
+	AlwaysHooksForStatus *bool `toml:"always_hooks_for_status"` // when true (default), hooks never go stale; observer skips transitions while any hook has been seen
 }
 
 type IconsConfig struct {
@@ -108,6 +109,8 @@ type FinderConfig struct {
 	DemoteCurrent bool `toml:"demote_current"`
 	PromoteRecent bool `toml:"promote_recent"`
 	PromoteOpen   bool `toml:"promote_open"` // promote items that are open (have tmux session/window)
+
+	UseSeenStatusInRanking bool `toml:"use_seen_status_in_ranking"` // when true, unseen attention events boost queue ranking
 
 	// Per-picker overrides.
 	Sessions  PickerSortConfig `toml:"sessions"`
@@ -294,7 +297,8 @@ func DefaultGeneralConfig() GeneralConfig {
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
 		},
-		CompletedDecayMs: 30000,
+		CompletedDecayMs: 300000,
+		AlwaysHooksForStatus: boolPtr(true),
 	}
 }
 

@@ -54,6 +54,7 @@ type Watcher struct {
 	workingHold    time.Duration // observer: suppress false idle during output gaps
 	hookStale      time.Duration // observer resumes if hooks go silent
 	completedDecay time.Duration // Completed->Idle auto-decay
+	hookPersist    bool          // when true, hooks never go stale
 
 	// Lifecycle.
 	stopCh chan struct{}
@@ -80,7 +81,8 @@ func New() *Watcher {
 		activitySince:   map[string]time.Time{},
 		workingHold:     2 * time.Second,
 		hookStale:       30 * time.Second,
-		completedDecay:  30 * time.Second,
+		completedDecay:  0,
+		hookPersist:     true,
 		stopCh:          make(chan struct{}),
 	}
 }
@@ -89,6 +91,11 @@ func New() *Watcher {
 func (w *Watcher) ApplyConfig(cfg config.GeneralConfig) {
 	if cfg.CompletedDecayMs > 0 {
 		w.completedDecay = time.Duration(cfg.CompletedDecayMs) * time.Millisecond
+	}
+	if cfg.AlwaysHooksForStatus != nil {
+		w.hookPersist = *cfg.AlwaysHooksForStatus
+	} else {
+		w.hookPersist = true
 	}
 }
 
@@ -323,8 +330,10 @@ func (w *Watcher) handleEvent(ev tmux.Event) {
 
 	case tmux.ClientDetached:
 		// Control client was kicked -- nil out so poll fallback takes over.
+		// Return so runEventLoop exits (w.ctrl.Events would panic after nil).
 		debug.Logf("watcher: control client detached, falling back to polling")
 		w.ctrl = nil
+		return
 	}
 }
 

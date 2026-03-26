@@ -32,6 +32,7 @@ func initDebugLogger() {
 		}
 		debugLogger = log.New(f, "", log.LstdFlags|log.Lmicroseconds)
 		debug.Logf = debugLogger.Printf
+		debug.Enabled = true
 		debugLogger.Printf("debug logging enabled")
 	})
 }

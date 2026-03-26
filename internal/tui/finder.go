@@ -1004,7 +1004,7 @@ func (m *finderModel) buildQueueItems() {
 
 				// Sort key: unseen waiting (0), unseen finished (1), working (2), idle (3).
 				sortKey := 3
-				if unseen && hasReason {
+				if unseen && hasReason && m.cfg.Finder.UseSeenStatusInRanking {
 					sortKey = int(reason)
 				} else {
 					switch cs.Activity {
@@ -1033,6 +1033,9 @@ func (m *finderModel) buildQueueItems() {
 					}
 				}
 
+				if debug.Enabled {
+					desc += fmt.Sprintf("  [sk=%d st=%d]", sortKey, sortTime)
+				}
 				items = append(items, queueItem{
 					item: PickerItem{
 						Title:       title,

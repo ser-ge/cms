@@ -223,11 +223,16 @@ func (w *Watcher) decayCompleted(paneID string) {
 }
 
 // hookActiveFor returns true if hooks have reported for this pane recently enough
-// that the observer should defer to hook data.
+// that the observer should defer to hook data. When hookPersist is enabled, any
+// pane that has ever received a hook event stays hook-active permanently (no
+// staleness timeout).
 func (w *Watcher) hookActiveFor(paneID string) bool {
 	lastSeen, ok := w.hookSeen[paneID]
 	if !ok {
 		return false
+	}
+	if w.hookPersist {
+		return true
 	}
 	return time.Since(lastSeen) < w.hookStale
 }
@@ -322,9 +327,13 @@ func (w *Watcher) trackTransitions(prev, next map[string]agent.AgentStatus) {
 				changed = true
 			}
 		default:
-			// Idle or Unknown -- remove waiting if it was set.
+			// Idle or Unknown -- clear finished/waiting attention from prior states.
 			if ps.Activity == agent.ActivityWaitingInput {
 				w.Attention.Remove(paneID, attention.Waiting)
+				changed = true
+			}
+			if ps.Activity == agent.ActivityCompleted {
+				w.Attention.Remove(paneID, attention.Finished)
 				changed = true
 			}
 		}
