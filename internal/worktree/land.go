@@ -10,6 +10,27 @@ import (
 	"github.com/serge/cms/internal/git"
 )
 
+// ANSI color helpers for CLI output.
+var (
+	cReset = "\033[0m"
+	cRed   = "\033[31m"
+	cGreen = "\033[32m"
+	cDim   = "\033[2m"
+	cBold  = "\033[1m"
+)
+
+func init() {
+	// Disable colors when stderr is not a terminal.
+	if fi, err := os.Stderr.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		cReset, cRed, cGreen, cDim, cBold = "", "", "", "", ""
+	}
+}
+
+func red(s string) string   { return cRed + s + cReset }
+func green(s string) string { return cGreen + s + cReset }
+func dim(s string) string   { return cDim + s + cReset }
+func bold(s string) string  { return cBold + s + cReset }
+
 // LandOpts configures the land workflow.
 type LandOpts struct {
 	Squash   bool   // squash all commits into one before landing
@@ -66,7 +87,7 @@ func Land(args []string) error {
 
 	// Handle --abort early.
 	if opts.Abort {
-		fmt.Fprintf(os.Stderr, "aborting rebase\n")
+		fmt.Fprintf(os.Stderr, "%s rebase\n", red("aborting"))
 		if _, err := git.Cmd(cwd, "rebase", "--abort"); err != nil {
 			return fmt.Errorf("rebase --abort failed: %w", err)
 		}
@@ -138,14 +159,14 @@ func Land(args []string) error {
 
 	// Handle --continue: resume from step 6 (rebase --continue, then merge).
 	if opts.Continue {
-		fmt.Fprintf(os.Stderr, "continuing rebase\n")
+		fmt.Fprintf(os.Stderr, "%s rebase\n", green("continuing"))
 		if _, err := git.Cmd(cwd, "rebase", "--continue"); err != nil {
 			return fmt.Errorf("rebase --continue failed: %w\nresolve remaining conflicts and run: cms land --continue", err)
 		}
 		return landMergeAndCleanup(cwd, root, currentBranch, target, mainWt, currentWt, targetWt, opts, wtCfg)
 	}
 
-	fmt.Fprintf(os.Stderr, "landing %s into %s\n", currentBranch, target)
+	fmt.Fprintf(os.Stderr, "%s %s into %s\n", green("landing"), bold(currentBranch), bold(target))
 
 	// Check for uncommitted changes.
 	status, _ := git.Cmd(cwd, "status", "--porcelain")
@@ -156,7 +177,7 @@ func Land(args []string) error {
 		if !opts.Squash {
 			return fmt.Errorf("uncommitted changes present; commit them first or use --squash")
 		}
-		fmt.Fprintf(os.Stderr, "staging uncommitted changes\n")
+		fmt.Fprintf(os.Stderr, "%s uncommitted changes\n", dim("staging"))
 		if _, err := git.Cmd(cwd, "add", "-A"); err != nil {
 			return fmt.Errorf("git add failed: %w", err)
 		}
@@ -164,7 +185,7 @@ func Land(args []string) error {
 
 	// Step 2: Pre-commit hooks.
 	if len(wtCfg.PreCommit) > 0 && (opts.Squash || hasChanges) {
-		fmt.Fprintf(os.Stderr, "running %d pre-commit hooks\n", len(wtCfg.PreCommit))
+		fmt.Fprintf(os.Stderr, "%s %d pre-commit hooks\n", dim("running"), len(wtCfg.PreCommit))
 		if err := RunHooks("pre-commit", mainWt, root, wtCfg.PreCommit); err != nil {
 			return fmt.Errorf("pre-commit hook failed: %w", err)
 		}
@@ -179,14 +200,14 @@ func Land(args []string) error {
 
 	// Step 4: Post-commit hooks.
 	if len(wtCfg.PostCommit) > 0 && opts.Squash {
-		fmt.Fprintf(os.Stderr, "running %d post-commit hooks\n", len(wtCfg.PostCommit))
+		fmt.Fprintf(os.Stderr, "%s %d post-commit hooks\n", dim("running"), len(wtCfg.PostCommit))
 		if err := RunHooks("post-commit", mainWt, root, wtCfg.PostCommit); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: post-commit hook failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s post-commit hook failed: %v\n", red("warning:"), err)
 		}
 	}
 
 	// Step 5: Rebase onto target.
-	fmt.Fprintf(os.Stderr, "rebasing onto %s\n", target)
+	fmt.Fprintf(os.Stderr, "%s onto %s\n", dim("rebasing"), bold(target))
 	if _, err := git.Cmd(cwd, "rebase", target); err != nil {
 		return fmt.Errorf("rebase failed: %w\nresolve conflicts and run: cms land --continue\nor abort with: cms land --abort", err)
 	}
@@ -199,7 +220,7 @@ func Land(args []string) error {
 func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, currentWt, targetWt *git.Worktree, opts LandOpts, wtCfg *config.WorktreeConfig) error {
 	// Step 6: Pre-land hooks.
 	if len(wtCfg.PreMerge) > 0 {
-		fmt.Fprintf(os.Stderr, "running %d pre-land hooks\n", len(wtCfg.PreMerge))
+		fmt.Fprintf(os.Stderr, "%s %d pre-land hooks\n", dim("running"), len(wtCfg.PreMerge))
 		if err := RunHooks("pre-land", mainWt, root, wtCfg.PreMerge); err != nil {
 			return fmt.Errorf("pre-land hook failed: %w", err)
 		}
@@ -224,10 +245,10 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 	}
 	mergeArgs = append(mergeArgs, currentBranch)
 
-	fmt.Fprintf(os.Stderr, "merging %s into %s\n", currentBranch, target)
+	fmt.Fprintf(os.Stderr, "%s %s into %s\n", dim("merging"), bold(currentBranch), bold(target))
 	if _, err := git.Cmd(mergeDir, mergeArgs...); err != nil {
 		if !opts.NoFF {
-			fmt.Fprintf(os.Stderr, "fast-forward not possible, trying merge commit\n")
+			fmt.Fprintf(os.Stderr, "%s fast-forward not possible, trying merge commit\n", red("warning:"))
 			mergeArgs = []string{"merge", "--no-ff", currentBranch}
 			if _, err := git.Cmd(mergeDir, mergeArgs...); err != nil {
 				return fmt.Errorf("merge failed: %w", err)
@@ -240,44 +261,48 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 	// Step 8: Post-land hooks.
 	if len(wtCfg.PostMerge) > 0 {
 		hookDir := mergeDir
-		fmt.Fprintf(os.Stderr, "running %d post-land hooks\n", len(wtCfg.PostMerge))
+		fmt.Fprintf(os.Stderr, "%s %d post-land hooks\n", dim("running"), len(wtCfg.PostMerge))
 		if err := RunHooks("post-land", mainWt, hookDir, wtCfg.PostMerge); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: post-land hook failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s post-land hook failed: %v\n", red("warning:"), err)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "landed %s into %s\n", currentBranch, target)
+	fmt.Fprintf(os.Stderr, "%s landed %s into %s\n", green("✓"), bold(currentBranch), bold(target))
 
 	// Wait for confirmation before closing the window.
-	if !opts.Keep && currentWt != nil && !currentWt.IsMain {
-		fmt.Fprintf(os.Stderr, "press enter to close worktree window...")
+	willCleanup := !opts.Keep && currentWt != nil && !currentWt.IsMain
+	if willCleanup {
+		fmt.Fprintf(os.Stderr, "%s to switch to %s and close this worktree...", dim("press enter"), bold(target))
 		fmt.Scanln()
 	}
 
 	// Step 9: Clean up worktree + branch.
-	if !opts.Keep && currentWt != nil && !currentWt.IsMain {
-		fmt.Fprintf(os.Stderr, "cleaning up worktree %s\n", ShortenHome(currentWt.Path))
+	if willCleanup {
+		fmt.Fprintf(os.Stderr, "%s worktree %s\n", dim("cleaning up"), ShortenHome(currentWt.Path))
 
 		if len(wtCfg.PreRemove) > 0 {
 			RunHooks("pre-remove", mainWt, currentWt.Path, wtCfg.PreRemove)
 		}
 
 		if err := RemoveWorktree(root, currentWt.Path, true); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: worktree remove failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s worktree remove failed: %v\n", red("warning:"), err)
 		}
 
-		fmt.Fprintf(os.Stderr, "deleting branch %s\n", currentBranch)
+		fmt.Fprintf(os.Stderr, "%s branch %s\n", dim("deleting"), currentBranch)
 		if err := DeleteBranch(root, currentBranch, false); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: branch delete failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s branch delete failed: %v\n", red("warning:"), err)
 		}
 
 		CleanupTmuxWindow(currentWt.Path)
 	}
 
-	// Switch to target worktree.
-	if targetWt != nil && os.Getenv("TMUX") != "" {
-		windowName := SanitizeBranch(target)
-		SwitchToTmuxWindow(windowName)
+	// Switch to target worktree after cleanup.
+	if os.Getenv("TMUX") != "" {
+		if targetWt != nil {
+			switchOrOpenTmuxWindow(targetWt.Path, target)
+		} else if mainWt != "" {
+			switchOrOpenTmuxWindow(mainWt, target)
+		}
 	}
 
 	return nil
@@ -290,7 +315,7 @@ func squashCommits(wtDir, target, branch string, opts LandOpts, wtCfg *config.Wo
 		return fmt.Errorf("cannot find merge base between %s and %s: %w", target, branch, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "squashing commits since %s\n", mergeBase[:8])
+	fmt.Fprintf(os.Stderr, "%s commits since %s\n", dim("squashing"), mergeBase[:8])
 	if _, err := git.Cmd(wtDir, "reset", "--soft", mergeBase); err != nil {
 		return fmt.Errorf("git reset --soft failed: %w", err)
 	}
@@ -321,7 +346,7 @@ func generateCommitMessage(wtDir, target, branch string, wtCfg *config.WorktreeC
 		if msg != "" {
 			return msg
 		}
-		fmt.Fprintf(os.Stderr, "warning: LLM commit message generation failed, using default\n")
+		fmt.Fprintf(os.Stderr, "%s LLM commit message generation failed, using default\n", red("warning:"))
 	}
 
 	diffStat, _ := git.Cmd(wtDir, "diff", "--stat", "HEAD~1")
