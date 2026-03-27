@@ -1,8 +1,8 @@
 # cms
 
-[![Release](https://img.shields.io/github/v/release/ser-ge/cms)](https://github.com/ser-ge/cms/releases)
-[![Go](https://img.shields.io/github/go-mod-go-version/ser-ge/cms)](https://go.dev/)
-[![License](https://img.shields.io/github/license/ser-ge/cms)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/ser-ge/cms?style=flat)](https://github.com/ser-ge/cms/releases)
+[![Go](https://img.shields.io/badge/go-1.24-blue?style=flat)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat)](LICENSE)
 
 
 "There are many like it, but this one is mine."
