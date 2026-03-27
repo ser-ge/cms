@@ -14,9 +14,11 @@ import (
 
 // SetupResult holds the outcome of the first-run setup wizard.
 type SetupResult struct {
-	ConfigPath   string // path to written config file (empty if cancelled)
-	InstallHooks bool   // user opted into Claude Code hooks
-	Cancelled    bool
+	ConfigPath         string // path to written config file (empty if cancelled)
+	InstallHooks       bool   // user opted into Claude Code hooks
+	InstallCompletions bool   // user opted into shell completions
+	Shell              string // detected shell name (fish, bash, zsh)
+	Cancelled          bool
 }
 
 // RunSetup runs an interactive first-run wizard that prompts for essential
@@ -35,8 +37,10 @@ func RunSetup() (SetupResult, error) {
 		return SetupResult{}, m.writeErr
 	}
 	return SetupResult{
-		ConfigPath:   m.writtenPath,
-		InstallHooks: m.installHooks,
+		ConfigPath:         m.writtenPath,
+		InstallHooks:       m.installHooks,
+		InstallCompletions: m.installCompletions,
+		Shell:              m.detectedShell,
 	}, nil
 }
 
@@ -47,17 +51,20 @@ type setupStep int
 const (
 	stepSearchPath setupStep = iota
 	stepHooks
+	stepCompletions
 	stepConfirm
 )
 
 type setupModel struct {
-	step         setupStep
-	input        textinput.Model
-	searchPath   string
-	installHooks bool
-	cancelled    bool
-	writtenPath  string
-	writeErr     error
+	step               setupStep
+	input              textinput.Model
+	searchPath         string
+	installHooks       bool
+	installCompletions bool
+	detectedShell      string // fish, bash, zsh, or "" if unknown
+	cancelled          bool
+	writtenPath        string
+	writeErr           error
 
 	// Tab completion state.
 	completions []string // current completions
@@ -79,11 +86,38 @@ func newSetupModel() setupModel {
 	ti.SetCursor(len(ti.Value()))
 
 	return setupModel{
-		step:    stepSearchPath,
-		input:   ti,
-		compIdx: -1,
-		dim:     lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		bold:    lipgloss.NewStyle().Bold(true),
+		step:          stepSearchPath,
+		input:         ti,
+		compIdx:       -1,
+		detectedShell: detectShell(),
+		dim:           lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		bold:          lipgloss.NewStyle().Bold(true),
+	}
+}
+
+// detectShell returns "fish", "bash", or "zsh" based on $SHELL, or "" if unknown.
+func detectShell() string {
+	shell := filepath.Base(os.Getenv("SHELL"))
+	switch shell {
+	case "fish", "bash", "zsh":
+		return shell
+	default:
+		return ""
+	}
+}
+
+// CompletionPath returns the standard install path for shell completions.
+func CompletionPath(shell string) string {
+	home, _ := os.UserHomeDir()
+	switch shell {
+	case "fish":
+		return filepath.Join(home, ".config", "fish", "completions", "cms.fish")
+	case "zsh":
+		return filepath.Join(home, ".zfunc", "_cms")
+	case "bash":
+		return filepath.Join(home, ".bash_completion.d", "cms")
+	default:
+		return ""
 	}
 }
 
@@ -119,6 +153,12 @@ func (m setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case stepHooks:
 				// Enter = yes (default)
 				m.installHooks = true
+				m.step = m.nextAfterHooks()
+				return m, nil
+
+			case stepCompletions:
+				// Enter = yes (default)
+				m.installCompletions = true
 				m.step = stepConfirm
 				return m, nil
 
@@ -133,10 +173,23 @@ func (m setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch msg.String() {
 				case "y", "Y":
 					m.installHooks = true
-					m.step = stepConfirm
+					m.step = m.nextAfterHooks()
 					return m, nil
 				case "n", "N":
 					m.installHooks = false
+					m.step = m.nextAfterHooks()
+					return m, nil
+				}
+				return m, nil
+
+			case stepCompletions:
+				switch msg.String() {
+				case "y", "Y":
+					m.installCompletions = true
+					m.step = stepConfirm
+					return m, nil
+				case "n", "N":
+					m.installCompletions = false
 					m.step = stepConfirm
 					return m, nil
 				}
@@ -194,16 +247,31 @@ func (m setupModel) View() string {
 		b.WriteString("\n\n")
 		b.WriteString("Install hooks? [Y/n] ")
 
+	case stepCompletions:
+		b.WriteString(fmt.Sprintf("  search path: %s\n", m.bold.Render(abbreviateHome(ExpandHome(m.searchPath)))))
+		b.WriteString(fmt.Sprintf("  hooks:       %s\n\n", m.yesNo(m.installHooks)))
+		b.WriteString(fmt.Sprintf("Install %s shell completions?\n", m.bold.Render(m.detectedShell)))
+		b.WriteString(m.dim.Render(fmt.Sprintf("  Writes to %s", abbreviateHome(CompletionPath(m.detectedShell)))))
+		b.WriteString("\n\n")
+		b.WriteString("Install completions? [Y/n] ")
+
 	case stepConfirm:
 		expanded := ExpandHome(m.searchPath)
 
 		b.WriteString("The following will be created:\n\n")
-		b.WriteString(fmt.Sprintf("  1. Write %s\n", m.bold.Render(abbreviateHome(configPath()))))
+		n := 1
+		b.WriteString(fmt.Sprintf("  %d. Write %s\n", n, m.bold.Render(abbreviateHome(configPath()))))
 		b.WriteString(fmt.Sprintf("     search path: %s (depth 3)\n", abbreviateHome(expanded)))
 
 		if m.installHooks {
-			b.WriteString(fmt.Sprintf("\n  2. Add cms hooks to %s\n", m.bold.Render(filepath.Join("~", ".claude", "settings.json"))))
+			n++
+			b.WriteString(fmt.Sprintf("\n  %d. Add cms hooks to %s\n", n, m.bold.Render(filepath.Join("~", ".claude", "settings.json"))))
 			b.WriteString("     events: SessionStart, Stop, SessionEnd, Notification, PreToolUse, UserPromptSubmit\n")
+		}
+
+		if m.installCompletions {
+			n++
+			b.WriteString(fmt.Sprintf("\n  %d. Write %s shell completions to %s\n", n, m.detectedShell, m.bold.Render(abbreviateHome(CompletionPath(m.detectedShell)))))
 		}
 
 		if info, err := os.Stat(expanded); err != nil || !info.IsDir() {
@@ -215,6 +283,22 @@ func (m setupModel) View() string {
 	}
 
 	return b.String()
+}
+
+func (m setupModel) yesNo(v bool) string {
+	if v {
+		return "yes"
+	}
+	return "no"
+}
+
+// nextAfterHooks returns stepCompletions if a supported shell is detected,
+// otherwise skips straight to stepConfirm.
+func (m setupModel) nextAfterHooks() setupStep {
+	if m.detectedShell != "" {
+		return stepCompletions
+	}
+	return stepConfirm
 }
 
 // handleTab cycles through directory completions for the current input.

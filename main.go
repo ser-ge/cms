@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -89,6 +90,11 @@ func main() {
 		if result.InstallHooks {
 			if err := hook.RunInstall(); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: hook install failed: %v\n", err)
+			}
+		}
+		if result.InstallCompletions && result.Shell != "" {
+			if err := installCompletions(result.Shell); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: completion install failed: %v\n", err)
 			}
 		}
 		// Reload after setup wrote the config.
@@ -269,6 +275,35 @@ func main() {
 	if rm, ok := result.(tui.RootModel); ok && rm.PostAction() != nil {
 		exitIfErr(executePostAction(rm.PostAction(), cfg))
 	}
+}
+
+// installCompletions writes shell completion script to the standard path.
+func installCompletions(shell string) error {
+	var content string
+	switch shell {
+	case "fish":
+		content = completionFish()
+	case "bash":
+		content = completionBash()
+	case "zsh":
+		content = completionZsh()
+	default:
+		return fmt.Errorf("unsupported shell: %s", shell)
+	}
+
+	path := config.CompletionPath(shell)
+	if path == "" {
+		return fmt.Errorf("no completion path for shell: %s", shell)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s\n", path)
+	return nil
 }
 
 // shortFlagMap maps single-letter flags to section names.

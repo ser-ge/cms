@@ -7,10 +7,10 @@ import (
 
 func TestFzfMatching(t *testing.T) {
 	items := []PickerItem{
-		{Title: "cms", FilterValue: "cms /Users/serge/projects/cms"},
-		{Title: "dotfiles", FilterValue: "dotfiles /Users/serge/projects/dotfiles"},
-		{Title: "gather-md.git", FilterValue: "gather-md.git /Users/serge/projects/gather-md.git/main"},
-		{Title: "notes", FilterValue: "notes /Users/serge/projects/notes"},
+		{Title: "cms", FilterValue: "cms /home/user/projects/cms"},
+		{Title: "dotfiles", FilterValue: "dotfiles /home/user/projects/dotfiles"},
+		{Title: "gather-md.git", FilterValue: "gather-md.git /home/user/projects/gather-md.git/main"},
+		{Title: "notes", FilterValue: "notes /home/user/projects/notes"},
 	}
 
 	tests := []struct {

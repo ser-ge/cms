@@ -4,7 +4,99 @@
 [![Go](https://img.shields.io/github/go-mod-go-version/ser-ge/cms)](https://go.dev/)
 [![License](https://img.shields.io/github/license/ser-ge/cms)](LICENSE)
 
-`cms` is a tmux session picker and dashboard with Claude and Codex awareness.
+
+"There are many like it, but this one is mine."
+
+`cms` is an agent aware tmux session manager based on [tms](https://github.com/jrmoulton/tmux-sessionizer
+) which in turn is based on ThePrimeagen's [tmux-sessionizer](https://github.com/ThePrimeagen/.dotfiles/blob/master/bin/.local/scripts/tmux-sessionizer)
+
+Fzf switcher for projects (repos), worktrees and running agents.
+
+This project started because I've been (unsuccessfully) hitting "jj" to esc in the tms fzf
+picker for years, vim brain kept trying and failing to be normal. The project
+spiralled.
+
+
+## Quickstart
+
+### The finder
+
+`cms` with no arguments opens a fuzzy picker over your tmux sessions, projects (repos)
+worktrees, branches, and agents.
+
+Agent status is detected and agent queue is updated live, pushing agents waiting for input to the top.
+
+```bash
+cms                # everything (configurable via [finder].include)
+cms -p             # projects (what tms does out of the box)
+cms -a             # agents only (live sorted by status)
+cms -awsp           # agents, worktrees, session, projects,
+```
+
+Flags: `-s` sessions, `-p` projects, `-a` agents, `-m` marks, `-w` worktrees,
+`-b` branches, `-W` windows, `-P` panes.  Composable: the order in which the sections
+stack in the finder is set by the order the flags are passed.
+
+<!-- gif: cms finder with composable sections and agent status badges -->
+
+### "Open and hit enter" always useful
+
+`cms` tries to make the first item in the list always useful:
+
+- **Agents** — sorted by state (`waiting` for input first, then `completed`, `idle`, `working` ).
+- **Projects / Worktrees** — sorted by `recent`. First item takes you back to last visited.
+
+The headless version: [`cms next`](#navigation) will jump to the first item in a given list.
+
+eg `cms next -a` will cycle through the agent queue based on priority.
+
+<!-- gif: cms next cycling through waiting agents -->
+
+### Useful tmux bindings
+
+As with original `tms` binding the commands to tmux pop up windows is most useful.
+
+`cms` does not add any bindings.
+
+Add these to your `~/.tmux.conf`:
+
+```bash
+# Popup finder (prefix + f)
+bind f display-popup -E -w 80% -h 70% "cms"
+
+# Popup agent queue (prefix + a)
+bind a display-popup -E -w 80% -h 70% "cms -a"
+
+# Jump to next waiting agent (prefix + n)
+bind n run-shell "cms next -a"
+
+```
+
+### The worktree loop
+
+`cms go` is the one command for branch work. Worktree exists? Switch to it. Doesn't exist? Create it from your configured base branch.
+
+```bash
+cms go feature-x                        # switch or create
+cms go feature-x "implement auth flow"  # create + spawn agent with prompt
+```
+
+The optional prompt string runs your configured `go_cmd` (default: `claude -p "$CMS_PROMPT"`).
+
+When you're done, `cms land` closes the loop:
+
+```bash
+cms land              # squash, rebase, fast-forward merge, remove worktree
+cms land -m "msg"     # explicit squash message
+cms land --no-squash  # preserve individual commits
+```
+
+One command: squash → rebase onto target → merge → cleanup worktree and branch. Conflicts? Fix, `git rebase --continue`, `cms land --continue`. Backup refs are saved automatically.
+
+The lifecycle: **go → work → land → gone.**
+
+---
+
 
 ## Install
 
@@ -24,64 +116,6 @@ go install github.com/ser-ge/cms@latest
 
 Download from [GitHub Releases](https://github.com/ser-ge/cms/releases).
 
-## Quickstart
-
-### The finder
-
-`cms` with no arguments opens a fuzzy picker over your tmux sessions, worktrees, branches, and agents — all in one view. Short flags select sections, and they compose:
-
-```bash
-cms                # everything (configurable via [finder].include)
-cms -a             # agents only
-cms -s             # sessions only
-cms -sw            # sessions + worktrees
-cms -swa           # sessions + worktrees + agents
-```
-
-Flags: `-s` sessions, `-p` projects, `-a` agents, `-m` marks, `-w` worktrees, `-b` branches, `-W` windows, `-P` panes. Spell out the full name or comma-separate if you prefer: `cms sessions,worktrees`.
-
-<!-- gif: cms finder with composable sections and agent status badges -->
-
-Every item shows agent status inline. Sessions and worktrees display compact activity counts (`?1 · ⚡2 · ●1`) so you can see at a glance where work is happening.
-
-### Sort makes "open and enter" always useful
-
-Each view has sort defaults tuned to its purpose:
-
-- **Agents** — sorted by state (`waiting` first), then unseen, then oldest. Enter jumps to the agent that needs you most.
-- **Sessions** — sorted by `recent`. Enter takes you back to where you just were.
-- **Worktrees** — `active` first, `-current` deprioritized. You see what else is going on, not where you already are.
-
-The sort is why `cms` + enter is always the right move — not just a fuzzy filter, but an opinionated "take me to the most useful thing." All sort keys are configurable in `[finder]` and per-section overrides.
-
-For the headless version of the same idea: [`cms next`](#navigation) cycles through agent panes by priority (waiting → completed → idle), no picker needed.
-
-<!-- gif: cms next cycling through waiting agents -->
-
-### The worktree loop
-
-`cms go` is the one command for branch work. Worktree exists? Switch to it. Doesn't exist? Create it from your configured base branch.
-
-```bash
-cms go feature-x                        # switch or create
-cms go feature-x "implement auth flow"  # create + spawn agent with prompt
-```
-
-The optional prompt string runs your configured `go_cmd` (default: `claude -p "$CMS_PROMPT"`), so one command gets you a fresh worktree with an agent already working.
-
-When you're done, `cms land` closes the loop:
-
-```bash
-cms land              # squash, rebase, fast-forward merge, remove worktree
-cms land -m "msg"     # explicit squash message
-cms land --no-squash  # preserve individual commits
-```
-
-One command: squash → rebase onto target → merge → cleanup worktree and branch. Conflicts? Fix, `git rebase --continue`, `cms land --continue`. Backup refs are saved automatically.
-
-The lifecycle: **go → work → land → gone.**
-
----
 
 ## Commands
 
@@ -102,57 +136,19 @@ cms -sw                          # sessions + worktrees
 cms -swa                         # sessions + worktrees + agents
 cms agents,branches              # agents + branches
 
-# Views
-cms dash                         # dashboard (session/pane grid with agent status)
-
 # Navigation (headless)
-cms next                         # jump to next waiting/idle agent pane
-cms mark <label> [pane]          # mark current pane with label
-cms jump <label>                 # switch to marked pane
+cms next                         # jump to next in list (same flags as cms)
 
-# Worktree operations (top-level)
+# Worktree operations, tmux nav built in
+cms go <branch> [start-point] [prompt]  # switch or create; optional prompt runs go_cmd
+cms land [target]                # land current branch into target
+
+
 cms switch <branch>              # switch to existing branch's worktree
 cms switch -c <branch> [start]   # create new branch + worktree
-cms go <branch> [start-point] [prompt]  # switch or create; optional prompt runs go_cmd
 cms rm <branch>                  # remove worktree
-cms land [target]                # land current branch into target
-cms ls                           # worktree table
-
-# Config
-cms config init                  # scaffold default config
-cms config default               # print default config (TOML) to stdout
-cms hook-setup                   # print hook configuration for Claude Code
-
-# Internal (hidden)
-cms internal hook <event>        # forward Claude Code hook event
-cms internal refresh [name]      # refresh worktrees for tmux session
 ```
 
-Valid section names: `sessions`, `projects`, `agents`, `worktrees`, `branches`, `panes`, `windows`, `marks`.
-
-### Picker keybindings
-
-In **insert mode** (default): type to filter, `ctrl+j`/`ctrl+k` to navigate, `esc` to enter normal mode.
-
-In **normal mode**: `j`/`k` navigate, `i` or `/` to filter, `enter` to switch, `x` to close (with y/n confirm), `esc`/`q` to go back.
-
-## Config
-
-Write the default config:
-
-```bash
-cms config init
-```
-
-This writes to `$XDG_CONFIG_HOME/cms/config.toml` (or `~/.config/cms/config.toml`).
-
-Print the default config to stdout (useful for piping or reviewing):
-
-```bash
-cms config default                              # user-facing config
-cms config full                                 # all options including internal tuning
-cms config default > ~/.config/cms/config.toml  # overwrite with defaults
-```
 
 See [examples/config.toml](examples/config.toml) for the user config and [examples/config-full.toml](examples/config-full.toml) for every option including status tracking tuning, colors, icons, and dashboard layout.
 
@@ -171,37 +167,6 @@ See [examples/config.toml](examples/config.toml) for the user config and [exampl
 | `newest` | Newest activity timestamp first | agents |
 
 Keys are evaluated left-to-right. The first key that distinguishes two items wins. Within equal items, `sort.SliceStable` preserves original order.
-
-### Icon colors
-
-Each section icon's color encodes item state. All colors are configurable
-in `[colors.shared]` (ANSI 256 palette).
-
-**Agent-bearing sections** (sessions, windows, panes, agents) use activity
-colors — icon takes the most urgent agent state per `state_order`:
-
-| Activity  | Default | Color          |
-|-----------|---------|----------------|
-| waiting   | `1`     | red            |
-| completed | `208`   | orange         |
-| working   | `3`     | yellow         |
-| idle      | `12`    | blue           |
-| no agent  | `240`   | gray           |
-
-**Worktrees** use git repo state (not agent state):
-
-| State          | Default | Color | Meaning                          |
-|----------------|---------|-------|----------------------------------|
-| dirty / ahead  | `1`     | red   | uncommitted changes or unpushed  |
-| clean diverged | `2`     | green | in flight, not yet merged        |
-| merged         | `240`   | gray  | done, can be cleaned up          |
-
-**Non-agent sections** (branches, marks, projects) use presence colors:
-
-| State    | Default | Color |
-|----------|---------|-------|
-| active   | `2`     | green |
-| inactive | `240`   | gray  |
 
 "Active" means:
 
@@ -227,41 +192,17 @@ When composing sections that overlap, duplicates are hidden from the less-specif
 
 When a section is shown alone (e.g. `cms branches`), all items appear with Active marking.
 
-## Marks
-
-Vim-style named bookmarks for tmux panes. Stored as JSON at `~/.config/cms/marks.json`.
-
-```bash
-cms mark api                   # mark current pane as "api"
-cms mark frontend %12          # mark specific pane
-cms jump api                   # switch to marked pane
-cms -m                         # browse marks in picker
-```
-
-Dead marks (pane no longer exists) are shown dimmed in the picker and can be cleaned up with `x`.
-
 ## Worktree Management
 
 Manage git worktrees from the CLI. Inspired by [wtp](https://github.com/satococoa/wtp) and [Worktrunk](https://github.com/max-sixty/worktrunk).
+Tmux navigation baked in.
 
-### `cms switch` — strict git switch semantics
-
-Switch to an existing branch's worktree. Creating a new branch requires `-c`/`-C` (explicit intent). Start-point is only valid with `-c`/`-C`.
-
-```bash
-cms switch feature             # switch to existing branch's worktree
-cms switch -c feature main     # create new branch from main
-cms switch -c feature ^        # create from default branch
-cms switch -C feature main     # force-create (reset if exists)
-```
-
-Options: `--force`/`-f` (force worktree creation), `--path <dir>` (override worktree directory), `--no-open` (skip tmux window).
-
-If the branch has a worktree, switches to it. If the branch exists but has no worktree, creates one. If the branch doesn't exist, errors (use `-c` to create).
 
 ### `cms go` — opinionated switch-or-create
 
-The daily driver. Same worktree/tmux behavior as switch, but auto-creates new branches from the configured `base_branch`. Optionally runs a configured command with a prompt string.
+Same worktree/tmux behavior as switch, but auto-creates new
+branches from the configured `base_branch` if available. Optionally runs a configured
+command with a prompt string.
 
 ```bash
 cms go feature                              # switch if exists, create from base_branch if not
@@ -273,13 +214,19 @@ cms go feature main "implement feature A"   # start-point + prompt
 
 Options: `--force`/`-f`, `--path <dir>`, `--no-open`.
 
-**Base branch resolution** (for new branches): explicit start-point arg → `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master` → current HEAD. The chosen base is recorded in `git config branch.<name>.cms-base` so `cms land` can use it as the default target.
+**Base branch resolution** (for new branches): explicit start-point arg →
+`[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch`
+from user `config.toml` → `origin/HEAD` → local `main` → local `master` →
+current HEAD. The chosen base is recorded in `git config
+branch.<name>.cms-base` so `cms land` can use it as the default target.
 
 The prompt (arg with spaces) is passed to the command configured in `[worktree].go_cmd`. The prompt is available as `$CMS_PROMPT` in the command's environment. If the command string doesn't reference `$CMS_PROMPT`, the prompt is appended as an argument.
 
 ### `cms land` — land current branch into target
 
-Run from inside a feature worktree. Squashes commits, rebases onto the target branch, fast-forward merges, and cleans up the worktree, branch, and tmux window. The full pipeline:
+Run from inside a feature worktree. Squashes commits, rebases onto the target
+branch, fast-forward merges, and cleans up the worktree, branch, and tmux
+window. The full pipeline:
 
 1. Stage uncommitted changes
 2. Run `pre_commit` hooks
@@ -314,56 +261,35 @@ cms land --continue            # resume after resolving conflicts
 cms land --autostash           # stash dirty target worktree without prompting
 ```
 
-**Target resolution:** `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `git config branch.<name>.cms-base` (recorded at worktree creation) → `origin/HEAD` → local `main` → local `master`. Supports symbols: `^` (default branch), `-` (previous branch), `@` (current).
+**Target resolution:** `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from project `cms.toml`
 
-If the target worktree has uncommitted changes, `cms land` will prompt to stash them before merging and pop them back after. Use `--autostash` to skip the prompt. If the stash pop conflicts, your changes stay in the stash — run `git stash list` in the target worktree to find them.
+If the target worktree has uncommitted changes, `cms land` will prompt to stash
+them before merging and pop them back after. Use `--autostash` to skip the
+prompt. If the stash pop conflicts, your changes stay in the stash — run `git
+stash list` in the target worktree to find them.
 
 **Backup refs:** With `--squash`, land saves the pre-squash HEAD to `refs/cms-wt-backup/<branch>` so original commit history can be recovered via `git log refs/cms-wt-backup/<branch>`.
 
-**Conflict recovery:** On rebase conflicts, land exits with instructions. Fix conflicts, `git rebase --continue`, then `cms land --continue` to finish the merge and cleanup. Or `cms land --abort` to cancel. On `--continue`, branch resolution is deferred until after the rebase finishes (during a conflicted rebase, HEAD is detached), ensuring the merge step targets the correct branch.
+**Conflict recovery:** On rebase conflicts, land exits with instructions. Fix
+conflicts, `git rebase --continue`, then `cms land --continue` to finish the
+merge and cleanup. Or `cms land --abort` to cancel. On `--continue`, branch
+resolution is deferred until after the rebase finishes (during a conflicted
+rebase, HEAD is detached), ensuring the merge step targets the correct branch.
 
-**LLM commit messages:** With `[worktree].commit_cmd` configured, the diff is piped to the command for auto-generated commit messages. Falls back to a default message on failure. Use `--no-squash` to skip squashing and preserve individual commits.
+**LLM commit messages:** With `[worktree].commit_cmd` configured, the diff is
+piped to the command for auto-generated commit messages. Falls back to a
+default message on failure. Use `--no-squash` to skip squashing and preserve
+individual commits.
 
-### `cms rm` — remove worktree
-
-Removes worktree + branch + tmux window. Agent-aware: blocks removal if Claude or Codex agents are running in the worktree.
-
-```bash
-cms rm feature                 # remove worktree, delete branch (if merged)
-cms rm feature --keep-branch   # remove worktree, keep the branch
-cms rm -f -D feature           # force remove + force delete unmerged branch
-cms rm --dry-run feature       # preview what would be removed
-```
-
-`--force`/`-f` forces worktree removal and skips agent checks. `-D` force-deletes the branch even if not merged (mirrors `git branch -D`).
-
-### `cms ls` — list worktrees
-
-Shows all worktrees with the current one marked `*`. Merged branches show `[merged: reason]`.
-
-```
-*  main          .
-   feature-auth  ../worktrees/feature-auth
-   old-fix       ../worktrees/old-fix       [merged: ancestor of main]
-```
-
-### Symbols
-
-Special branch symbols work in `switch`, `go`, `land`, and `rm`:
-
-| Symbol | Meaning |
-|--------|---------|
-| `@` | Current branch |
-| `-` | Previous branch (from reflog) |
-| `^` | Default branch (main/master) |
-
-### Worktree Configuration
+### Project level Configuration
 
 Settings merge from user config (`~/.config/cms/config.toml`) and per-repo config (`.cms.toml`):
 
+Note: `.cms.toml` must be placed in project root. For bare repo place
+
 ```toml
 [worktree]
-base_dir = "../worktrees"
+base_dir = "../worktrees" # target path for new worktrees
 base_branch = "main"               # default start-point for cms go + target for cms land
 commit_cmd = "claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 go_cmd = "claude -p \"$CMS_PROMPT\""  # command to run when prompt is given to cms go
@@ -378,40 +304,17 @@ command = "npm run lint"
 command = "npm test"
 ```
 
-Hooks and `go_cmd` receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment variables. `go_cmd` also receives `CMS_PROMPT`.
+Hooks and `go_cmd` receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment
+variables. `go_cmd` also receives `CMS_PROMPT`.
 
-## Claude Code Hooks (optional)
+## Claude Code Hooks (Recommended)
 
-By default, `cms` detects agent activity by observing tmux pane output. For faster, more accurate status updates, enable Claude Code hooks. When hooks are active for a pane, the observer is automatically suppressed.
+By default, `cms` detects agent activity by observing tmux pane output. For
+faster, more accurate status updates, enable Claude Code hooks. When hooks are
+active for a pane, the observer is automatically suppressed.
 
-### Setup
+You will be prompted on first run (when no config file detected) to auto install hooks.
 
-1. Generate the hook configuration:
-
-```bash
-cms hook-setup
-```
-
-2. Copy the printed JSON into `~/.claude/settings.json`, merging with existing hooks.
-
-### Events
-
-| Hook | Trigger | What `cms` learns |
-|------|---------|-------------------|
-| `SessionStart` | Claude session begins | Pane has an active agent, session ID |
-| `Stop` | Claude goes idle | Work finished |
-| `SessionEnd` | Claude process exits | Agent left the pane |
-| `Notification` | Claude needs input | Waiting for approval + message text |
-| `UserPromptSubmit` | User sends a prompt | Agent is working |
-| `PreToolUse` | Tool execution starts | Which tool is running |
-
-### Manual testing
-
-```bash
-echo '{"session_id":"test"}' | cms internal hook session-start
-echo '{"tool_name":"Edit"}' | cms internal hook pre-tool-use
-echo '{}' | cms internal hook stop
-```
 
 ## Shell Completions
 
@@ -429,62 +332,14 @@ cms completion zsh > ~/.zfunc/_cms
 #   fpath+=(~/.zfunc); autoload -Uz compinit; compinit
 ```
 
-Completions include subcommands, short flags, dynamic branch/worktree names for worktree commands, and mark labels for `jump`.
+### The Vibes Report
 
-## Architecture
+Vibe score: 9 / 10. This project was entirely written by claude code in a programming
+language which I am not at all familiar with (at all).
 
-```
-main.go / debuglog.go              CLI entry + debug wiring
+The following repos were used as direct reference by claude:
 
-internal/
-  proc/         Process table + IsShellCommand
-  config/       Config types, FinderConfig, PickerSortConfig, TOML loading
-  git/          Git info, branch listing, worktree listing
-  tmux/         Session/Window/Pane types, tmux commands, control mode
-  agent/        Provider-neutral detection, Claude + Codex parsing
-  attention/    Attention tracking + tmux pane persistence
-  hook/         Claude Code hook socket listener
-  mark/         Named pane bookmarks (file-backed JSON)
-  session/      Session CRUD, smart switching, OpenProject
-  project/      Git repo discovery from search paths
-  worktree/     Worktree switch/go/rm/land workflow
-  watcher/      State coordination: events, pane tracking, polling
-  tui/          All UI: app router, dashboard, finder, picker, styles
-  debug/        Package-level Logf var
-```
-
-Layers (import downward only):
-
-- **Presentation** (`tui`) -- renders state, emits `tea.Cmd` via `actions.go`, never calls tmux/session directly
-- **Business** (`watcher`, `session`, `project`, `worktree`) -- coordinates state, manages tmux sessions
-- **Domain** (`agent`, `attention`, `hook`, `mark`) -- detection logic, attention tracking, hook events, bookmarks
-- **Infrastructure** (`tmux`, `git`, `proc`, `config`, `debug`) -- I/O boundaries, no internal deps
-
-## Development
-
-```bash
-go test ./...                        # run all tests
-go build -o /dev/null ./...          # validate build (don't write binary -- interferes with tmux)
-go vet ./internal/... .              # lint
-```
-
-Render harness (visual debugging):
-
-```bash
-CMS_RENDER_HARNESS=1 go test ./internal/tui/ -run 'TestRenderHarness(Dashboard|Finder|Agents)' -v
-CMS_LIVE_HARNESS=1 go test ./internal/tui/ -run TestRenderHarnessLive -v
-```
-
-Integration harness (isolated tmux with test repos):
-
-```bash
-./scripts/harness.sh                          # worktrees section (default)
-./scripts/harness.sh sessions,worktrees       # multiple sections
-./scripts/harness.sh --agents worktrees       # with real claude agents
-./scripts/harness.sh dash                     # dashboard view
-```
-
-Creates bare-repo worktree layouts under `/tmp/cms-harness/repos`, starts an
-isolated tmux server with its own config, and drops you into the TUI. Use
-`--agents` to launch real `claude -p` processes in some panes for agent
-detection testing. See `scripts/create-test-repos.sh` for the repo layout.
+- [tms](https://github.com/jrmoulton/tmux-sessionizer?tab=readme-ov-file)
+- [worktrunk](https://github.com/max-sixty/worktrunk)
+- [tmux-up](https://github.com/jamesottaway/tmux-up)
+- [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum/tree/master)

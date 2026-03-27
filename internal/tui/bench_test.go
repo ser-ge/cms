@@ -20,7 +20,7 @@ func generatePickerItems(n int) []PickerItem {
 		items[i] = PickerItem{
 			Title:       name,
 			Description: fmt.Sprintf("%dw · 2 working", i%5+1),
-			FilterValue: name + " /Users/serge/projects/" + name,
+			FilterValue: name + " /home/user/projects/" + name,
 			Active:      i%3 == 0,
 			Icon:        "●",
 		}
@@ -37,7 +37,7 @@ func generateSessions(n int, panesPerWin int) []tmux.Session {
 				ID:         fmt.Sprintf("%%%d", i*panesPerWin+j),
 				Index:      j,
 				Command:    "zsh",
-				WorkingDir: fmt.Sprintf("/Users/serge/projects/proj-%d", i),
+				WorkingDir: fmt.Sprintf("/home/user/projects/proj-%d", i),
 			}
 		}
 		sessions[i] = tmux.Session{
@@ -177,7 +177,7 @@ func BenchmarkPickerView(b *testing.B) {
 
 func BenchmarkHighlightMatches(b *testing.B) {
 	benchCfg()
-	s := "session-42 /Users/serge/projects/session-42"
+	s := "session-42 /home/user/projects/session-42"
 	idxs := []int{0, 1, 2, 7, 8, 30, 31, 32}
 	b.Run("8_matches", func(b *testing.B) {
 		for b.Loop() {
