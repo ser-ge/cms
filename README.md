@@ -12,6 +12,8 @@
 Fuzzy switcher for projects (repos), worktrees, and running agents.
 
 ![cms demo](demo.gif)
+Live agent status + ctx %
+
 
 This project started because I've been (unsuccessfully) hitting "jj" to esc in the tms fzf
 picker for years, vim brain kept trying and failing to be normal. The project
