@@ -244,7 +244,10 @@ cms land --no-ff               # create a merge commit
 cms land --keep                # don't remove worktree after landing
 cms land --abort               # abort an in-progress rebase
 cms land --continue            # resume after resolving conflicts
+cms land --autostash           # stash dirty target worktree without prompting
 ```
+
+If the target worktree has uncommitted changes, `cms land` will prompt to stash them before merging and restore them after. Use `--autostash` to skip the prompt. If the stash pop conflicts after merge, the stash is preserved (see `git stash list` in the target worktree).
 
 On `--continue`, branch resolution is deferred until after the rebase finishes (during a conflicted rebase, HEAD is detached). This ensures the merge step targets the correct branch.
 

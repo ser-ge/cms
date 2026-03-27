@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,13 +35,14 @@ func bold(s string) string  { return cBold + s + cReset }
 
 // LandOpts configures the land workflow.
 type LandOpts struct {
-	Squash   bool   // squash all commits into one before landing
-	NoFF     bool   // create a merge commit even for fast-forward
-	Message  string // commit message (for squash); empty = auto-generate
-	NoEdit   bool   // don't open editor for commit message
-	Keep     bool   // keep worktree after landing (don't remove)
-	Abort    bool   // abort an in-progress rebase
-	Continue bool   // resume after resolving rebase conflicts
+	Squash    bool   // squash all commits into one before landing
+	NoFF      bool   // create a merge commit even for fast-forward
+	Message   string // commit message (for squash); empty = auto-generate
+	NoEdit    bool   // don't open editor for commit message
+	Keep      bool   // keep worktree after landing (don't remove)
+	Abort     bool   // abort an in-progress rebase
+	Continue  bool   // resume after resolving rebase conflicts
+	AutoStash bool   // stash dirty target worktree without prompting
 }
 
 // Land implements the full land workflow:
@@ -71,6 +73,8 @@ func Land(args []string) error {
 			opts.Abort = true
 		case "--continue":
 			opts.Continue = true
+		case "--autostash":
+			opts.AutoStash = true
 		case "-m":
 			if i+1 < len(args) {
 				i++
@@ -231,6 +235,28 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 		}
 	}
 
+	// Stash dirty target worktree so the merge can proceed.
+	didStash := false
+	targetStatus, _ := git.Cmd(mergeDir, "status", "--porcelain")
+	if strings.TrimSpace(targetStatus) != "" {
+		if !opts.AutoStash {
+			fmt.Fprintf(os.Stderr, "%s target worktree %s has uncommitted changes\n", red("warning:"), bold(mergeDir))
+			fmt.Fprintf(os.Stderr, "  changes will be stashed before merge and restored after\n")
+			fmt.Fprintf(os.Stderr, "  proceed? [y/N] ")
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				return fmt.Errorf("aborted: target worktree has uncommitted changes (use --autostash to skip this prompt)")
+			}
+		}
+		fmt.Fprintf(os.Stderr, "%s changes in %s worktree\n", dim("stashing"), bold(target))
+		if _, err := git.Cmd(mergeDir, "stash", "push", "-m", "cms land: auto-stash before merge"); err != nil {
+			return fmt.Errorf("cannot stash target worktree: %w", err)
+		}
+		didStash = true
+	}
+
 	mergeArgs := []string{"merge"}
 	if opts.NoFF {
 		mergeArgs = append(mergeArgs, "--no-ff")
@@ -245,10 +271,23 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 			fmt.Fprintf(os.Stderr, "%s fast-forward not possible, trying merge commit\n", red("warning:"))
 			mergeArgs = []string{"merge", "--no-ff", currentBranch}
 			if _, err := git.Cmd(mergeDir, mergeArgs...); err != nil {
+				if didStash {
+					git.Cmd(mergeDir, "stash", "pop")
+				}
 				return fmt.Errorf("merge failed: %w", err)
 			}
 		} else {
+			if didStash {
+				git.Cmd(mergeDir, "stash", "pop")
+			}
 			return fmt.Errorf("merge failed: %w", err)
+		}
+	}
+
+	// Restore stashed changes; warn if pop conflicts.
+	if didStash {
+		if _, err := git.Cmd(mergeDir, "stash", "pop"); err != nil {
+			fmt.Fprintf(os.Stderr, "%s stash pop conflicted in %s worktree — your changes are preserved in `git stash list`\n", red("warning:"), bold(target))
 		}
 	}
 
