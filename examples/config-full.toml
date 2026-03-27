@@ -19,7 +19,7 @@ exclusions = []
 
 [finder]
 # What bare `cms` shows and in what order.
-include = ["agents", "sessions", "worktrees", "projects"]
+include = ["agents", "worktrees", "sessions", "projects"]
 
 # Global sort key priority list. Per-section overrides below.
 # Keys evaluated left-to-right; first difference wins.

@@ -342,7 +342,7 @@ func boolPtr(b bool) *bool { return &b }
 
 func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
-		Include:    []string{"agents", "sessions", "worktrees", "projects"},
+		Include:    []string{"agents", "worktrees", "sessions", "projects"},
 		Sort:       []string{"active", "-current"},
 		StateOrder:            []string{"waiting", "completed", "idle", "working"},
 		ShowContextPercentage: true,
