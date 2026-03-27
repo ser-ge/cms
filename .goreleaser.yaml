@@ -31,7 +31,7 @@ changelog:
     - title: Other
       order: 999
 
-homebrew_casks:
+brews:
   - repository:
       owner: ser-ge
       name: homebrew-tap
@@ -39,5 +39,5 @@ homebrew_casks:
     homepage: https://github.com/ser-ge/cms
     description: Tmux session picker and dashboard with Claude and Codex awareness
     license: MIT
-    binaries:
-      - cms
+    install: |
+      bin.install "cms"
