@@ -36,6 +36,29 @@ const (
 	KindQueue
 )
 
+// SectionName returns the finder section name for this item kind.
+func (k ItemKind) SectionName() string {
+	switch k {
+	case KindSession:
+		return "sessions"
+	case KindProject:
+		return "projects"
+	case KindWorktree:
+		return "worktrees"
+	case KindBranch:
+		return "branches"
+	case KindPane:
+		return "panes"
+	case KindMark:
+		return "marks"
+	case KindWindow:
+		return "windows"
+	case KindQueue:
+		return "queue"
+	}
+	return "unknown"
+}
+
 // PostAction is an action to execute after the TUI exits.
 // Used when the action must happen outside bubbletea (e.g. tmux attach).
 type PostAction struct {

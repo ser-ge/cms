@@ -75,7 +75,9 @@ func renderHelp() string {
 	b.WriteString(boldStyle.Render("Usage:") + "\n")
 	b.WriteString("  cms                        " + dimStyle.Render("Open finder (universal fuzzy switcher)") + "\n")
 	b.WriteString("  cms " + accentStyle.Render("<command>") + " [args]         " + dimStyle.Render("Run a command") + "\n")
-	b.WriteString("  cms " + accentStyle.Render("-s|-p|-q|-m") + "             " + dimStyle.Render("Open finder with filter") + "\n\n")
+	b.WriteString("  cms " + accentStyle.Render("-s|-p|-q|-m") + "             " + dimStyle.Render("Open finder with filter") + "\n")
+	b.WriteString("  cms " + accentStyle.Render("[sections]") + " --plain      " + dimStyle.Render("Print items as plain text (LLM-friendly)") + "\n")
+	b.WriteString("  cms " + accentStyle.Render("[sections]") + " --watch      " + dimStyle.Render("Live-updating plain text output") + "\n\n")
 
 	// Group commands.
 	grouped := map[string][]command{}
@@ -212,7 +214,7 @@ func unknownCommandMsg(name string) string {
 
 func unknownFlagMsg(flag string) string {
 	msg := fmt.Sprintf("unknown flag: %s", flag)
-	msg += "\n\n" + dimStyle.Render("Available flags: -s (sessions), -p (projects), -q (queue), -m (marks)")
+	msg += "\n\n" + dimStyle.Render("Available flags: -s (sessions), -p (projects), -q (queue), -m (marks), --plain, --watch")
 	msg += "\n" + dimStyle.Render("Run 'cms --help' for a list of commands.")
 	return msg
 }
@@ -261,6 +263,11 @@ func completionFish() string {
 			}
 		}
 	}
+	b.WriteString("\n")
+
+	// Long flags available everywhere.
+	b.WriteString("complete -c cms -l plain -d 'Print items as plain text (LLM-friendly)'\n")
+	b.WriteString("complete -c cms -l watch -d 'Live-updating plain text output'\n")
 	b.WriteString("\n")
 
 	// Dynamic branch/worktree completion for worktree commands.

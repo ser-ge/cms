@@ -63,16 +63,34 @@ func main() {
 		return
 	}
 
-	// Parse flags before subcommand.
-	// Parse flags before subcommand.
-	// Single-letter flags compose: -s = sessions, -swq = sessions+worktrees+queue.
-	for len(args) > 0 && strings.HasPrefix(args[0], "-") && len(args[0]) > 1 && args[0][1] != '-' {
-		parsed := parseShortFlags(args[0][1:])
-		if parsed == nil {
-			exitErr(fmt.Errorf("%s", unknownFlagMsg(args[0])))
+	var plainMode, watchMode bool
+
+	// Parse short and long flags before subcommand.
+	// Short flags compose: -s = sessions, -swq = sessions+worktrees+queue.
+	// Long flags: --plain, --watch (can be mixed with short flags in any order).
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		if strings.HasPrefix(args[0], "--") {
+			switch args[0] {
+			case "--plain":
+				plainMode = true
+			case "--watch":
+				watchMode = true
+			default:
+				exitErr(fmt.Errorf("%s", unknownFlagMsg(args[0])))
+			}
+			args = args[1:]
+			continue
 		}
-		sections = parsed
-		args = args[1:]
+		if len(args[0]) > 1 {
+			parsed := parseShortFlags(args[0][1:])
+			if parsed == nil {
+				exitErr(fmt.Errorf("%s", unknownFlagMsg(args[0])))
+			}
+			sections = parsed
+			args = args[1:]
+			continue
+		}
+		break
 	}
 
 	if len(args) > 0 {
@@ -175,10 +193,27 @@ func main() {
 			parsed := parseSections(args[0])
 			if parsed != nil {
 				sections = parsed
+				// Check for trailing --plain/--watch after section name.
+				for _, a := range args[1:] {
+					switch a {
+					case "--plain":
+						plainMode = true
+					case "--watch":
+						watchMode = true
+					default:
+						exitErr(fmt.Errorf("%s", unknownFlagMsg(a)))
+					}
+				}
 			} else {
 				exitErr(fmt.Errorf("%s", unknownCommandMsg(args[0])))
 			}
 		}
+	}
+
+	// Plain/watch mode: headless finder with text output.
+	if plainMode || watchMode {
+		runPlainMode(sections, cfg, watchMode)
+		return
 	}
 
 	w := watcher.New()

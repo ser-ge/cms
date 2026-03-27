@@ -229,21 +229,18 @@ func (w *Watcher) HookStats() (activeCount int, listening bool) {
 	return
 }
 
-// bootstrap fetches the initial state and starts the event + poll goroutines.
-// If tmux isn't running yet, it sends an empty StateMsg so the TUI can still
-// show the finder (projects from disk). Control mode is started if available.
-func (w *Watcher) bootstrap() {
+// initState fetches tmux state, detects agents, restores persisted timestamps,
+// seeds the attention queue, and updates the watcher cache. Returns false if
+// tmux is unavailable.
+func (w *Watcher) initState() ([]tmux.Session, map[string]agent.AgentStatus, tmux.CurrentTarget, bool) {
 	sessions, pt, err := tmux.FetchState()
 	if err != nil {
-		// No tmux server -- send empty state so finder can still show projects.
-		debug.Logf("watcher: bootstrap no tmux err=%v", err)
-		w.send(StateMsg{})
-		return
+		debug.Logf("watcher: initState no tmux err=%v", err)
+		return nil, nil, tmux.CurrentTarget{}, false
 	}
 	current, _ := tmux.FetchCurrentTarget()
 	agents := agent.DetectAll(sessions, pt)
-	debug.Logf("watcher: bootstrap sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
-	snapshotID := w.recorder.RecordTmuxState("bootstrap", sessions, current)
+	debug.Logf("watcher: initState sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 
 	// Track which panes have a known agent and restore persisted timestamps.
 	var agentPaneIDs []string
@@ -259,9 +256,6 @@ func (w *Watcher) bootstrap() {
 			if p.Activity == status.Activity.String() {
 				w.activitySince[id] = p.Since
 			}
-			// Restore Completed state from previous run.
-			// If the decay window hasn't expired, set Completed and schedule decay
-			// for the remaining time. Otherwise leave as Idle.
 			if p.Activity == agent.ActivityCompleted.String() {
 				elapsed := time.Since(p.Since)
 				if elapsed < w.completedDecay {
@@ -274,7 +268,6 @@ func (w *Watcher) bootstrap() {
 				}
 			}
 		}
-		// Seed initial attention for panes already waiting or just completed.
 		if status.Activity == agent.ActivityWaitingInput {
 			w.Attention.Add(id, attention.Waiting)
 		}
@@ -285,6 +278,20 @@ func (w *Watcher) bootstrap() {
 	w.mu.Unlock()
 
 	w.updateCache(sessions, agents, current)
+	return sessions, agents, current, true
+}
+
+// bootstrap fetches the initial state and starts the event + poll goroutines.
+// If tmux isn't running yet, it sends an empty StateMsg so the TUI can still
+// show the finder (projects from disk). Control mode is started if available.
+func (w *Watcher) bootstrap() {
+	sessions, agents, current, ok := w.initState()
+	if !ok {
+		w.send(StateMsg{})
+		return
+	}
+
+	snapshotID := w.recorder.RecordTmuxState("bootstrap", sessions, current)
 	w.recorder.RecordIngress(trace.IngressBootstrapState, trace.BootstrapStatePayload{SnapshotID: snapshotID})
 	w.send(StateMsg{Sessions: sessions, Agents: agents, Current: current})
 
@@ -309,6 +316,12 @@ func (w *Watcher) bootstrap() {
 	// Always run process + git polls regardless of control mode.
 	go w.runProcessPoll()
 	go w.runGitPoll()
+}
+
+// BootstrapSync fetches the initial state synchronously without starting
+// event loops. Use for one-shot plain-text output.
+func (w *Watcher) BootstrapSync() {
+	w.initState()
 }
 
 // runEventLoop reads control mode events and dispatches them.

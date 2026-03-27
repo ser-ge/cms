@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/serge/cms/internal/agent"
 	"github.com/serge/cms/internal/config"
@@ -1431,4 +1432,81 @@ func (m finderModel) View() string {
 		return "  No agent sessions\n"
 	}
 	return m.picker.View()
+}
+
+// --- Headless / plain-text support ---
+
+// PlainRow is a single item for plain-text output.
+type PlainRow struct {
+	Section string // section name (e.g. "sessions", "queue")
+	Title   string // unstyled title
+	Desc    string // ANSI-stripped description
+	Active  bool
+}
+
+// PlainSnapshot returns the current finder items as plain-text rows,
+// in the exact order they would appear in the TUI picker.
+// This shares the build+sort pipeline — no separate code path.
+func (m *finderModel) PlainSnapshot() []PlainRow {
+	rows := make([]PlainRow, len(m.entries))
+	for i, entry := range m.entries {
+		item := m.picker.items[i]
+		rows[i] = PlainRow{
+			Section: entry.kind.SectionName(),
+			Title:   ansi.Strip(item.Title),
+			Desc:    ansi.Strip(item.Description),
+			Active:  item.Active,
+		}
+	}
+	return rows
+}
+
+// HeadlessFinder is an opaque handle for driving the finder without bubbletea.
+type HeadlessFinder struct {
+	m finderModel
+}
+
+// RunHeadless creates a finderModel, bootstraps it with watcher state,
+// executes Init scan commands synchronously, and returns a headless handle.
+// The items are built via the same pipeline as the TUI — single code path.
+func RunHeadless(cfg config.Config, w *watcher.Watcher, sections []string) *HeadlessFinder {
+	m := newFinderModel(cfg, w, sections, 120, 50)
+	want := sectionSet(sections)
+
+	// Run the same scans that Init() would schedule, but synchronously.
+	// Each scan function + Update handler is identical to the TUI path.
+	if want["projects"] {
+		m, _ = m.Update(projectsScannedMsg{project.Scan(cfg)})
+	}
+	if want["worktrees"] || want["branches"] {
+		msg := scanWorktreesCmd(m.sessData, m.agentData, w)()
+		m, _ = m.Update(msg)
+	}
+	if want["branches"] {
+		msg := scanBranchesCmd(m.sessData, w)()
+		m, _ = m.Update(msg)
+	}
+	if want["marks"] {
+		msg := loadMarksCmd(m.sessData)()
+		m, _ = m.Update(msg)
+	}
+
+	return &HeadlessFinder{m: m}
+}
+
+// PlainSnapshot returns the current items as plain-text rows.
+func (h *HeadlessFinder) PlainSnapshot() []PlainRow {
+	return h.m.PlainSnapshot()
+}
+
+// UpdateFromWatcher feeds a watcher message into the finder and returns
+// whether the items changed (requiring a re-render).
+func (h *HeadlessFinder) UpdateFromWatcher(msg tea.Msg) bool {
+	switch msg.(type) {
+	case watcher.StateMsg, watcher.AgentUpdateMsg, watcher.AttentionUpdateMsg,
+		watcher.FocusChangedMsg, watcher.GitUpdateMsg:
+		h.m, _ = h.m.Update(msg)
+		return true
+	}
+	return false
 }
