@@ -261,8 +261,8 @@ cms agents,branches              # agents + branches
 cms next                         # jump to next in list (same flags as cms)
 
 # Worktree operations, tmux nav built in
-cms go <branch> [start-point] [prompt]  # switch or create; optional prompt runs go_cmd
-cms land [target]                # land current branch into target
+cms go <branch> [start-point] [prompt]  # switch or create, opens in new window; optional prompt runs go_cmd
+cms land [target]                # land current branch into target, and takes you back to that window
 
 
 cms switch <branch>              # switch to existing branch's worktree
