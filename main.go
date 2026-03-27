@@ -493,7 +493,7 @@ func runInternal(args []string) error {
 // session, worktree, etc.). Flags mirror `cms` — same sections, same sort.
 func jumpNext(sections []string, cfg config.Config) error {
 	w := watcher.New()
-	w.ApplyConfig(cfg.General)
+	w.ApplyConfig(cfg.General, cfg.Status)
 	w.BootstrapSync()
 
 	h := tui.RunHeadless(cfg, w, sections)
