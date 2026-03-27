@@ -49,7 +49,7 @@ done
 
 if $CLEANUP; then
   echo "Cleaning up demo environment..."
-  for sess in webstore analytics platform; do
+  for sess in webstore analytics platform billing gateway; do
     tmux kill-session -t "$sess" 2>/dev/null && echo "  killed session $sess" || true
   done
   tmux set-environment -gu CMS_CONFIG_DIR 2>/dev/null || true
@@ -93,10 +93,11 @@ sed "s|/tmp/cms-demo/repos|$REPOS|" "$SCRIPT_DIR/../config.toml" > "$CONFIG_DIR/
 # ── Create tmux sessions on default server ───────────────────────────
 echo ""
 echo "Creating tmux sessions..."
-for sess in webstore analytics platform; do
+for sess in webstore analytics platform billing gateway; do
   tmux kill-session -t "$sess" 2>/dev/null || true
 done
 
+# Bare repos (worktree layout — each pane in its own worktree dir)
 tmux new-session  -d -s webstore  -c "$REPOS/webstore/main"
 tmux split-window -h -t webstore  -c "$REPOS/webstore/feature-auth"
 tmux split-window -h -t webstore  -c "$REPOS/webstore/feature-api"
@@ -108,6 +109,14 @@ tmux split-window -h -t analytics -c "$REPOS/analytics/feature-dashboard"
 tmux new-session  -d -s platform  -c "$REPOS/platform/main"
 tmux split-window -h -t platform  -c "$REPOS/platform/feat-search"
 tmux split-window -h -t platform  -c "$REPOS/platform/fix-perf"
+
+tmux new-session  -d -s billing   -c "$REPOS/billing/main"
+tmux split-window -h -t billing   -c "$REPOS/billing/feature-invoices"
+tmux split-window -h -t billing   -c "$REPOS/billing/feature-subscriptions"
+
+tmux new-session  -d -s gateway   -c "$REPOS/gateway/main"
+tmux split-window -h -t gateway   -c "$REPOS/gateway/feat-rate-limit"
+tmux split-window -h -t gateway   -c "$REPOS/gateway/feat-oauth"
 
 tmux list-sessions 2>&1 | sed 's/^/  /'
 

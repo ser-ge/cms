@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-# Create emulated project repos with bare-repo worktree layouts for testing cms.
+# Create test repos for cms demos and integration tests.
+#
+# Generates 10 repos: 5 bare-repo worktree layouts and 5 normal git repos.
+# All repos have multiple branches. Bare repos each get 3 feature worktrees.
 #
 # Usage:
 #   ./scripts/create-test-repos.sh [TARGET_DIR]
@@ -14,9 +17,11 @@ TARGET="${1:-/tmp/cms-test-repos}"
 rm -rf "$TARGET"
 mkdir -p "$TARGET"
 
-# Helper: create a bare repo with worktrees.
-#   make_project <name> <branch1> <branch2> ...
-make_project() {
+# ── Helpers ────────────────────────────────────────────────────────────
+
+# make_bare_project <name> <branch1> <branch2> ...
+#   Creates a bare repo with a main worktree + one worktree per branch.
+make_bare_project() {
   local name="$1"; shift
   local bare="$TARGET/$name/$name.git"
   local main_wt="$TARGET/$name/main"
@@ -59,42 +64,100 @@ EOF
     git -C "$wt" commit -m "$branch: initial work" >/dev/null 2>&1
   done
 
-  echo "  $name  (main + $# branches)"
+  echo "  [bare] $name  (main + $# branches)"
 }
 
-# Helper: create a project with a merged branch (integrated into main).
-make_project_with_merged() {
+# make_bare_project_with_merged <name> <merged_branch> <branch1> ...
+#   Like make_bare_project but fast-forward merges the first branch into main.
+make_bare_project_with_merged() {
   local name="$1"; shift
   local merged_branch="$1"; shift
 
-  make_project "$name" "$merged_branch" "$@"
+  make_bare_project "$name" "$merged_branch" "$@"
 
   local main_wt="$TARGET/$name/main"
-
-  # Fast-forward merge the branch into main so it shows as integrated
   git -C "$main_wt" merge "$merged_branch" --no-edit >/dev/null 2>&1
 
   echo "    ↳ $merged_branch merged into main"
 }
 
+# make_normal_project <name> <branch1> <branch2> ...
+#   Creates a normal (non-bare) git repo with branches.
+#   Branches diverge from main but are not checked out as worktrees.
+make_normal_project() {
+  local name="$1"; shift
+  local repo="$TARGET/$name"
+
+  git init "$repo" -b main >/dev/null 2>&1
+
+  # Seed commits
+  cat > "$repo/README.md" <<EOF
+# $name
+Test project for cms.
+EOF
+  mkdir -p "$repo/src"
+  echo "package main" > "$repo/src/main.go"
+  echo 'func hello() { fmt.Println("hello from '"$name"'") }' >> "$repo/src/main.go"
+  git -C "$repo" add -A >/dev/null 2>&1
+  git -C "$repo" commit -m "init $name" >/dev/null 2>&1
+
+  # Second commit for history
+  echo "// v2" >> "$repo/src/main.go"
+  git -C "$repo" add -A >/dev/null 2>&1
+  git -C "$repo" commit -m "add v2 comment" >/dev/null 2>&1
+
+  # Create branches with diverging commits
+  for branch in "$@"; do
+    git -C "$repo" checkout -b "$branch" main >/dev/null 2>&1
+    echo "// $branch work" >> "$repo/src/main.go"
+    git -C "$repo" add -A >/dev/null 2>&1
+    git -C "$repo" commit -m "$branch: initial work" >/dev/null 2>&1
+  done
+
+  # Return to main
+  git -C "$repo" checkout main >/dev/null 2>&1
+
+  echo "  [norm] $name  (main + $# branches)"
+}
+
+# ── Repos ──────────────────────────────────────────────────────────────
+
 echo "Creating test repos in: $TARGET"
 echo ""
 
-# --- Projects ---
+# --- Bare repos (5, each with 3 feature worktrees) ---
 
-# webstore: simple multi-feature project
-make_project "webstore" "feature-auth" "feature-api" "bugfix-login"
+make_bare_project "webstore" \
+  "feature-auth" "feature-api" "bugfix-login"
 
-# analytics: has a merged branch + active ones
-make_project_with_merged "analytics" "shipped-v2" "feature-dashboard" "refactor-db"
+make_bare_project_with_merged "analytics" \
+  "shipped-v2" "feature-dashboard" "refactor-db"
 
-# docs: single worktree (just main)
-make_project "docs"
+make_bare_project "platform" \
+  "feat-search" "feat-export" "fix-perf"
 
-# platform: many branches to test scrolling/filtering
-make_project "platform" \
-  "feat-search" "feat-export" "feat-import" "feat-notifications" \
-  "fix-perf" "fix-memory" "chore-deps" "chore-ci"
+make_bare_project "billing" \
+  "feature-invoices" "feature-subscriptions" "fix-tax-calc"
+
+make_bare_project "gateway" \
+  "feat-rate-limit" "feat-oauth" "fix-timeout"
+
+# --- Normal repos (5, each with multiple branches) ---
+
+make_normal_project "docs-site" \
+  "redesign" "add-tutorials" "fix-nav"
+
+make_normal_project "cli-tools" \
+  "feature-completions" "feature-config" "refactor-output"
+
+make_normal_project "monitoring" \
+  "add-alerts" "add-metrics" "fix-dashboard"
+
+make_normal_project "infra" \
+  "upgrade-terraform" "add-staging" "fix-dns"
+
+make_normal_project "sdk" \
+  "v2-api" "add-retry" "fix-types"
 
 echo ""
 echo "Done. Layout:"
