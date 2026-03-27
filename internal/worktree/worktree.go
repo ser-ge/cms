@@ -222,8 +222,24 @@ func CreateWorktree(repoRoot, path, branch string, opts CreateWorktreeOpts) erro
 			args = append(args, path, branch)
 		}
 	}
-	_, err := git.Cmd(repoRoot, args...)
-	return err
+	if _, err := git.Cmd(repoRoot, args...); err != nil {
+		return err
+	}
+
+	// Record which branch this worktree was forked from so that `cms land`
+	// can use it as the default target when base_branch is not configured.
+	base := opts.StartPoint
+	if base == "" && opts.Track != "" {
+		// Track is e.g. "origin/feature" — extract the branch name.
+		if idx := strings.LastIndex(opts.Track, "/"); idx >= 0 {
+			base = opts.Track[idx+1:]
+		}
+	}
+	if base != "" {
+		git.Cmd(repoRoot, "config", "branch."+branch+".cms-base", base)
+	}
+
+	return nil
 }
 
 // RemoveWorktree removes a git worktree.
@@ -237,14 +253,18 @@ func RemoveWorktree(repoRoot, path string, force bool) error {
 	return err
 }
 
-// DeleteBranch deletes a local branch.
+// DeleteBranch deletes a local branch and cleans up cms-base config.
 func DeleteBranch(repoRoot, branch string, force bool) error {
 	flag := "-d"
 	if force {
 		flag = "-D"
 	}
-	_, err := git.Cmd(repoRoot, "branch", flag, branch)
-	return err
+	if _, err := git.Cmd(repoRoot, "branch", flag, branch); err != nil {
+		return err
+	}
+	// Clean up the cms-base config entry.
+	git.Cmd(repoRoot, "config", "--unset", "branch."+branch+".cms-base")
+	return nil
 }
 
 // ResolveBranch checks if a branch exists locally or on a remote.

@@ -8,39 +8,51 @@ Land the current feature branch into a target branch with rebase, merge, and cle
 cms land [target] [flags]
 ```
 
-Target resolution: `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master`. Supports symbols: `^` (default branch), `-` (previous), `@` (current).
+Target resolution: `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `git config branch.<name>.cms-base` (recorded at worktree creation) → `origin/HEAD` → local `main` → local `master`. Supports symbols: `^` (default branch), `-` (previous), `@` (current).
 
 ## Flags
 
 | Flag | Description |
 |------|-------------|
-| `--squash` | Squash all commits into one before landing |
-| `-m "msg"` | Commit message for squash (requires `--squash`) |
+| `--no-squash` | Preserve individual commits (skip squash, backup ref, and staging) |
+| `-m "msg"` | Commit message for the squash commit |
 | `--no-edit` | Don't open editor for squash commit message |
 | `--no-ff` | Create a merge commit even when fast-forward is possible |
 | `--keep` | Don't remove worktree/branch/tmux window after landing |
 | `--abort` | Abort an in-progress rebase |
 | `--continue` | Resume after resolving rebase conflicts |
+| `--autostash` | Stash dirty target worktree without prompting |
 
 ## Pipeline
 
 The land workflow executes these steps in order:
 
 ```
-1. Stage uncommitted changes         (--squash only)
-2. Run pre_commit hooks
-3. Squash commits                    (--squash only)
-4. Run post_commit hooks
-5. Rebase onto target
-6. Run pre_merge hooks               (pre-land)
-7. Fast-forward merge into target    (--no-ff: merge commit)
-8. Run post_merge hooks              (post-land)
-9. Remove worktree + branch + tmux   (--keep: skip)
+1. Stage uncommitted changes                          (skipped with --no-squash)
+2. Run pre_commit hooks                               (skipped with --no-squash)
+3. Save backup ref to refs/cms-wt-backup/<branch>     (skipped with --no-squash)
+4. Squash commits into one                            (skipped with --no-squash)
+5. Run post_commit hooks                              (skipped with --no-squash)
+6. Rebase onto target
+7. Run pre_merge hooks               (pre-land)
+8. Fast-forward merge into target    (--no-ff: merge commit)
+9. Run post_merge hooks              (post-land)
+10. Remove worktree + branch + tmux  (--keep: skip)
 ```
 
 ### Step details
 
-**Squash (step 3):** `git reset --soft <merge-base>` + single commit. If `[worktree].commit_cmd` is configured, the staged diff is piped to it for LLM-generated commit messages (diff truncated at 8KB). Falls back to `"Merge branch '<name>'"` + diffstat on failure. If no message is provided and `--no-edit` is not set, opens the editor.
+**Squash (steps 3-4):** Saves the current HEAD to `refs/cms-wt-backup/<branch>` so original commit history can be recovered (`git log refs/cms-wt-backup/<branch>`). Then `git reset --soft <merge-base>` + single commit.
+
+**Squash commit message** (in priority order):
+
+1. **`-m "message"`** — explicit message from the command line
+2. **`[worktree].commit_cmd`** — the staged diff is piped via stdin to the configured command. The prompt includes a diff summary (`git diff --stat`) and the full diff (truncated at 8KB). On failure, falls through to the next option with a warning. Example commands:
+   - `claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''`
+   - `llm -m claude-haiku-4.5`
+   - `CLAUDECODE= claude -p --model=haiku ...` (prefix `CLAUDECODE=` when running inside a Claude Code session)
+3. **Interactive editor** — if no `-m` and no `commit_cmd` (or it failed), opens `$EDITOR` for manual entry. Skipped with `--no-edit`.
+4. **Default** — `"Merge branch '<name>'"` + `git diff --stat` output
 
 **Rebase (step 5):** Standard `git rebase <target>`. On conflict, exits with instructions to resolve and run `cms land --continue`.
 
@@ -85,7 +97,7 @@ All hooks receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment variables.
 ```toml
 [worktree]
 base_branch = "main"                  # default target for cms land
-commit_cmd = "llm -m claude-haiku"    # LLM commit message generation
+commit_cmd = "claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 
 [[worktree.pre_commit]]
 command = "npm run lint"
@@ -100,17 +112,17 @@ command = "echo 'landed!'"
 ## Examples
 
 ```bash
-# Basic land: rebase + ff-merge into default branch, then cleanup
+# Default: squash + rebase + ff-merge into default branch, then cleanup
 cms land
 
 # Land into a specific branch
 cms land develop
 
-# Squash all feature commits, auto-generate message via LLM
-cms land --squash
+# Squash with explicit commit message
+cms land -m "Add authentication system"
 
-# Squash with explicit message
-cms land --squash -m "Add authentication system"
+# Preserve individual commits (no squash, no backup ref)
+cms land --no-squash
 
 # Land but keep the worktree around
 cms land --keep
@@ -124,3 +136,16 @@ cms land --no-ff
 When the target branch has its own worktree (e.g. `main` is checked out in `~/projects/myapp`), the merge runs directly in that worktree. No `git checkout` is needed — this avoids disrupting work in the main worktree.
 
 When the target has no worktree, land checks out the target in the main worktree, merges, then proceeds with cleanup.
+
+If the target worktree has uncommitted changes, land prompts to stash them before merging and pops them back after. Use `--autostash` to skip the prompt. If the stash pop conflicts, your changes stay in the stash — run `git stash list` in the target worktree to find them.
+
+## Backup refs
+
+When using `--squash`, land saves the pre-squash HEAD to `refs/cms-wt-backup/<branch>` before collapsing commits. This lets you recover the original history:
+
+```bash
+git log refs/cms-wt-backup/my-feature    # view original commits
+git cherry-pick <sha>                     # recover a specific commit
+```
+
+Backup refs persist until manually deleted (`git update-ref -d refs/cms-wt-backup/<branch>`).

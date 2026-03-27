@@ -261,32 +261,40 @@ cms go feature main "implement feature A"   # start-point + prompt
 
 Options: `--force`/`-f`, `--path <dir>`, `--no-open`.
 
-**Base branch resolution** (for new branches): explicit start-point arg → `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master` → current HEAD.
+**Base branch resolution** (for new branches): explicit start-point arg → `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master` → current HEAD. The chosen base is recorded in `git config branch.<name>.cms-base` so `cms land` can use it as the default target.
 
 The prompt (arg with spaces) is passed to the command configured in `[worktree].go_cmd`. The prompt is available as `$CMS_PROMPT` in the command's environment. If the command string doesn't reference `$CMS_PROMPT`, the prompt is appended as an argument.
 
 ### `cms land` — land current branch into target
 
-Run from inside a feature worktree. Rebases onto the target branch, fast-forward merges, and cleans up the worktree, branch, and tmux window. The full pipeline:
+Run from inside a feature worktree. Squashes commits, rebases onto the target branch, fast-forward merges, and cleans up the worktree, branch, and tmux window. The full pipeline:
 
-1. Stage uncommitted changes (only with `--squash`)
+1. Stage uncommitted changes
 2. Run `pre_commit` hooks
-3. Squash commits into one (only with `--squash`)
-4. Run `post_commit` hooks
-5. Rebase onto target
-6. Run `pre_merge` hooks (pre-land)
-7. Fast-forward merge into target (falls back to merge commit if ff fails)
-8. Run `post_merge` hooks (post-land)
-9. Remove worktree + branch + tmux window (unless `--keep`)
+3. Save backup ref to `refs/cms-wt-backup/<branch>`
+4. Squash commits into one
+5. Run `post_commit` hooks
+6. Rebase onto target
+7. Run `pre_merge` hooks (pre-land)
+8. Fast-forward merge into target (falls back to merge commit if ff fails)
+9. Run `post_merge` hooks (post-land)
+10. Remove worktree + branch + tmux window (unless `--keep`)
 
-When the target branch is checked out in another worktree, the merge runs inside that worktree directly (no checkout needed). After landing, pauses for confirmation before cleanup so you can review the result.
+Steps 1-5 are skipped with `--no-squash`. When the target branch is checked out in another worktree, the merge runs inside that worktree directly (no checkout needed). After landing, pauses for confirmation before cleanup so you can review the result.
+
+**Squash commit message** (in priority order):
+
+1. `-m "message"` — explicit message from the command line
+2. `[worktree].commit_cmd` — diff is piped via stdin to the configured command (e.g. `claude -p --model=haiku ...`) for LLM-generated messages; diff summary + detailed diff (truncated at 8KB) sent via stdin
+3. Interactive editor — if no `-m` and no `commit_cmd`, opens `$EDITOR` (unless `--no-edit`)
+4. Default — `"Merge branch '<name>'"` + `git diff --stat`
 
 ```bash
-cms land                       # land into default branch, ff-only
+cms land                       # squash + rebase + ff-merge into default branch
 cms land main                  # land into explicit target
-cms land --squash              # squash all commits into one
-cms land --squash -m "message" # squash with explicit commit message
-cms land --squash --no-edit    # squash, skip editor for commit message
+cms land -m "message"          # squash with explicit commit message
+cms land --no-edit             # squash, skip editor for commit message
+cms land --no-squash           # preserve individual commits (rebase + ff-merge only)
 cms land --no-ff               # create a merge commit
 cms land --keep                # don't remove worktree after landing
 cms land --abort               # abort an in-progress rebase
@@ -294,13 +302,15 @@ cms land --continue            # resume after resolving conflicts
 cms land --autostash           # stash dirty target worktree without prompting
 ```
 
-**Target resolution:** `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master`. Supports symbols: `^` (default branch), `-` (previous branch), `@` (current).
+**Target resolution:** `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `git config branch.<name>.cms-base` (recorded at worktree creation) → `origin/HEAD` → local `main` → local `master`. Supports symbols: `^` (default branch), `-` (previous branch), `@` (current).
 
-If the target worktree has uncommitted changes, `cms land` will prompt to stash them before merging and restore them after. Use `--autostash` to skip the prompt. If the stash pop conflicts after merge, the stash is preserved (see `git stash list` in the target worktree).
+If the target worktree has uncommitted changes, `cms land` will prompt to stash them before merging and pop them back after. Use `--autostash` to skip the prompt. If the stash pop conflicts, your changes stay in the stash — run `git stash list` in the target worktree to find them.
+
+**Backup refs:** With `--squash`, land saves the pre-squash HEAD to `refs/cms-wt-backup/<branch>` so original commit history can be recovered via `git log refs/cms-wt-backup/<branch>`.
 
 **Conflict recovery:** On rebase conflicts, land exits with instructions. Fix conflicts, `git rebase --continue`, then `cms land --continue` to finish the merge and cleanup. Or `cms land --abort` to cancel. On `--continue`, branch resolution is deferred until after the rebase finishes (during a conflicted rebase, HEAD is detached), ensuring the merge step targets the correct branch.
 
-**LLM commit messages:** With `--squash` and `[worktree].commit_cmd` configured, the diff is piped to the command for auto-generated commit messages. Falls back to a default message on failure.
+**LLM commit messages:** With `[worktree].commit_cmd` configured, the diff is piped to the command for auto-generated commit messages. Falls back to a default message on failure. Use `--no-squash` to skip squashing and preserve individual commits.
 
 ### `cms rm` — remove worktree
 
@@ -343,7 +353,7 @@ Settings merge from user config (`~/.config/cms/config.toml`) and per-repo confi
 [worktree]
 base_dir = "../worktrees"
 base_branch = "main"               # default start-point for cms go + target for cms land
-commit_cmd = "llm -m claude-haiku"  # LLM commit message generation
+commit_cmd = "claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 go_cmd = "claude -p \"$CMS_PROMPT\""  # command to run when prompt is given to cms go
 
 [[worktree.hooks]]           # post-create hooks

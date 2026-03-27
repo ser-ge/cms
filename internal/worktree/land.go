@@ -56,13 +56,15 @@ type LandOpts struct {
 //  8. Run post-land hooks
 //  9. Remove worktree + branch + tmux window (unless --keep)
 func Land(args []string) error {
-	opts := LandOpts{}
+	opts := LandOpts{Squash: true} // squash by default
 	positional := []string{}
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--squash":
 			opts.Squash = true
+		case "--no-squash":
+			opts.Squash = false
 		case "--no-ff":
 			opts.NoFF = true
 		case "--keep":
@@ -120,8 +122,15 @@ func Land(args []string) error {
 			return err
 		}
 	} else {
-		// Default: use configured base_branch, then auto-detect.
+		// Default: configured base_branch → recorded cms-base → auto-detect.
 		target = wtCfg.BaseBranch
+		if target == "" {
+			// Check if the branch was created with a recorded base.
+			currentBr, _ := git.Cmd(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+			if currentBr != "" {
+				target, _ = git.Cmd(root, "config", "branch."+currentBr+".cms-base")
+			}
+		}
 		if target == "" {
 			target, err = DefaultBranch(root)
 			if err != nil {
@@ -241,7 +250,8 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 	if strings.TrimSpace(targetStatus) != "" {
 		if !opts.AutoStash {
 			fmt.Fprintf(os.Stderr, "%s target worktree %s has uncommitted changes\n", red("warning:"), bold(mergeDir))
-			fmt.Fprintf(os.Stderr, "  changes will be stashed before merge and restored after\n")
+			fmt.Fprintf(os.Stderr, "  your changes will be git-stashed, the branch merged, then stash popped back\n")
+			fmt.Fprintf(os.Stderr, "  if the pop conflicts, your changes stay in the stash — run `git stash list` to find them\n")
 			fmt.Fprintf(os.Stderr, "  proceed? [y/N] ")
 			reader := bufio.NewReader(os.Stdin)
 			answer, _ := reader.ReadString('\n')
@@ -287,7 +297,9 @@ func landMergeAndCleanup(cwd, root, currentBranch, target, mainWt string, curren
 	// Restore stashed changes; warn if pop conflicts.
 	if didStash {
 		if _, err := git.Cmd(mergeDir, "stash", "pop"); err != nil {
-			fmt.Fprintf(os.Stderr, "%s stash pop conflicted in %s worktree — your changes are preserved in `git stash list`\n", red("warning:"), bold(target))
+			fmt.Fprintf(os.Stderr, "%s stash pop conflicted in %s worktree — your changes are in `git stash list`\n", red("warning:"), bold(target))
+		} else {
+			fmt.Fprintf(os.Stderr, "%s restored stashed changes in %s\n", dim("unstashed"), bold(target))
 		}
 	}
 
@@ -385,6 +397,19 @@ func squashCommits(wtDir, target, branch string, opts LandOpts, wtCfg *config.Wo
 	mergeBase, err := git.Cmd(wtDir, "merge-base", target, branch)
 	if err != nil {
 		return fmt.Errorf("cannot find merge base between %s and %s: %w", target, branch, err)
+	}
+
+	// Save backup ref before destructive squash so the original history
+	// can be recovered via: git log refs/cms-wt-backup/<branch>
+	backupRef := "refs/cms-wt-backup/" + branch
+	head, err := git.Cmd(wtDir, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("cannot resolve HEAD: %w", err)
+	}
+	if _, err := git.Cmd(wtDir, "update-ref", backupRef, head); err != nil {
+		fmt.Fprintf(os.Stderr, "%s failed to save backup ref: %v\n", red("warning:"), err)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s saved pre-squash history to %s\n", dim("backup"), backupRef)
 	}
 
 	fmt.Fprintf(os.Stderr, "%s commits since %s\n", dim("squashing"), mergeBase[:8])

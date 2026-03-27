@@ -236,7 +236,7 @@ type WorktreeConfig struct {
 	PreMerge   []WorktreeHook `toml:"pre_merge"`
 	PostMerge  []WorktreeHook `toml:"post_merge"`
 	AutoOpen   bool           `toml:"auto_open"`
-	CommitCmd  string         `toml:"commit_cmd"` // LLM commit message command (e.g. "llm -m claude-haiku")
+	CommitCmd  string         `toml:"commit_cmd"` // LLM commit message command (e.g. "claude -p --model=haiku ...")
 	GoCmd      string         `toml:"go_cmd"`     // command to run with prompt after "cms go <branch> <prompt>"
 }
 
