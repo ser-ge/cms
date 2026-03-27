@@ -30,8 +30,11 @@ type SnapWindow struct {
 }
 
 type SnapPane struct {
-	Index      int    `json:"index"`
-	WorkingDir string `json:"working_dir"`
+	Index           int    `json:"index"`
+	WorkingDir      string `json:"working_dir"`
+	ClaudeSessionID string `json:"claude_session_id,omitempty"`
+	Marker          string `json:"marker,omitempty"`
+	ResumeFlag      bool   `json:"resume_flag,omitempty"`
 }
 
 type SnapFocus struct {
@@ -71,6 +74,64 @@ func SaveAllSnapshots() {
 	}
 }
 
+// paneOptionKey encodes a window/pane index pair for lookup.
+type paneOptionKey struct {
+	Window int
+	Pane   int
+}
+
+// paneOptions holds cms-specific tmux user-options for a single pane.
+type paneOptions struct {
+	ClaudeSessionID string
+	Marker          string
+	ResumeFlag      bool
+}
+
+// fetchSessionPaneOptions batch-reads cms pane user-options for a session.
+func fetchSessionPaneOptions(sessionName string) map[paneOptionKey]paneOptions {
+	format := strings.Join([]string{
+		"#{window_index}",
+		"#{pane_index}",
+		"#{@cms_claude_session}",
+		"#{@cms_pane_id}",
+		"#{@cms_claude_resume}",
+	}, "\t")
+	out, err := tmux.Run("list-panes", "-s", "-t", sessionName, "-F", format)
+	if err != nil {
+		debug.Logf("session: fetchSessionPaneOptions: %v", err)
+		return nil
+	}
+	result := map[paneOptionKey]paneOptions{}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		// tmux omits trailing empty fields, so pad to 5.
+		for len(fields) < 5 {
+			fields = append(fields, "")
+		}
+		if len(fields) != 5 {
+			continue
+		}
+		var winIdx, paneIdx int
+		fmt.Sscanf(fields[0], "%d", &winIdx)
+		fmt.Sscanf(fields[1], "%d", &paneIdx)
+		opts := paneOptions{
+			ClaudeSessionID: fields[2],
+			Marker:          fields[3],
+		}
+		switch strings.ToLower(strings.TrimSpace(fields[4])) {
+		case "1", "on", "yes", "true":
+			opts.ResumeFlag = true
+		}
+		if opts.ClaudeSessionID != "" || opts.Marker != "" || opts.ResumeFlag {
+			result[paneOptionKey{winIdx, paneIdx}] = opts
+		}
+	}
+	return result
+}
+
 // saveSessionSnapshot saves a snapshot for a single session using pre-fetched state.
 func saveSessionSnapshot(sess tmux.Session, repoRoot string) error {
 	layouts, err := listWindowLayouts(sess.Name)
@@ -78,6 +139,7 @@ func saveSessionSnapshot(sess tmux.Session, repoRoot string) error {
 		return err
 	}
 	focus, _ := tmux.FetchCurrentTarget()
+	paneOpts := fetchSessionPaneOptions(sess.Name)
 
 	var windows []SnapWindow
 	for _, win := range sess.Windows {
@@ -88,10 +150,16 @@ func saveSessionSnapshot(sess tmux.Session, repoRoot string) error {
 			Active: win.Active,
 		}
 		for _, p := range win.Panes {
-			sw.Panes = append(sw.Panes, SnapPane{
+			sp := SnapPane{
 				Index:      p.Index,
 				WorkingDir: p.WorkingDir,
-			})
+			}
+			if opts, ok := paneOpts[paneOptionKey{win.Index, p.Index}]; ok {
+				sp.ClaudeSessionID = opts.ClaudeSessionID
+				sp.Marker = opts.Marker
+				sp.ResumeFlag = opts.ResumeFlag
+			}
+			sw.Panes = append(sw.Panes, sp)
 		}
 		windows = append(windows, sw)
 	}
@@ -117,27 +185,30 @@ func saveSessionSnapshot(sess tmux.Session, repoRoot string) error {
 }
 
 // RestoreSnapshot rebuilds a tmux session from a saved snapshot.
-// Returns true if a snapshot was found and restored.
-func RestoreSnapshot(sessionName, repoRoot string) (bool, error) {
+// Returns true if a snapshot was found and restored, plus a map of
+// newPaneID → ClaudeSessionID for panes that had active Claude sessions.
+func RestoreSnapshot(sessionName, repoRoot string) (bool, map[string]string, error) {
 	path, err := snapshotPath(repoRoot, sessionName)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return false, nil, nil
 		}
-		return false, err
+		return false, nil, err
 	}
 	var snap Snapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	if _, err := tmux.Run("new-session", "-d", "-s", sessionName, "-c", repoRoot); err != nil {
-		return false, err
+		return false, nil, err
 	}
+
+	paneMap := map[string]string{} // newPaneID -> claudeSessionID
 
 	for i, win := range snap.Windows {
 		target := fmt.Sprintf("%s:%d", sessionName, win.Index)
@@ -145,6 +216,10 @@ func RestoreSnapshot(sessionName, repoRoot string) (bool, error) {
 			tmux.Run("rename-window", "-t", target, win.Name)
 			if len(win.Panes) > 0 {
 				tmux.Run("send-keys", "-t", target, fmt.Sprintf("cd %s", win.Panes[0].WorkingDir), "C-m")
+				// Get the pane ID of the initial pane created with the session.
+				if id, err := tmux.Run("display-message", "-p", "-t", target, "#{pane_id}"); err == nil {
+					restorePaneOptions(strings.TrimSpace(id), win.Panes[0], paneMap)
+				}
 			}
 		} else {
 			dir := repoRoot
@@ -152,10 +227,18 @@ func RestoreSnapshot(sessionName, repoRoot string) (bool, error) {
 				dir = win.Panes[0].WorkingDir
 			}
 			tmux.Run("new-window", "-t", sessionName, "-n", win.Name, "-c", dir)
+			if len(win.Panes) > 0 {
+				if id, err := tmux.Run("display-message", "-p", "-t", target, "#{pane_id}"); err == nil {
+					restorePaneOptions(strings.TrimSpace(id), win.Panes[0], paneMap)
+				}
+			}
 		}
 		// Additional panes beyond the first.
 		for pi := 1; pi < len(win.Panes); pi++ {
-			tmux.Run("split-window", "-t", target, "-c", win.Panes[pi].WorkingDir)
+			out, err := tmux.Run("split-window", "-t", target, "-c", win.Panes[pi].WorkingDir, "-P", "-F", "#{pane_id}")
+			if err == nil {
+				restorePaneOptions(strings.TrimSpace(out), win.Panes[pi], paneMap)
+			}
 		}
 		if win.Layout != "" {
 			tmux.Run("select-layout", "-t", target, win.Layout)
@@ -164,7 +247,25 @@ func RestoreSnapshot(sessionName, repoRoot string) (bool, error) {
 
 	tmux.Run("select-window", "-t", fmt.Sprintf("%s:%d", sessionName, snap.Focus.Window))
 	tmux.Run("select-pane", "-t", fmt.Sprintf("%s:%d.%d", sessionName, snap.Focus.Window, snap.Focus.Pane))
-	return true, nil
+	return true, paneMap, nil
+}
+
+// restorePaneOptions sets cms user-options on a newly created pane and
+// records any Claude session ID in the pane map.
+func restorePaneOptions(paneID string, sp SnapPane, paneMap map[string]string) {
+	if paneID == "" {
+		return
+	}
+	if sp.Marker != "" {
+		tmux.Run("set-option", "-p", "-t", paneID, "@cms_pane_id", sp.Marker)
+	}
+	if sp.ResumeFlag {
+		tmux.Run("set-option", "-p", "-t", paneID, "@cms_claude_resume", "1")
+	}
+	if sp.ClaudeSessionID != "" {
+		tmux.Run("set-option", "-p", "-t", paneID, "@cms_claude_session", sp.ClaudeSessionID)
+		paneMap[paneID] = sp.ClaudeSessionID
+	}
 }
 
 func findSession(name string) (tmux.Session, error) {

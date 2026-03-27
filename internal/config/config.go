@@ -650,7 +650,11 @@ func WriteDefaultConfigFile() (string, error) {
 // LoadProjectConfig reads .cms.toml from the given directory (typically the
 // repo root). Returns a zero-value config when the file is missing.
 func LoadProjectConfig(dir string) ProjectConfig {
-	var proj ProjectConfig
+	proj := ProjectConfig{
+		Session: SessionConfig{
+			Claude: SessionClaudeConfig{Resume: true},
+		},
+	}
 	if dir == "" {
 		return proj
 	}

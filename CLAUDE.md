@@ -92,8 +92,9 @@ internal/
 
   session/
     session.go                    Create, Kill, Switch, SmartSwitch, SwitchToPane, OpenProject
-    snapshot.go                   SaveSnapshot, RestoreSnapshot (tmux session persistence)
-    template.go                   Session templates for project types
+    snapshot.go                   SaveSnapshot, RestoreSnapshot (tmux session persistence + Claude resume)
+    template.go                   Session templates, resumeClaudePanes, resumeSnapshotPanes
+    snapshot_resume_test.go       Isolated tmux test: snapshot save/restore with Claude session IDs
 
   resume/
     store.go                      SaveClaudeSession, LoadClaudeSession (agent resume state)
@@ -191,6 +192,7 @@ Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
 - **Agent display config is separated.** `display_provider_order`, `display_state_order`, and `show_context_percentage` on `[finder]` control agent summary rendering in session descriptions and queue.
 - **Queue renders fixed-width columns.** Title is `session/branch`, description columns are provider (6), context% (4), activity (9, padded for ANSI), duration (4). Titles padded to longest across all items.
 - **Picker supports normal-mode actions.** `PickerAction` enum (e.g. `PickerActionDelete`) with y/n confirmation prompt. Picker sets `action` + `chosen`; finder dispatches by item kind (kill session/pane, remove mark).
+- **Snapshot resume is automatic.** Watcher sets `@cms_claude_session` on panes via hooks. `saveSessionSnapshot` captures it (plus `@cms_pane_id`, `@cms_claude_resume`). `RestoreSnapshot` restores the options and returns a `paneID → sessionID` map. `resumeSnapshotPanes` sends `claude --resume {session_id}` to matching panes. `SessionClaudeConfig.Resume` defaults to `true`; per-project opt-out via `[session.claude] resume = false` in `.cms.toml`. The resume command is configurable via `[session.claude] command`.
 - **Marks are file-backed.** Stored as JSON at `~/.config/cms/marks.json`. Pane IDs are globally addressable in tmux; session/window stored for display only.
 - **Internal commands bypass config loading.** `cms internal hook` and `cms internal refresh` are dispatched in `main()` before `config.Load()`. Hook commands are called by Claude Code and must never fail due to config validation errors. Any new internal subcommand must also run before config.
 - **`session-start` preserves existing activity.** If the observer already detected an agent as Working before the `session-start` hook arrives, the hook preserves the current activity instead of resetting to Idle. `session-start` means "I'm here", not "I stopped working".

@@ -95,3 +95,23 @@ func resumeClaudePanes(sessionName, repoRoot string, cfg config.SessionClaudeCon
 	}
 	return nil
 }
+
+// resumeSnapshotPanes sends claude --resume commands to panes whose
+// Claude session IDs were captured directly in the snapshot.
+// This works without the marker-based system — the snapshot is self-contained.
+func resumeSnapshotPanes(cfg config.SessionClaudeConfig, paneMap map[string]string) {
+	if !cfg.Resume || len(paneMap) == 0 {
+		return
+	}
+	cmdTemplate := resume.DefaultClaudeCommand(cfg.Command)
+	for paneID, sessionID := range paneMap {
+		if cfg.OnlyIfPaneEmpty {
+			meta, ok, err := resume.FetchPaneMeta(paneID)
+			if err != nil || !ok || !proc.IsShellCommand(meta.Command) {
+				continue
+			}
+		}
+		cmd := strings.ReplaceAll(cmdTemplate, "{session_id}", sessionID)
+		tmux.Run("send-keys", "-t", paneID, cmd, "C-m")
+	}
+}

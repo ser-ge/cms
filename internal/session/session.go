@@ -184,13 +184,14 @@ func OpenProject(path string, restore bool) error {
 
 	// 2. Restore from saved snapshot.
 	if restore {
-		restored, err := RestoreSnapshot(name, path)
+		restored, paneMap, err := RestoreSnapshot(name, path)
 		if err != nil {
 			debug.Logf("session: snapshot restore failed: %v", err)
 		}
 		if restored {
 			if shouldRestore(projCfg.Session) {
-				resumeClaudePanes(name, path, projCfg.Session.Claude) // best-effort
+				resumeSnapshotPanes(projCfg.Session.Claude, paneMap)
+				resumeClaudePanes(name, path, projCfg.Session.Claude) // marker-based fallback
 			}
 			return Switch(name)
 		}

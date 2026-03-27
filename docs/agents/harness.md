@@ -153,7 +153,36 @@ What it proves today:
 - observer capture recording works
 - timer events are recorded
 
-### 2. Claude hook integration test
+### 2. Snapshot resume round-trip test
+
+File:
+
+- `internal/session/snapshot_resume_test.go`
+
+Gate:
+
+```bash
+CMS_SNAPSHOT_RESUME=1 go test ./internal/session -run TestSnapshot -v
+```
+
+Subtests:
+
+- `TestSnapshotResumeRoundTrip` — creates a tmux session with 2 panes,
+  sets `@cms_claude_session` (+ marker/resume flag on one), saves snapshot,
+  kills session, restores, and verifies: paneMap has both session IDs,
+  restored panes have the correct user-options.
+- `TestSnapshotBackwardCompat` — writes an old-format snapshot (no
+  `claude_session_id` fields), restores it, verifies it works with an
+  empty paneMap.
+
+What it proves:
+
+- `@cms_claude_session` is captured during snapshot save
+- pane markers and resume flags survive save/restore
+- `RestoreSnapshot` returns correct paneID → sessionID map
+- old snapshots without the new fields deserialize cleanly
+
+### 3. Claude hook integration test
 
 File:
 
@@ -336,6 +365,12 @@ Integration harness (real tmux + real repos):
 ```bash
 ./scripts/harness.sh worktrees
 ./scripts/harness.sh --agents sessions,worktrees,queue
+```
+
+Run snapshot resume test (isolated tmux):
+
+```bash
+CMS_SNAPSHOT_RESUME=1 go test ./internal/session -run TestSnapshot -v
 ```
 
 Run live tmux smoke:

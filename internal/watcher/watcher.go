@@ -477,6 +477,7 @@ func (w *Watcher) handleHookEvent(ev hook.Event) {
 		if err := resume.SaveClaudeSession(paneID, ev.SessionID); err != nil {
 			debug.Logf("watcher: resume save failed pane=%s err=%v", paneID, err)
 		}
+		tmux.Run("set-option", "-p", "-t", paneID, "@cms_claude_session", ev.SessionID)
 		debug.Logf("watcher: hook session-start pane=%s session=%s prev_activity=%s", paneID, ev.SessionID, existing.Activity)
 
 	case hook.Stop:
@@ -485,6 +486,7 @@ func (w *Watcher) handleHookEvent(ev hook.Event) {
 		debug.Logf("watcher: hook stop pane=%s", paneID)
 
 	case hook.SessionEnd:
+		tmux.Run("set-option", "-p", "-u", "-t", paneID, "@cms_claude_session")
 		debug.Logf("watcher: hook session-end pane=%s", paneID)
 		w.mu.Lock()
 		delete(w.hookSeen, paneID)
