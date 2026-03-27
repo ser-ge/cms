@@ -36,7 +36,7 @@ Flags: `-s` sessions, `-p` projects, `-a` agents, `-m` marks, `-w` worktrees,
 `-b` branches, `-W` windows, `-P` panes.  Composable: the order in which the sections
 stack in the finder is set by the order the flags are passed.
 
-<!-- gif: cms finder with composable sections and agent status badges -->
+![cms demo](demo.gif)
 
 ### "Open and hit enter" always useful
 
