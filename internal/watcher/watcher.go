@@ -289,6 +289,8 @@ func (w *Watcher) bootstrap() {
 	if w.bootstrapped {
 		// BootstrapSync already ran — use cached state, skip redundant FetchState.
 		sessions, agents, current := w.CachedState()
+		snapshotID := w.recorder.RecordTmuxState("bootstrap", sessions, current)
+		w.recorder.RecordIngress(trace.IngressBootstrapState, trace.BootstrapStatePayload{SnapshotID: snapshotID})
 		w.send(StateMsg{Sessions: sessions, Agents: agents, Current: current})
 	} else {
 		sessions, agents, current, ok := w.initState()
