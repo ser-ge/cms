@@ -7,10 +7,9 @@
 
 "There are many like it, but this one is mine."
 
-`cms` is an agent aware tmux session manager based on [tms](https://github.com/jrmoulton/tmux-sessionizer
-) which in turn is based on ThePrimeagen's [tmux-sessionizer](https://github.com/ThePrimeagen/.dotfiles/blob/master/bin/.local/scripts/tmux-sessionizer)
+`cms` is an agent-aware tmux session manager based on [tms](https://github.com/jrmoulton/tmux-sessionizer) which in turn is based on ThePrimeagen's [tmux-sessionizer](https://github.com/ThePrimeagen/.dotfiles/blob/master/bin/.local/scripts/tmux-sessionizer).
 
-Fzf switcher for projects (repos), worktrees and running agents.
+Fuzzy switcher for projects (repos), worktrees, and running agents.
 
 This project started because I've been (unsuccessfully) hitting "jj" to esc in the tms fzf
 picker for years, vim brain kept trying and failing to be normal. The project
@@ -21,7 +20,7 @@ spiralled.
 
 ### The finder
 
-`cms` with no arguments opens a fuzzy picker over your tmux sessions, projects (repos)
+`cms` with no arguments opens a fuzzy picker over your tmux sessions, projects (repos),
 worktrees, branches, and agents.
 
 Agent status is detected and agent queue is updated live, pushing agents waiting for input to the top.
@@ -30,7 +29,7 @@ Agent status is detected and agent queue is updated live, pushing agents waiting
 cms                # everything (configurable via [finder].include)
 cms -p             # projects (what tms does out of the box)
 cms -a             # agents only (live sorted by status)
-cms -awsp           # agents, worktrees, session, projects,
+cms -awsp           # agents, worktrees, sessions, projects
 ```
 
 Flags: `-s` sessions, `-p` projects, `-a` agents, `-m` marks, `-w` worktrees,
@@ -43,18 +42,18 @@ stack in the finder is set by the order the flags are passed.
 
 `cms` tries to make the first item in the list always useful:
 
-- **Agents** — sorted by state (`waiting` for input first, then `completed`, `idle`, `working` ).
+- **Agents** — sorted by state (`waiting` for input first, then `completed`, `idle`, `working`).
 - **Projects / Worktrees** — sorted by `recent`. First item takes you back to last visited.
 
 The headless version: [`cms next`](#navigation) will jump to the first item in a given list.
 
-eg `cms next -a` will cycle through the agent queue based on priority.
+E.g. `cms next -a` will cycle through the agent queue based on priority.
 
 <!-- gif: cms next cycling through waiting agents -->
 
 ### Useful tmux bindings
 
-As with original `tms` binding the commands to tmux pop up windows is most useful.
+As with the original `tms`, binding the commands to tmux popup windows is most useful.
 
 `cms` does not add any bindings.
 
@@ -117,6 +116,126 @@ go install github.com/ser-ge/cms@latest
 Download from [GitHub Releases](https://github.com/ser-ge/cms/releases).
 
 
+## Config
+
+
+Settings merge from user config (`~/.config/cms/config.toml`) and per-repo config (`.cms.toml`):
+
+### user config
+
+
+```toml
+
+[general]
+default_session = ""
+# Priority order for pane selection when switching to a session or window.
+switch_priority = ["waiting", "completed", "idle", "default", "working"]
+# Two-key chord to exit insert mode in the TUI.
+escape_chord = "jj"
+escape_chord_ms = 250
+# Scan git submodules when discovering projects.
+search_submodules = false
+# Restore tmux session snapshots when opening a project.
+restore = true
+# Seconds before a Completed agent decays to Idle (0 = never).
+completed_decay_s = 30000
+# Directories to scan for git projects.
+[[general.search_paths]]
+path = "~"
+max_depth = 3
+exclusions = []
+
+[finder]
+# What bare `cms` shows and in what order.
+include = ["agents", "sessions", "worktrees", "projects"]
+
+# Global sort key priority list. Per-section overrides below.
+# Keys evaluated left-to-right; first difference wins.
+# Prefix "-" demotes (pushes matching items to bottom).
+sort = ["active", "-current"]
+
+# Agents queue urgency order (used by "state" sort key).
+state_order = ["waiting", "completed", "idle", "working"]
+
+# Show max context percentage in aggregate session/worktree summaries.
+show_context_percentage = true
+
+[finder.section_icons]
+sessions = "S"
+agents_queue = "*"
+worktrees = "⎇"
+branches = "B"
+panes = ">"
+windows = "W"
+marks = "M"
+projects = "P"
+
+# Per-section sort overrides — only specify what differs from global.
+[finder.sessions]
+sort = ["recent", "-current"]  # last-visited first, attached last
+
+[finder.agents_queue]
+sort = ["state", "unseen", "oldest"]  # urgency sort
+
+```
+
+
+### project config
+
+
+Note: `.cms.toml` must be placed in project root. For bare repos `cms`
+expects one config file at repo root in the bare repo folder itself.
+
+```toml
+[worktree]
+base_dir = "../worktrees" # target path for new worktrees
+base_branch = "main"        # default start-point for cms go + target for cms land
+commit_cmd = "claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+go_cmd = "claude -p \"$CMS_PROMPT\""  # command to run when prompt is given to cms go
+
+[[worktree.hooks]]           # post-create hooks
+command = "npm install"
+
+[[worktree.pre_commit]]      # before squash commit
+command = "npm run lint"
+
+[[worktree.pre_merge]]       # before landing
+command = "npm test"
+```
+
+Hooks and `go_cmd` receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment
+variables. `go_cmd` also receives `CMS_PROMPT`.
+
+
+See [examples/config.toml](examples/config.toml) for the user config and [examples/config-full.toml](examples/config-full.toml) for every option including status tracking tuning, colors, icons, and dashboard layout.
+
+## Claude Code Hooks (Recommended)
+
+By default, `cms` detects agent activity by observing tmux pane output. For
+faster, more accurate status updates, enable Claude Code hooks.
+
+You will be prompted on first run (when no config file detected) to auto
+install hooks.
+
+
+## Shell Completions
+
+```bash
+# Fish
+cms completion fish > ~/.config/fish/completions/cms.fish
+
+# Bash
+eval "$(cms completion bash)"
+# Or persist: cms completion bash >> ~/.bashrc
+
+# Zsh
+cms completion zsh > ~/.zfunc/_cms
+# Then ensure ~/.zfunc is in fpath and run compinit:
+#   fpath+=(~/.zfunc); autoload -Uz compinit; compinit
+```
+
+
+
 ## Commands
 
 ```bash
@@ -150,7 +269,6 @@ cms rm <branch>                  # remove worktree
 ```
 
 
-See [examples/config.toml](examples/config.toml) for the user config and [examples/config-full.toml](examples/config-full.toml) for every option including status tracking tuning, colors, icons, and dashboard layout.
 
 ### Sort keys
 
@@ -166,7 +284,7 @@ See [examples/config.toml](examples/config.toml) for the user config and [exampl
 | `oldest` | Oldest activity timestamp first | agents |
 | `newest` | Newest activity timestamp first | agents |
 
-Keys are evaluated left-to-right. The first key that distinguishes two items wins. Within equal items, `sort.SliceStable` preserves original order.
+Keys are evaluated left-to-right. The first key that distinguishes two items wins. Within equal items, original order is preserved.
 
 "Active" means:
 
@@ -261,7 +379,7 @@ cms land --continue            # resume after resolving conflicts
 cms land --autostash           # stash dirty target worktree without prompting
 ```
 
-**Target resolution:** `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from project `cms.toml`
+**Target resolution:** `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → `main` → `master`.
 
 If the target worktree has uncommitted changes, `cms land` will prompt to stash
 them before merging and pop them back after. Use `--autostash` to skip the
@@ -281,61 +399,10 @@ piped to the command for auto-generated commit messages. Falls back to a
 default message on failure. Use `--no-squash` to skip squashing and preserve
 individual commits.
 
-### Project level Configuration
-
-Settings merge from user config (`~/.config/cms/config.toml`) and per-repo config (`.cms.toml`):
-
-Note: `.cms.toml` must be placed in project root. For bare repo place
-
-```toml
-[worktree]
-base_dir = "../worktrees" # target path for new worktrees
-base_branch = "main"               # default start-point for cms go + target for cms land
-commit_cmd = "claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
-go_cmd = "claude -p \"$CMS_PROMPT\""  # command to run when prompt is given to cms go
-
-[[worktree.hooks]]           # post-create hooks
-command = "npm install"
-
-[[worktree.pre_commit]]      # before squash commit
-command = "npm run lint"
-
-[[worktree.pre_merge]]       # before landing
-command = "npm test"
-```
-
-Hooks and `go_cmd` receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment
-variables. `go_cmd` also receives `CMS_PROMPT`.
-
-## Claude Code Hooks (Recommended)
-
-By default, `cms` detects agent activity by observing tmux pane output. For
-faster, more accurate status updates, enable Claude Code hooks. When hooks are
-active for a pane, the observer is automatically suppressed.
-
-You will be prompted on first run (when no config file detected) to auto install hooks.
-
-
-## Shell Completions
-
-```bash
-# Fish
-cms completion fish > ~/.config/fish/completions/cms.fish
-
-# Bash
-eval "$(cms completion bash)"
-# Or persist: cms completion bash >> ~/.bashrc
-
-# Zsh
-cms completion zsh > ~/.zfunc/_cms
-# Then ensure ~/.zfunc is in fpath and run compinit:
-#   fpath+=(~/.zfunc); autoload -Uz compinit; compinit
-```
-
 ### The Vibes Report
 
 Vibe score: 9 / 10. This project was entirely written by claude code in a programming
-language which I am not at all familiar with (at all).
+language which I am not at all familiar with.
 
 The following repos were used as direct reference by claude:
 
@@ -343,3 +410,4 @@ The following repos were used as direct reference by claude:
 - [worktrunk](https://github.com/max-sixty/worktrunk)
 - [tmux-up](https://github.com/jamesottaway/tmux-up)
 - [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum/tree/master)
+
