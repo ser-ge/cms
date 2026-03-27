@@ -255,12 +255,16 @@ isolated tmux server with its own config and test worktree repos.
 - **Test repos** via `scripts/create-test-repos.sh`: 4 bare-repo projects
   (`project_a` through `project_d`) with multiple worktrees, diverging
   branches, and merged branches.
-- **Isolated tmux server** (`-L cms-harness -f <minimal.conf>`): separate
-  from the user's tmux, with `base-index 0` and status bar off.
+- **Isolated tmux server** (`-L cms-h-<random> -f <minimal.conf>`): each
+  run gets a unique random ID so parallel runs never conflict. Server is
+  separate from the user's tmux, with `base-index 0` and status bar off.
 - **Isolated config** (`XDG_CONFIG_HOME` override): points `search_paths`
   at the test repos.
+- **CMS_TMUX_SOCKET**: exported so `cms` talks to the harness server, not
+  the user's default tmux.
 - **Optional real agents** (`--agents`): launches `claude -p '...'` in
   some panes for agent detection testing.
+- **Cleanup on exit**: tmux server is killed and temp dir is removed.
 
 ### Usage
 
