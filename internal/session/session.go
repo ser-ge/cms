@@ -144,6 +144,12 @@ func KillPane(paneID string) error {
 	return err
 }
 
+// KillWindow closes the tmux window containing the given pane.
+func KillWindow(paneID string) error {
+	_, err := tmux.Run("kill-window", "-t", paneID)
+	return err
+}
+
 // MovePane moves a pane to be adjacent to a target pane.
 // Works across sessions and windows.
 func MovePane(srcPaneID, dstPaneID string) error {

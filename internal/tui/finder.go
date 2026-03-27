@@ -615,8 +615,8 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		// Reload marks after deletion.
 		return m, loadMarksCmd(m.sessData)
 
-	case sessionKilledMsg, paneKilledMsg:
-		// Watcher will send a StateMsg to refresh, nothing to do here.
+	case sessionKilledMsg, paneKilledMsg, windowKilledMsg:
+		// Watcher will send a StateMsg to refresh via control-mode events.
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -648,6 +648,10 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			case KindPane, KindAgentsQueue, KindWindow:
 				if entry.paneID != "" {
 					cmd = killPaneCmd(entry.paneID)
+				}
+			case KindWorktree:
+				if paneID := m.firstPaneInWorktree(entry.worktreePath); paneID != "" {
+					cmd = killWindowCmd(paneID)
 				}
 			case KindMark:
 				cmd = removeMarkCmd(entry.markLabel)
@@ -740,8 +744,52 @@ func (m *finderModel) rebuildPicker() {
 
 	m.entries = entries
 	m.picker = m.picker.resetWith(items, m.cfg.General.EscapeChord, m.cfg.General.EscapeChordMs)
+	m.picker.CloseLabel = m.closeLabel
 	m.picker.width = m.width
 	m.picker.height = m.height
+}
+
+// closeLabel returns the confirm prompt and help hint for closing the item at idx.
+// Returns ("", "") for items that don't support close.
+func (m *finderModel) closeLabel(idx int) (confirm, hint string) {
+	if idx < 0 || idx >= len(m.entries) {
+		return "", ""
+	}
+	entry := m.entries[idx]
+	switch entry.kind {
+	case KindSession:
+		return fmt.Sprintf("kill session '%s'? y/n", entry.sessionName), "x: kill session"
+	case KindPane:
+		return fmt.Sprintf("kill pane %s? y/n", entry.paneID), "x: kill pane"
+	case KindAgentsQueue:
+		return fmt.Sprintf("kill pane %s? y/n", entry.paneID), "x: kill pane"
+	case KindWindow:
+		return fmt.Sprintf("kill pane %s? y/n", entry.paneID), "x: kill pane"
+	case KindMark:
+		return fmt.Sprintf("remove mark '%s'? y/n", entry.markLabel), "x: remove mark"
+	case KindWorktree:
+		paneID := m.firstPaneInWorktree(entry.worktreePath)
+		if paneID == "" {
+			return "", ""
+		}
+		return fmt.Sprintf("kill window for '%s'? y/n", entry.worktreeBranch), "x: kill window"
+	default:
+		return "", ""
+	}
+}
+
+// firstPaneInWorktree returns the first pane whose working dir is inside the worktree path.
+func (m *finderModel) firstPaneInWorktree(wtPath string) string {
+	for _, sess := range m.sessData {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				if strings.HasPrefix(pane.WorkingDir, wtPath) {
+					return pane.ID
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // activeSections returns which item type sections to include.

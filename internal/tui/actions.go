@@ -13,6 +13,7 @@ import (
 // Result messages returned by action commands.
 
 type paneKilledMsg struct{ PaneID string }
+type windowKilledMsg struct{ PaneID string }
 type paneMovedMsg struct{ SrcID, DstID string }
 type paneSwitchedMsg struct{ PaneID string }
 type sessionKilledMsg struct{ Name string }
@@ -28,6 +29,13 @@ func killPaneCmd(paneID string) tea.Cmd {
 	return func() tea.Msg {
 		session.KillPane(paneID)
 		return paneKilledMsg{PaneID: paneID}
+	}
+}
+
+func killWindowCmd(paneID string) tea.Cmd {
+	return func() tea.Msg {
+		session.KillWindow(paneID)
+		return windowKilledMsg{PaneID: paneID}
 	}
 }
 

@@ -66,6 +66,12 @@ type pickerModel struct {
 	done          bool
 	confirm       string // non-empty = showing "y/n" confirmation prompt
 	slab          *util.Slab // reusable memory for fzf algo
+
+	// CloseLabel returns the confirm prompt and help hint for closing item at
+	// the given index. Returns ("", "") if the item doesn't support close.
+	// First return is the confirm prompt (e.g. "kill session 'foo'? y/n"),
+	// second is the help hint (e.g. "x: kill session").
+	CloseLabel func(idx int) (confirm, hint string)
 }
 
 func newPicker(title string, items []PickerItem, escapeChord string, escapeChordMs int) pickerModel {
@@ -281,8 +287,12 @@ func (m pickerModel) updateNormal(msg tea.KeyMsg) (pickerModel, tea.Cmd) {
 		m.input.Focus()
 		return m, textinput.Blink
 	case "x":
-		if m.selectedItem() >= 0 {
-			m.confirm = "close? y/n"
+		sel := m.selectedItem()
+		if sel >= 0 && m.CloseLabel != nil {
+			confirm, _ := m.CloseLabel(sel)
+			if confirm != "" {
+				m.confirm = confirm
+			}
 		}
 		return m, nil
 	case "esc", "q":
@@ -479,7 +489,19 @@ func (m pickerModel) View() string {
 	} else if m.mode == pickerInsert {
 		help = pickerCountStyle.Render("  esc: select mode  enter: switch  ctrl+c: quit")
 	} else {
-		help = pickerCountStyle.Render("  j/k: navigate  i,/: filter  x: close  enter: switch  esc,q: back")
+		closeHint := ""
+		if m.CloseLabel != nil {
+			sel := m.selectedItem()
+			if sel >= 0 {
+				_, hint := m.CloseLabel(sel)
+				closeHint = hint
+			}
+		}
+		if closeHint != "" {
+			help = pickerCountStyle.Render("  j/k: navigate  i,/: filter  " + closeHint + "  enter: switch  esc,q: back")
+		} else {
+			help = pickerCountStyle.Render("  j/k: navigate  i,/: filter  enter: switch  esc,q: back")
+		}
 	}
 	b.WriteString(count + help + "\n")
 

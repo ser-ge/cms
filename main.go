@@ -343,7 +343,7 @@ func switchToWorktreeWindow(wtPath, branch string) error {
 		return fmt.Errorf("not inside tmux")
 	}
 	windowName := worktree.SanitizeBranch(branch)
-	_, err = tmux.Run("new-window", "-t", target.Session, "-n", windowName, "-c", wtPath)
+	_, err = tmux.Run("new-window", "-a", "-t", target.Session, "-n", windowName, "-c", wtPath)
 	return err
 }
 
