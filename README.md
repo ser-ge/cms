@@ -2,23 +2,83 @@
 
 `cms` is a tmux session picker and dashboard with Claude and Codex awareness.
 
+## Quickstart
+
+### The finder
+
+`cms` with no arguments opens a fuzzy picker over your tmux sessions, worktrees, branches, and agents — all in one view. Short flags select sections, and they compose:
+
+```bash
+cms                # everything (configurable via [finder].include)
+cms -a             # agents only
+cms -s             # sessions only
+cms -sw            # sessions + worktrees
+cms -swa           # sessions + worktrees + agents
+```
+
+Flags: `-s` sessions, `-p` projects, `-a` agents, `-m` marks, `-w` worktrees, `-b` branches, `-W` windows, `-P` panes. Spell out the full name or comma-separate if you prefer: `cms sessions,worktrees`.
+
+<!-- gif: cms finder with composable sections and agent status badges -->
+
+Every item shows agent status inline. Sessions and worktrees display compact activity counts (`?1 · ⚡2 · ●1`) so you can see at a glance where work is happening.
+
+### Sort makes "open and enter" always useful
+
+Each view has sort defaults tuned to its purpose:
+
+- **Agents** — sorted by state (`waiting` first), then unseen, then oldest. Enter jumps to the agent that needs you most.
+- **Sessions** — sorted by `recent`. Enter takes you back to where you just were.
+- **Worktrees** — `active` first, `-current` deprioritized. You see what else is going on, not where you already are.
+
+The sort is why `cms` + enter is always the right move — not just a fuzzy filter, but an opinionated "take me to the most useful thing." All sort keys are configurable in `[finder]` and per-section overrides.
+
+For the headless version of the same idea: [`cms next`](#navigation) cycles through agent panes by priority (waiting → completed → idle), no picker needed.
+
+<!-- gif: cms next cycling through waiting agents -->
+
+### The worktree loop
+
+`cms go` is the one command for branch work. Worktree exists? Switch to it. Doesn't exist? Create it from your configured base branch.
+
+```bash
+cms go feature-x                        # switch or create
+cms go feature-x "implement auth flow"  # create + spawn agent with prompt
+```
+
+The optional prompt string runs your configured `go_cmd` (default: `claude -p "$CMS_PROMPT"`), so one command gets you a fresh worktree with an agent already working.
+
+When you're done, `cms land` closes the loop:
+
+```bash
+cms land              # squash, rebase, fast-forward merge, remove worktree
+cms land -m "msg"     # explicit squash message
+cms land --no-squash  # preserve individual commits
+```
+
+One command: squash → rebase onto target → merge → cleanup worktree and branch. Conflicts? Fix, `git rebase --continue`, `cms land --continue`. Backup refs are saved automatically.
+
+The lifecycle: **go → work → land → gone.**
+
+---
+
 ## Commands
 
 ```bash
 # Universal fuzzy switcher (default)
 cms                              # finder (configurable via [finder].include)
-cms sessions                     # sessions only (also: cms -s)
-cms projects                     # projects only (also: cms -p)
-cms queue                        # attention queue (also: cms -q)
-cms marks                        # marks only (also: cms -m)
-cms worktrees                    # worktrees only (current repo)
-cms branches                     # local branches (current repo)
-cms windows                      # windows only (all sessions)
-cms panes                        # panes only (all sessions)
+cms -s                           # sessions only (or: cms sessions)
+cms -p                           # projects only (or: cms projects)
+cms -a                           # agents only (or: cms agents)
+cms -m                           # marks only (or: cms marks)
+cms -w                           # worktrees only (or: cms worktrees)
+cms -b                           # branches only (or: cms branches)
+cms -W                           # windows only (or: cms windows)
+cms -P                           # panes only (or: cms panes)
 
-# Composable — comma-separated section names
-cms sessions,worktrees           # sessions + worktrees
-cms queue,branches               # queue + branches
+# Composable — short flags compose, or comma-separate full names
+cms -sw                          # sessions + worktrees
+cms -swa                         # sessions + worktrees + agents
+cms agents,branches              # agents + branches
 
 # Views
 cms dash                         # dashboard (session/pane grid with agent status)
@@ -46,7 +106,7 @@ cms internal hook <event>        # forward Claude Code hook event
 cms internal refresh [name]      # refresh worktrees for tmux session
 ```
 
-Valid section names: `sessions`, `projects`, `queue`, `worktrees`, `branches`, `panes`, `windows`, `marks`.
+Valid section names: `sessions`, `projects`, `agents`, `worktrees`, `branches`, `panes`, `windows`, `marks`.
 
 ### Picker keybindings
 
@@ -106,14 +166,14 @@ completed_to_idle_ms = 0
 
 [finder]
 # What bare `cms` shows and in what order.
-include = ["sessions", "queue", "worktrees", "projects"]
+include = ["sessions", "agents", "worktrees", "projects"]
 
 # Global sort key priority list. Per-section overrides below.
 # Keys evaluated left-to-right; first difference wins.
 # Prefix "-" demotes (pushes matching items to bottom).
 sort = ["active", "-current"]
 
-# Queue urgency order (used by "state" sort key).
+# Agents urgency order (used by "state" sort key).
 state_order = ["waiting", "completed", "idle", "working"]
 
 # Show max context percentage in aggregate session/worktree summaries.
@@ -123,7 +183,7 @@ show_context_percentage = true
 # Icon *color* encodes item state (see "Icon colors" below).
 [finder.section_icons]
 sessions  = "S"
-queue     = "*"
+agents    = "*"
 worktrees = "⎇"
 branches  = "B"
 panes     = ">"
@@ -135,7 +195,7 @@ projects  = "P"
 [finder.sessions]
 sort = ["recent", "-current"]  # last-visited first, attached last
 
-[finder.queue]
+[finder.agents]
 sort = ["state", "unseen", "oldest"]  # urgency sort
 
 # [finder.worktrees]
@@ -153,10 +213,10 @@ sort = ["state", "unseen", "oldest"]  # urgency sort
 | `current` | Current/focused item first | all (needs isCurrent predicate) |
 | `-current` | Current/focused item last | all |
 | `recent` | Most recently visited first | sessions |
-| `state` | Sort by `state_order` list | queue |
-| `unseen` | Unseen attention events first | queue |
-| `oldest` | Oldest activity timestamp first | queue |
-| `newest` | Newest activity timestamp first | queue |
+| `state` | Sort by `state_order` list | agents |
+| `unseen` | Unseen attention events first | agents |
+| `oldest` | Oldest activity timestamp first | agents |
+| `newest` | Newest activity timestamp first | agents |
 
 Keys are evaluated left-to-right. The first key that distinguishes two items wins. Within equal items, `sort.SliceStable` preserves original order.
 
@@ -165,7 +225,7 @@ Keys are evaluated left-to-right. The first key that distinguishes two items win
 Each section icon's color encodes item state. All colors are configurable
 in `[colors.shared]` (ANSI 256 palette).
 
-**Agent-bearing sections** (sessions, windows, panes, queue) use activity
+**Agent-bearing sections** (sessions, windows, panes, agents) use activity
 colors — icon takes the most urgent agent state per `state_order`:
 
 | Activity  | Default | Color          |
@@ -201,7 +261,7 @@ colors — icon takes the most urgent agent state per `state_order`:
 | branches | has worktree checked out |
 | panes | has running agent |
 | windows | has running agent |
-| queue | unseen attention events |
+| agents | unseen attention events |
 | marks | pane still alive |
 
 The `active` sort key controls whether active items sort first.
@@ -430,7 +490,7 @@ internal/
   git/          Git info, branch listing, worktree listing
   tmux/         Session/Window/Pane types, tmux commands, control mode
   agent/        Provider-neutral detection, Claude + Codex parsing
-  attention/    Attention queue + tmux pane persistence
+  attention/    Attention tracking + tmux pane persistence
   hook/         Claude Code hook socket listener
   mark/         Named pane bookmarks (file-backed JSON)
   session/      Session CRUD, smart switching, OpenProject
@@ -445,7 +505,7 @@ Layers (import downward only):
 
 - **Presentation** (`tui`) -- renders state, emits `tea.Cmd` via `actions.go`, never calls tmux/session directly
 - **Business** (`watcher`, `session`, `project`, `worktree`) -- coordinates state, manages tmux sessions
-- **Domain** (`agent`, `attention`, `hook`, `mark`) -- detection logic, attention queue, hook events, bookmarks
+- **Domain** (`agent`, `attention`, `hook`, `mark`) -- detection logic, attention tracking, hook events, bookmarks
 - **Infrastructure** (`tmux`, `git`, `proc`, `config`, `debug`) -- I/O boundaries, no internal deps
 
 ## Development
@@ -459,7 +519,7 @@ go vet ./internal/... .              # lint
 Render harness (visual debugging):
 
 ```bash
-CMS_RENDER_HARNESS=1 go test ./internal/tui/ -run 'TestRenderHarness(Dashboard|Finder|Queue)' -v
+CMS_RENDER_HARNESS=1 go test ./internal/tui/ -run 'TestRenderHarness(Dashboard|Finder|Agents)' -v
 CMS_LIVE_HARNESS=1 go test ./internal/tui/ -run TestRenderHarnessLive -v
 ```
 
