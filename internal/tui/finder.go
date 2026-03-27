@@ -1529,6 +1529,70 @@ func (h *HeadlessFinder) PlainSnapshot() []PlainRow {
 	return h.m.PlainSnapshot()
 }
 
+// FirstAction returns a PostAction for the first finder entry that doesn't
+// match the caller's current position. This shares the exact build+sort
+// pipeline as the TUI picker — same sections, same sort keys, same order.
+// Returns nil if no navigable entry exists.
+func (h *HeadlessFinder) FirstAction(currentPaneID, currentSession string, priority []string) *PostAction {
+	for i, entry := range h.m.entries {
+		if isCurrent(entry, h.m.picker.items[i], currentPaneID, currentSession) {
+			continue
+		}
+		return entryToAction(entry, priority)
+	}
+	return nil
+}
+
+// isCurrent returns true if the entry represents the caller's current position.
+func isCurrent(entry finderEntry, item PickerItem, currentPaneID, currentSession string) bool {
+	switch entry.kind {
+	case KindAgentsQueue, KindPane, KindMark, KindWindow:
+		return entry.paneID == currentPaneID
+	case KindSession:
+		return entry.sessionName == currentSession
+	case KindProject:
+		// Projects don't have a pane — skip if the attached session matches.
+		return false
+	case KindWorktree, KindBranch:
+		// Worktrees/branches don't carry a pane ID. Skip none — the sort
+		// order will naturally place the current one lower via "-current".
+		return false
+	}
+	return false
+}
+
+// entryToAction converts a finderEntry to a PostAction, mirroring the
+// enter-key handler in finderModel.Update.
+func entryToAction(entry finderEntry, priority []string) *PostAction {
+	switch entry.kind {
+	case KindAgentsQueue, KindPane, KindMark, KindWindow:
+		return &PostAction{PaneID: entry.paneID}
+	case KindWorktree:
+		return &PostAction{
+			Kind:           KindWorktree,
+			WorktreePath:   entry.worktreePath,
+			WorktreeBranch: entry.worktreeBranch,
+		}
+	case KindBranch:
+		return &PostAction{
+			Kind:       KindWorktree,
+			BranchName: entry.worktreeBranch,
+		}
+	case KindSession:
+		return &PostAction{
+			Kind:        KindSession,
+			SessionName: entry.sessionName,
+			Priority:    priority,
+		}
+	case KindProject:
+		return &PostAction{
+			Kind:        KindProject,
+			ProjectPath: entry.projectPath,
+		}
+	}
+	return nil
+}
+
 // UpdateFromWatcher feeds a watcher message into the finder and returns
 // whether the items changed (requiring a re-render).
 func (h *HeadlessFinder) UpdateFromWatcher(msg tea.Msg) bool {

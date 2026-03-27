@@ -21,10 +21,6 @@ import (
 // version is set at build time via ldflags.
 var version = "dev"
 
-type jumpCandidate struct {
-	paneID   string
-	activity agent.Activity
-}
 
 func main() {
 	initDebugLogger()
@@ -111,7 +107,11 @@ func main() {
 
 		// Headless navigation.
 		case "next":
-			exitIfErr(jumpNext())
+			secs := sections
+			if len(secs) == 0 {
+				secs = cfg.Finder.Include
+			}
+			exitIfErr(jumpNext(secs, cfg))
 			return
 		case "mark":
 			exitIfErr(runMark(args[1:]))
@@ -459,51 +459,41 @@ func runInternal(args []string) error {
 	}
 }
 
-// jumpNext finds the next agent pane needing attention and switches to it.
-func jumpNext() error {
-	sessions, pt, err := tmux.FetchState()
-	if err != nil {
-		return err
-	}
+// jumpNext uses the same build+sort pipeline as the finder to pick the first
+// navigable item, then executes the corresponding action (switch to pane,
+// session, worktree, etc.). Flags mirror `cms` — same sections, same sort.
+func jumpNext(sections []string, cfg config.Config) error {
+	w := watcher.New()
+	w.ApplyConfig(cfg.General)
+	w.BootstrapSync()
+
+	h := tui.RunHeadless(cfg, w, sections)
+
 	current, _ := tmux.FetchCurrentTarget()
-	agents := agent.DetectAll(sessions, pt)
+	sessions, _, _ := w.CachedState()
+	currentPaneID := resolveCurrentPaneID(sessions, current)
 
-	var all []jumpCandidate
-	currentIdx := -1
-
-	for _, sess := range sessions {
-		for _, win := range sess.Windows {
-			for _, pane := range win.Panes {
-				cs, ok := agents[pane.ID]
-				if !ok || !cs.Running {
-					continue
-				}
-				if sess.Name == current.Session && win.Index == current.Window && pane.Index == current.Pane {
-					currentIdx = len(all)
-				}
-				all = append(all, jumpCandidate{paneID: pane.ID, activity: cs.Activity})
-			}
-		}
+	action := h.FirstAction(currentPaneID, current.Session, cfg.General.SwitchPriority)
+	if action == nil {
+		return fmt.Errorf("no items to navigate to")
 	}
-
-	if len(all) == 0 {
-		return fmt.Errorf("no agent sessions found")
-	}
-
-	if paneID := selectNextPane(all, currentIdx); paneID != "" {
-		return session.SwitchToPane(paneID)
-	}
-
-	return fmt.Errorf("no waiting or idle agent sessions")
+	return executePostAction(action, cfg)
 }
 
-func selectNextPane(all []jumpCandidate, currentIdx int) string {
-	start := currentIdx + 1
-	for _, target := range []agent.Activity{agent.ActivityWaitingInput, agent.ActivityCompleted, agent.ActivityIdle} {
-		for i := 0; i < len(all); i++ {
-			idx := (start + i) % len(all)
-			if all[idx].activity == target {
-				return all[idx].paneID
+// resolveCurrentPaneID finds the pane ID (e.g. %7) for the current target.
+func resolveCurrentPaneID(sessions []tmux.Session, current tmux.CurrentTarget) string {
+	for _, sess := range sessions {
+		if sess.Name != current.Session {
+			continue
+		}
+		for _, win := range sess.Windows {
+			if win.Index != current.Window {
+				continue
+			}
+			for _, pane := range win.Panes {
+				if pane.Index == current.Pane {
+					return pane.ID
+				}
 			}
 		}
 	}
