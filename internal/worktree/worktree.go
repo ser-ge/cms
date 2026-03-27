@@ -144,6 +144,9 @@ func ResolveWorktreeConfig(repoRoot, cwd string, userCfg *config.WorktreeConfig)
 	if p.BaseDir != "" {
 		merged.BaseDir = p.BaseDir
 	}
+	if p.BaseBranch != "" {
+		merged.BaseBranch = p.BaseBranch
+	}
 	if p.CommitCmd != "" {
 		merged.CommitCmd = p.CommitCmd
 	}

@@ -981,3 +981,131 @@ func TestDefaultBranch_WithRemoteHead(t *testing.T) {
 		t.Error("expected non-empty branch from remote HEAD")
 	}
 }
+
+// --- §16: base_branch in project config ---
+
+func TestResolveWorktreeConfig_BaseBranchFromProject(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".cms.toml"), []byte(`
+[worktree]
+base_branch = "develop"
+`), 0o644)
+
+	userCfg := &config.WorktreeConfig{
+		BaseBranch: "main",
+	}
+
+	merged := ResolveWorktreeConfig(dir, dir, userCfg)
+	if merged.BaseBranch != "develop" {
+		t.Errorf("base_branch should be overridden by project config, got %q", merged.BaseBranch)
+	}
+}
+
+func TestResolveWorktreeConfig_BaseBranchUserFallback(t *testing.T) {
+	dir := t.TempDir() // no .cms.toml
+
+	userCfg := &config.WorktreeConfig{
+		BaseBranch: "main",
+	}
+
+	merged := ResolveWorktreeConfig(dir, dir, userCfg)
+	if merged.BaseBranch != "main" {
+		t.Errorf("base_branch should fall back to user config, got %q", merged.BaseBranch)
+	}
+}
+
+// TestGoWorktree_BaseBranchFromProjectConfig verifies that cms go forks from
+// the base_branch configured in .cms.toml rather than auto-detected main.
+func TestGoWorktree_BaseBranchFromProjectConfig(t *testing.T) {
+	// Create a repo with main as default branch.
+	repo := initTestRepo(t)
+	defBranch, _ := git.Cmd(repo, "rev-parse", "--abbrev-ref", "HEAD")
+
+	// Create a "develop" branch with an extra commit so we can tell it apart.
+	runGit(t, repo, "checkout", "-b", "develop")
+	os.WriteFile(filepath.Join(repo, "develop.txt"), []byte("develop"), 0o644)
+	runGit(t, repo, "add", "develop.txt")
+	runGit(t, repo, "commit", "-m", "develop commit")
+	developSHA, _ := git.Cmd(repo, "rev-parse", "HEAD")
+	runGit(t, repo, "checkout", defBranch)
+
+	// Write .cms.toml with base_branch = "develop".
+	os.WriteFile(filepath.Join(repo, ".cms.toml"), []byte(`
+[worktree]
+base_branch = "develop"
+`), 0o644)
+
+	// Set up isolated XDG_CONFIG_HOME so config.Load() returns empty user config.
+	isolatedConfig := t.TempDir()
+	cmsConfigDir := filepath.Join(isolatedConfig, "cms")
+	os.MkdirAll(cmsConfigDir, 0o755)
+	os.WriteFile(filepath.Join(cmsConfigDir, "config.toml"), []byte(""), 0o644)
+	t.Setenv("XDG_CONFIG_HOME", isolatedConfig)
+
+	// Chdir into the repo so GoWorktree resolves correctly.
+	orig, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(orig) })
+
+	wtPath := filepath.Join(t.TempDir(), "feature-x")
+	err := GoWorktree(repo, "feature-x", SwitchOpts{
+		NoOpen: true,
+		Path:   wtPath,
+	})
+	if err != nil {
+		t.Fatalf("GoWorktree failed: %v", err)
+	}
+	defer RemoveWorktree(repo, wtPath, true)
+
+	// The new branch should be based on develop, not main.
+	// Check that develop.txt exists in the new worktree (it wouldn't if forked from main).
+	if _, err := os.Stat(filepath.Join(wtPath, "develop.txt")); err != nil {
+		t.Error("feature-x should contain develop.txt (forked from develop), but it's missing")
+	}
+
+	// Verify the parent commit is the develop commit.
+	parentSHA, _ := git.Cmd(repo, "merge-base", "feature-x", "develop")
+	if parentSHA != developSHA {
+		t.Errorf("feature-x merge-base with develop = %s, want %s (should fork from develop)", parentSHA, developSHA)
+	}
+}
+
+// TestGoWorktree_BaseBranchFallsBackToDefault verifies that without base_branch
+// config, cms go falls back to auto-detected default branch.
+func TestGoWorktree_BaseBranchFallsBackToDefault(t *testing.T) {
+	repo := initTestRepo(t)
+	defBranch, _ := git.Cmd(repo, "rev-parse", "--abbrev-ref", "HEAD")
+	defSHA, _ := git.Cmd(repo, "rev-parse", "HEAD")
+
+	// Create develop with extra commit — but don't configure base_branch.
+	runGit(t, repo, "checkout", "-b", "develop")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "develop")
+	runGit(t, repo, "checkout", defBranch)
+
+	// No .cms.toml — should use auto-detected default branch (main/master).
+	isolatedConfig := t.TempDir()
+	cmsConfigDir := filepath.Join(isolatedConfig, "cms")
+	os.MkdirAll(cmsConfigDir, 0o755)
+	os.WriteFile(filepath.Join(cmsConfigDir, "config.toml"), []byte(""), 0o644)
+	t.Setenv("XDG_CONFIG_HOME", isolatedConfig)
+
+	orig, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(orig) })
+
+	wtPath := filepath.Join(t.TempDir(), "feature-y")
+	err := GoWorktree(repo, "feature-y", SwitchOpts{
+		NoOpen: true,
+		Path:   wtPath,
+	})
+	if err != nil {
+		t.Fatalf("GoWorktree failed: %v", err)
+	}
+	defer RemoveWorktree(repo, wtPath, true)
+
+	// Should be forked from default branch, not develop.
+	parentSHA, _ := git.Cmd(repo, "merge-base", "feature-y", defBranch)
+	if parentSHA != defSHA {
+		t.Errorf("feature-y merge-base with %s = %s, want %s", defBranch, parentSHA, defSHA)
+	}
+}

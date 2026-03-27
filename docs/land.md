@@ -8,7 +8,7 @@ Land the current feature branch into a target branch with rebase, merge, and cle
 cms land [target] [flags]
 ```
 
-Target defaults to `[worktree].base_branch`, then auto-detected default branch (`origin/HEAD` → `main` → `master`). Supports symbols: `^` (default branch), `-` (previous), `@` (current).
+Target resolution: `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master`. Supports symbols: `^` (default branch), `-` (previous), `@` (current).
 
 ## Flags
 

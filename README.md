@@ -261,7 +261,7 @@ cms go feature main "implement feature A"   # start-point + prompt
 
 Options: `--force`/`-f`, `--path <dir>`, `--no-open`.
 
-Default base branch: `[worktree].base_branch` config, then `origin/HEAD`, then `main`/`master`.
+**Base branch resolution** (for new branches): explicit start-point arg → `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master` → current HEAD.
 
 The prompt (arg with spaces) is passed to the command configured in `[worktree].go_cmd`. The prompt is available as `$CMS_PROMPT` in the command's environment. If the command string doesn't reference `$CMS_PROMPT`, the prompt is appended as an argument.
 
@@ -294,7 +294,7 @@ cms land --continue            # resume after resolving conflicts
 cms land --autostash           # stash dirty target worktree without prompting
 ```
 
-Target defaults to `[worktree].base_branch`, then auto-detected default branch (origin/HEAD → main → master). Supports symbols: `^` (default branch), `-` (previous branch), `@` (current).
+**Target resolution:** `[worktree].base_branch` from project `.cms.toml` → `[worktree].base_branch` from user `config.toml` → `origin/HEAD` → local `main` → local `master`. Supports symbols: `^` (default branch), `-` (previous branch), `@` (current).
 
 If the target worktree has uncommitted changes, `cms land` will prompt to stash them before merging and restore them after. Use `--autostash` to skip the prompt. If the stash pop conflicts after merge, the stash is preserved (see `git stash list` in the target worktree).
 
@@ -342,7 +342,7 @@ Settings merge from user config (`~/.config/cms/config.toml`) and per-repo confi
 ```toml
 [worktree]
 base_dir = "../worktrees"
-base_branch = "main"               # default start-point for cms go
+base_branch = "main"               # default start-point for cms go + target for cms land
 commit_cmd = "llm -m claude-haiku"  # LLM commit message generation
 go_cmd = "claude -p \"$CMS_PROMPT\""  # command to run when prompt is given to cms go
 
