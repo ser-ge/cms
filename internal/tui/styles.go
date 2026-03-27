@@ -36,6 +36,7 @@ var (
 	ctxHighStyle lipgloss.Style
 
 	workingFramesUI   []string
+	workingIndicator    string
 	waitingIndicator    string
 	completedIndicator  string
 	idleIndicator       string
@@ -109,6 +110,7 @@ func InitStyles(cfg config.Config) {
 	sectionIconPadding = " "
 
 	workingFramesUI = append([]string(nil), cfg.Icons.WorkingFrames...)
+	workingIndicator = cfg.Icons.Working
 	waitingIndicator = cfg.Icons.Waiting
 	completedIndicator = cfg.Icons.Completed
 	idleIndicator = cfg.Icons.Idle

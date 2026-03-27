@@ -29,6 +29,7 @@ type finderEntry struct {
 	projectPath    string // KindProject
 	worktreePath   string // KindWorktree
 	worktreeBranch string // KindWorktree
+	worktreeMerged bool   // KindWorktree: branch is integrated into base
 	paneID         string // KindPane, KindQueue, KindMark
 	markLabel      string // KindMark
 	unseen         bool   // KindQueue (for markAttentionSeen + "unseen" sort key)
@@ -348,22 +349,35 @@ func (m *finderModel) buildSessionItems(agents map[string]agent.AgentStatus) {
 }
 
 // renderStateCounts renders non-zero activity counts as icon+number.
-// Example: "?2 · ✓1 · ●3" instead of "2 waiting · 1 completed · 3 idle".
-func renderStateCounts(counts map[agent.Activity]int) string {
-	// Order: waiting, completed, working, idle (matches default state_order).
-	order := []agent.Activity{
-		agent.ActivityWaitingInput,
-		agent.ActivityCompleted,
-		agent.ActivityWorking,
-		agent.ActivityIdle,
-	}
+// Display order follows the provided stateOrder (from config).
+func renderStateCounts(counts map[agent.Activity]int, stateOrder []string) string {
 	var parts []string
-	for _, a := range order {
+	for _, name := range stateOrder {
+		a := parseActivity(name)
+		if a < 0 {
+			continue
+		}
 		if n := counts[a]; n > 0 {
 			parts = append(parts, ActivityStyle(a).Render(fmt.Sprintf("%s %d", activityIndicator(a), n)))
 		}
 	}
 	return JoinParts(parts)
+}
+
+// parseActivity converts a state name string to an Activity value.
+func parseActivity(name string) agent.Activity {
+	switch name {
+	case "waiting":
+		return agent.ActivityWaitingInput
+	case "completed":
+		return agent.ActivityCompleted
+	case "working":
+		return agent.ActivityWorking
+	case "idle":
+		return agent.ActivityIdle
+	default:
+		return -1
+	}
 }
 
 // activityIndicator returns the icon for an agent activity state.
@@ -374,7 +388,7 @@ func activityIndicator(a agent.Activity) string {
 	case agent.ActivityCompleted:
 		return completedIndicator
 	case agent.ActivityWorking:
-		return "\u26a1"
+		return workingIndicator
 	case agent.ActivityIdle:
 		return idleIndicator
 	default:
@@ -408,7 +422,8 @@ func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.Age
 		return ""
 	}
 
-	state := renderStateCounts(counts)
+	stateOrder := m.cfg.Finder.GetStateOrder("sessions")
+	state := renderStateCounts(counts, stateOrder)
 	if m.cfg.Finder.ShowContextPercentage && hasCtx {
 		ctx := ContextStyle(maxCtx).Render(fmt.Sprintf("%d%%", maxCtx))
 		if state == "" {
@@ -509,9 +524,11 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 
 			// Static description: merged status (expensive git check, done once at scan).
 			desc := ""
+			merged := false
 			if !wt.IsMain && defBranch != "" && wt.Branch != "" && wt.Branch != defBranch {
 				if integrated, reason := worktree.IsBranchIntegrated(msg.repoRoot, wt.Branch, defBranch); integrated {
 					desc = "[merged: " + reason + "]"
+					merged = true
 				}
 			}
 
@@ -528,6 +545,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 				kind:           KindWorktree,
 				worktreePath:   wt.Path,
 				worktreeBranch: wt.Branch,
+				worktreeMerged: merged,
 			})
 		}
 		m.hasWorktree = true
@@ -925,16 +943,16 @@ func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry
 
 	items := make([]PickerItem, len(m.worktreeItems))
 	copy(items, m.worktreeItems)
+	wtStateOrder := m.cfg.Finder.GetStateOrder("worktrees")
 	for i := range items {
 		wi := info[i]
 
-		// Merged status from scan time; suppressed if worktree has new work.
-		isMerged := strings.Contains(m.worktreeItems[i].Description, "[merged:")
+		isMerged := m.worktreeIdx[i].worktreeMerged
 		hasDiverged := wi.dirty || wi.ahead
 
 		// Build description: agent counts + static suffix (merged status).
 		var parts []string
-		if counts := renderStateCounts(wi.stateCounts); counts != "" {
+		if counts := renderStateCounts(wi.stateCounts, wtStateOrder); counts != "" {
 			parts = append(parts, counts)
 		}
 		// Show merged label only when the worktree hasn't diverged since.
@@ -1045,7 +1063,7 @@ func (m *finderModel) buildWindowItems() {
 
 			var parts []string
 			parts = append(parts, fmt.Sprintf("%dp", len(win.Panes)))
-			if counts := renderStateCounts(stateCounts); counts != "" {
+			if counts := renderStateCounts(stateCounts, stateOrder); counts != "" {
 				parts = append(parts, counts)
 			}
 			desc := JoinParts(parts)

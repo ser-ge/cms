@@ -440,7 +440,7 @@ func BenchmarkRenderStateCounts(b *testing.B) {
 		agent.ActivityIdle:         1,
 	}
 	for b.Loop() {
-		_ = renderStateCounts(counts)
+		_ = renderStateCounts(counts, []string{"waiting", "completed", "idle", "working"})
 	}
 }
 

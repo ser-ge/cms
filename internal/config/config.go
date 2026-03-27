@@ -119,6 +119,7 @@ func (g GeneralConfig) ShouldRestore() bool {
 
 type IconsConfig struct {
 	WorkingFrames   []string `toml:"working_frames"`
+	Working         string   `toml:"working"` // static icon for counts (distinct from animated WorkingFrames)
 	Waiting         string   `toml:"waiting"`
 	Completed       string   `toml:"completed"`
 	Idle            string   `toml:"idle"`
@@ -311,6 +312,7 @@ func DefaultColors() ColorsConfig {
 func DefaultIcons() IconsConfig {
 	return IconsConfig{
 		WorkingFrames:   []string{"\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"},
+		Working:         "\u26a1",
 		Waiting:         "?",
 		Completed:       "\u2713",
 		Idle:            "\u25CF",
@@ -444,6 +446,7 @@ func defaultInt(field *int, def int) {
 func (c *Config) normalize() {
 	di := DefaultIcons()
 	defaultSlice(&c.Icons.WorkingFrames, di.WorkingFrames)
+	defaultStr(&c.Icons.Working, di.Working)
 	defaultStr(&c.Icons.Waiting, di.Waiting)
 	defaultStr(&c.Icons.Completed, di.Completed)
 	defaultStr(&c.Icons.Idle, di.Idle)
