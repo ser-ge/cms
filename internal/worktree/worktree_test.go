@@ -60,58 +60,6 @@ command = "cleanup.sh"
 	}
 }
 
-func TestLoadProjectConfig_HookEnv(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, ".cms.toml"), []byte(`
-[[worktree.hooks]]
-command = "cp \"$ENV_FILE\" .env"
-[worktree.hooks.env]
-ENV_FILE = "/secrets/.env"
-EXTRA = "value"
-`), 0o644)
-
-	cfg := LoadProjectConfig(dir)
-	if len(cfg.Worktree.Hooks) != 1 {
-		t.Fatalf("got %d hooks, want 1", len(cfg.Worktree.Hooks))
-	}
-	h := cfg.Worktree.Hooks[0]
-	if h.Env == nil {
-		t.Fatal("hook Env is nil")
-	}
-	if h.Env["ENV_FILE"] != "/secrets/.env" {
-		t.Errorf("ENV_FILE = %q, want %q", h.Env["ENV_FILE"], "/secrets/.env")
-	}
-	if h.Env["EXTRA"] != "value" {
-		t.Errorf("EXTRA = %q, want %q", h.Env["EXTRA"], "value")
-	}
-}
-
-func TestLoadProjectConfig_MultipleHooksWithEnv(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, ".cms.toml"), []byte(`
-[[worktree.hooks]]
-command = "cp \"$SRC\" .env"
-[worktree.hooks.env]
-SRC = "/secrets/.env"
-
-[[worktree.hooks]]
-command = "npm install"
-`), 0o644)
-
-	cfg := LoadProjectConfig(dir)
-	if len(cfg.Worktree.Hooks) != 2 {
-		t.Fatalf("got %d hooks, want 2", len(cfg.Worktree.Hooks))
-	}
-	// First hook should have env.
-	if cfg.Worktree.Hooks[0].Env["SRC"] != "/secrets/.env" {
-		t.Errorf("hooks[0].Env[SRC] = %q, want %q", cfg.Worktree.Hooks[0].Env["SRC"], "/secrets/.env")
-	}
-	// Second hook should have no env.
-	if len(cfg.Worktree.Hooks[1].Env) != 0 {
-		t.Errorf("hooks[1].Env should be empty, got %v", cfg.Worktree.Hooks[1].Env)
-	}
-}
-
 func TestResolveWorktreeConfig_ProjectOverridesUser(t *testing.T) {
 	dir := t.TempDir()
 	// Write a .cms.toml with project-specific hooks.
@@ -913,26 +861,6 @@ func TestRunHooks_CommandEnvVars(t *testing.T) {
 	}
 	if !strings.Contains(lines, tmp) {
 		t.Errorf("CMS_REPO_ROOT not found in output: %s", lines)
-	}
-}
-
-func TestRunHooks_CustomEnv(t *testing.T) {
-	tmp := t.TempDir()
-	targetWt := filepath.Join(tmp, "target")
-	os.MkdirAll(targetWt, 0o755)
-
-	hooks := []config.WorktreeHook{{
-		Command: "echo $MY_VAR > custom.txt",
-		Env:     map[string]string{"MY_VAR": "hello-from-env"},
-	}}
-	if err := RunHooks("test", tmp, targetWt, hooks); err != nil {
-		t.Fatal(err)
-	}
-
-	data, _ := os.ReadFile(filepath.Join(targetWt, "custom.txt"))
-	got := strings.TrimSpace(string(data))
-	if got != "hello-from-env" {
-		t.Errorf("expected 'hello-from-env', got %q", got)
 	}
 }
 

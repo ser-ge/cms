@@ -315,51 +315,23 @@ func currentPaneWorkingDir(sessions []tmux.Session, current tmux.CurrentTarget) 
 	return ""
 }
 
-type providerSummary struct {
-	total     int
-	working   int
-	waiting   int
-	completed int
-	idle      int
-	maxCtx    int
-	hasCtx    bool
-}
-
 // buildSessionItems populates session picker items from raw session data.
 func (m *finderModel) buildSessionItems(agents map[string]agent.AgentStatus) {
 	m.sessions = make([]PickerItem, 0, len(m.sessData))
 	m.sessIdx = make([]finderEntry, 0, len(m.sessData))
-	stateOrder := m.cfg.Finder.GetStateOrder("sessions")
 	for _, sess := range m.sessData {
-		// Count agents per activity state.
-		stateCounts := map[agent.Activity]int{}
-		var activities []agent.Activity
-		for _, win := range sess.Windows {
-			for _, pane := range win.Panes {
-				if cs, ok := agents[pane.ID]; ok && cs.Running {
-					stateCounts[cs.Activity]++
-					activities = append(activities, cs.Activity)
-				}
-			}
-		}
-
 		var parts []string
 		parts = append(parts, fmt.Sprintf("%dw", len(sess.Windows)))
 		if summary := m.agentSummary(sess, agents); summary != "" {
 			parts = append(parts, summary)
-		} else if counts := renderStateCounts(stateCounts); counts != "" {
-			parts = append(parts, counts)
 		}
 		if sess.Attached {
 			parts = append(parts, "attached")
 		}
 		desc := JoinParts(parts)
 
-		// Icon color: most urgent agent activity, or dim.
-		iconStyle := dimStyle
-		if len(activities) > 0 {
-			iconStyle = ActivityStyle(MostUrgentActivity(activities, stateOrder))
-		}
+		// Icon color: green if session exists (all listed sessions are open).
+		iconStyle := activeStyle
 
 		m.sessions = append(m.sessions, PickerItem{
 			Title:       sess.Name,
@@ -375,7 +347,8 @@ func (m *finderModel) buildSessionItems(agents map[string]agent.AgentStatus) {
 	}
 }
 
-// renderStateCounts renders non-zero activity counts as styled text.
+// renderStateCounts renders non-zero activity counts as icon+number.
+// Example: "?2 · ✓1 · ●3" instead of "2 waiting · 1 completed · 3 idle".
 func renderStateCounts(counts map[agent.Activity]int) string {
 	// Order: waiting, completed, working, idle (matches default state_order).
 	order := []agent.Activity{
@@ -387,117 +360,65 @@ func renderStateCounts(counts map[agent.Activity]int) string {
 	var parts []string
 	for _, a := range order {
 		if n := counts[a]; n > 0 {
-			parts = append(parts, ActivityStyle(a).Render(fmt.Sprintf("%d %s", n, a.String())))
+			parts = append(parts, ActivityStyle(a).Render(fmt.Sprintf("%s %d", activityIndicator(a), n)))
 		}
 	}
 	return JoinParts(parts)
+}
+
+// activityIndicator returns the icon for an agent activity state.
+func activityIndicator(a agent.Activity) string {
+	switch a {
+	case agent.ActivityWaitingInput:
+		return waitingIndicator
+	case agent.ActivityCompleted:
+		return completedIndicator
+	case agent.ActivityWorking:
+		return "\u26a1"
+	case agent.ActivityIdle:
+		return idleIndicator
+	default:
+		return unknownIndicator
+	}
 }
 
 func (m finderModel) agentSummary(sess tmux.Session, agents map[string]agent.AgentStatus) string {
 	if agents == nil {
 		return ""
 	}
-	if len(m.cfg.Finder.DisplayProviderOrder) == 0 {
-		return ""
-	}
 
-	summaries := map[agent.Provider]*providerSummary{}
-
+	counts := map[agent.Activity]int{}
+	var maxCtx int
+	var hasCtx bool
 	for _, win := range sess.Windows {
 		for _, pane := range win.Panes {
 			cs, ok := agents[pane.ID]
 			if !ok || !cs.Running {
 				continue
 			}
-			if summaries[cs.Provider] == nil {
-				summaries[cs.Provider] = &providerSummary{}
-			}
-			s := summaries[cs.Provider]
-			s.total++
-			switch cs.Activity {
-			case agent.ActivityWorking:
-				s.working++
-			case agent.ActivityWaitingInput:
-				s.waiting++
-			case agent.ActivityCompleted:
-				s.completed++
-			default:
-				s.idle++
-			}
+			counts[cs.Activity]++
 			if cs.ContextSet {
-				s.maxCtx = max(s.maxCtx, cs.ContextPct)
-				s.hasCtx = true
+				maxCtx = max(maxCtx, cs.ContextPct)
+				hasCtx = true
 			}
 		}
 	}
 
-	var parts []string
-	for _, provider := range orderedProviders(m.cfg.Finder.DisplayProviderOrder) {
-		s := summaries[provider]
-		if s == nil {
-			continue
-		}
-		if s.total == 0 {
-			continue
-		}
-		parts = append(parts, renderProviderSummary(provider, *s, m.cfg.Finder))
+	if len(counts) == 0 {
+		return ""
 	}
-	return JoinParts(parts)
-}
 
-func renderProviderSummary(provider agent.Provider, s providerSummary, cfg config.FinderConfig) string {
-	label := ProviderAccent(provider).Render(provider.String())
-	var states []string
-	for _, state := range cfg.DisplayStateOrder {
-		switch state {
-		case "total":
-			states = append(states, ProviderAccent(provider).Render(fmt.Sprintf("%d", s.total)))
-		case "idle":
-			if s.idle > 0 {
-				states = append(states, idleStyle.Render(fmt.Sprintf("%s %d", idleIndicator, s.idle)))
-			}
-		case "working":
-			if s.working > 0 {
-				states = append(states, workingStyle.Render(fmt.Sprintf("\u26a1%d", s.working)))
-			}
-		case "completed":
-			if s.completed > 0 {
-				states = append(states, waitingStyle.Render(fmt.Sprintf("✓%d", s.completed)))
-			}
-		case "waiting":
-			if s.waiting > 0 {
-				states = append(states, waitingStyle.Render(fmt.Sprintf("%s%d", waitingIndicator, s.waiting)))
-			}
-		}
-	}
-	state := JoinParts(states)
-	if cfg.ShowContextPercentage && s.hasCtx {
+	state := renderStateCounts(counts)
+	if m.cfg.Finder.ShowContextPercentage && hasCtx {
+		ctx := ContextStyle(maxCtx).Render(fmt.Sprintf("%d%%", maxCtx))
 		if state == "" {
-			return fmt.Sprintf("%s %s", label, ContextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+			return ctx
 		}
-		return fmt.Sprintf("%s %s %s", label, state, ContextStyle(s.maxCtx).Render(fmt.Sprintf("%d%%", s.maxCtx)))
+		return state + " " + ctx
 	}
-	if state == "" {
-		return label
-	}
-	return fmt.Sprintf("%s %s", label, state)
+	return state
 }
 
-func orderedProviders(ordered []string) []agent.Provider {
-	if len(ordered) == 0 {
-		return nil
-	}
-	var providers []agent.Provider
-	for _, name := range ordered {
-		switch name {
-		case "claude":
-			providers = append(providers, agent.ProviderClaude)
-		case "codex":
-			providers = append(providers, agent.ProviderCodex)
-		}
-	}
-	return providers
-}
 
 func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -624,7 +545,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			}
 			iconStyle := dimStyle
 			if hasWT {
-				iconStyle = workingStyle
+				iconStyle = activeStyle
 			}
 			m.branchItems = append(m.branchItems, PickerItem{
 				Title:       branch,
@@ -653,7 +574,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			}
 			iconStyle := dimStyle
 			if alive {
-				iconStyle = workingStyle
+				iconStyle = activeStyle
 			}
 			m.markItems = append(m.markItems, PickerItem{
 				Title:       label,
@@ -968,13 +889,12 @@ func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry
 		return nil, nil
 	}
 
-	stateOrder := m.cfg.Finder.GetStateOrder("worktrees")
-
-	// For each worktree, collect agent states and whether any pane is open.
+	// For each worktree, collect agent states and git repo status.
 	type wtInfo struct {
 		hasPane     bool
+		dirty       bool // uncommitted changes in any pane
+		ahead       bool // unpushed commits in any pane
 		stateCounts map[agent.Activity]int
-		activities  []agent.Activity
 	}
 	info := make([]wtInfo, len(m.worktreeItems))
 	for i := range info {
@@ -989,9 +909,14 @@ func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry
 						continue
 					}
 					info[i].hasPane = true
+					if pane.Git.Dirty {
+						info[i].dirty = true
+					}
+					if pane.Git.Ahead > 0 {
+						info[i].ahead = true
+					}
 					if cs, ok := m.agentData[pane.ID]; ok && cs.Running {
 						info[i].stateCounts[cs.Activity]++
-						info[i].activities = append(info[i].activities, cs.Activity)
 					}
 				}
 			}
@@ -1003,25 +928,32 @@ func (m *finderModel) worktreeItemsWithOpenStatus() ([]PickerItem, []finderEntry
 	for i := range items {
 		wi := info[i]
 
+		// Merged status from scan time; suppressed if worktree has new work.
+		isMerged := strings.Contains(m.worktreeItems[i].Description, "[merged:")
+		hasDiverged := wi.dirty || wi.ahead
+
 		// Build description: agent counts + static suffix (merged status).
 		var parts []string
 		if counts := renderStateCounts(wi.stateCounts); counts != "" {
 			parts = append(parts, counts)
 		}
-		// Append the static description (e.g. "[merged: ...]") from scan time.
-		if m.worktreeItems[i].Description != "" {
+		// Show merged label only when the worktree hasn't diverged since.
+		if !hasDiverged && m.worktreeItems[i].Description != "" {
 			parts = append(parts, m.worktreeItems[i].Description)
 		}
 		items[i].Description = JoinParts(parts)
 
-		// Set icon color and Active based on agent activity.
-		if len(wi.activities) > 0 {
+		// Icon color reflects repo state:
+		//   red (waiting)  — dirty or ahead: needs attention
+		//   green (active) — clean, diverged: in flight
+		//   gray (dim)     — merged or no pane: done
+		switch {
+		case hasDiverged:
 			items[i].Active = true
-			items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees,
-				ActivityStyle(MostUrgentActivity(wi.activities, stateOrder)))
-		} else if wi.hasPane {
+			items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, waitingStyle)
+		case wi.hasPane && !isMerged:
 			items[i].Active = true
-			items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, workingStyle)
+			items[i].Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, activeStyle)
 		}
 	}
 	return items, m.worktreeIdx
@@ -1047,7 +979,7 @@ func (m *finderModel) filteredProjectItems() ([]PickerItem, []finderEntry) {
 		item := p
 		item.Active = isOpen
 		if isOpen {
-			item.Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Projects, workingStyle)
+			item.Icon = RenderSectionIcon(m.cfg.Finder.SectionIcons.Projects, activeStyle)
 		}
 		items = append(items, item)
 		entries = append(entries, m.projIdx[i])

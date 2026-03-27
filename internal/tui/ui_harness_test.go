@@ -239,38 +239,36 @@ func harnessAgents() map[string]agent.AgentStatus {
 	}
 }
 
-func TestRenderHarnessProviderSummaryIncludesZeroContext(t *testing.T) {
+func TestRenderHarnessAgentSummaryIncludesZeroContext(t *testing.T) {
 	cfg := config.DefaultConfig()
 	InitStyles(cfg)
 
-	out := renderProviderSummary(agent.ProviderCodex, providerSummary{
-		total:  1,
-		idle:   1,
-		maxCtx: 0,
-		hasCtx: true,
-	}, cfg.Finder)
-	if !strings.Contains(out, "0%") {
-		t.Fatalf("summary %q missing 0%% context", out)
+	m := finderModel{cfg: cfg}
+	out := m.agentSummary(harnessSessions()[0], harnessAgents())
+	if !strings.Contains(out, "%") {
+		t.Fatalf("summary %q missing context percentage", out)
 	}
 }
 
-func TestRenderHarnessFinderSummaryConfigVariants(t *testing.T) {
+func TestRenderHarnessAgentSummaryNoContext(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Finder.ShowContextPercentage = false
+	InitStyles(cfg)
+
+	m := finderModel{cfg: cfg}
+	out := m.agentSummary(harnessSessions()[0], harnessAgents())
+	if strings.Contains(out, "%") {
+		t.Fatalf("summary %q should not contain context when disabled", out)
+	}
+}
+
+func TestRenderHarnessAgentSummaryNoAgents(t *testing.T) {
 	cfg := config.DefaultConfig()
 	InitStyles(cfg)
 
-	totalOnly := cfg
-	totalOnly.Finder.DisplayStateOrder = []string{"total"}
-	totalOnly.Finder.ShowContextPercentage = false
-	out := renderProviderSummary(agent.ProviderCodex, providerSummary{total: 3, idle: 1, working: 1, waiting: 1, maxCtx: 37, hasCtx: true}, totalOnly.Finder)
-	if !strings.Contains(out, "3") || strings.Contains(out, "37%") {
-		t.Fatalf("total-only summary = %q, want total without context", out)
-	}
-
-	noProviders := cfg
-	noProviders.Finder.DisplayProviderOrder = []string{}
-	m := finderModel{cfg: noProviders}
-	if got := m.agentSummary(harnessSessions()[0], harnessAgents()); got != "" {
-		t.Fatalf("agentSummary with no providers = %q, want empty", got)
+	m := finderModel{cfg: cfg}
+	if got := m.agentSummary(harnessSessions()[0], nil); got != "" {
+		t.Fatalf("agentSummary with nil agents = %q, want empty", got)
 	}
 }
 

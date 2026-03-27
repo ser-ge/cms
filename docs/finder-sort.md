@@ -54,7 +54,7 @@ Active is **always computed** regardless of sort config. The `active` sort key o
 ```toml
 [finder]
 sort = ["active", "-current"]
-state_order = ["waiting", "completed", "working", "idle"]
+state_order = ["waiting", "completed", "idle", "working"]
 
 [finder.sessions]
 sort = ["recent", "-current"]
@@ -78,7 +78,7 @@ Result (nearest to input first): `docs, infra, web, api`
 
 ### Queue: `["state", "unseen", "oldest"]`
 
-Given 4 agent panes with `state_order = ["waiting", "completed", "working", "idle"]`:
+Given 4 agent panes with `state_order = ["waiting", "completed", "idle", "working"]`:
 
 | Pane | activity | unseen | since |
 |------|----------|--------|-------|

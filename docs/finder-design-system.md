@@ -50,13 +50,13 @@ categories of sections:
 The icon is colored by the agent's activity state using the same styles
 that color activity text in the dashboard:
 
-| Activity  | Style          | Typical Color |
-|-----------|----------------|---------------|
-| working   | `workingStyle` | green         |
-| waiting   | `waitingStyle` | orange        |
-| completed | `waitingStyle` | orange        |
-| idle      | `idleStyle`    | blue/dim      |
-| no agent  | `dimStyle`     | gray          |
+| Activity  | Style            | Typical Color |
+|-----------|------------------|---------------|
+| waiting   | `waitingStyle`   | red           |
+| completed | `completedStyle` | orange        |
+| working   | `workingStyle`   | yellow         |
+| idle      | `idleStyle`      | blue          |
+| no agent  | `dimStyle`       | gray          |
 
 For **aggregate sections** (sessions, windows) that may contain multiple
 agents, the icon takes the color of the **most urgent** activity. Urgency
@@ -68,22 +68,26 @@ For **queue** items specifically:
 - **Unseen** attention: activity color + **bold**
 - **Seen**: activity color + **faint**
 
-### Worktrees (aggregate, like sessions)
+### Worktrees (repo state, not agent state)
 
-Worktrees use the same icon-color-by-urgency logic as sessions and
-windows. When agents are running inside a worktree, the icon takes the
-color of the most urgent activity. When panes exist but no agents are
-running, icon uses `workingStyle`. Otherwise `dimStyle`.
+Worktree icons reflect the **git repo state** rather than agent activity
+(agent counts are shown in the description text):
 
-"Active" means: has tmux panes inside the worktree path, or has running
-agents.
+| State | Style          | Meaning                              |
+|-------|----------------|--------------------------------------|
+| Dirty/ahead | `waitingStyle` (red) | Uncommitted changes or unpushed commits |
+| Clean diverged | `activeStyle` (green) | In flight, not yet merged |
+| Merged / no pane | `dimStyle` (gray) | Done, can be cleaned up |
+
+"Active" means: has tmux panes inside the worktree path and is not merged,
+or has dirty/ahead state.
 
 ### Non-agent sections (branches, marks, projects)
 
-| State    | Style          |
-|----------|----------------|
-| Active   | `workingStyle` |
-| Inactive | `dimStyle`     |
+| State    | Style         |
+|----------|---------------|
+| Active   | `activeStyle` |
+| Inactive | `dimStyle`    |
 
 "Active" means:
 - Branches: has an associated worktree
@@ -210,6 +214,32 @@ When overlapping sections are composed:
 - Branches with worktrees are hidden when worktrees section is visible
 
 ## Config Reference
+
+### State colors (`[colors.shared]`)
+
+All colors are ANSI 256-palette values. The activity colors form an
+urgency gradient that follows `state_order` (most urgent first):
+
+```toml
+[colors.shared]
+waiting   = "1"    # red    — agent needs user input (most urgent)
+completed = "208"  # orange — agent finished work
+working   = "3"    # yellow — agent busy/unavailable
+idle      = "12"   # blue   — agent idle
+active    = "2"    # green  — non-agent "open/available" (has pane/worktree/session)
+current   = "15"   # white  — currently-focused pane highlight (dashboard)
+```
+
+Context percentage uses a separate color ramp to avoid clashing with
+activity colors:
+
+```toml
+ctx_low   = "2"    # green  — <50%
+ctx_mid   = "3"    # yellow — 50-79%
+ctx_high  = "9"    # bright red — ≥80%
+```
+
+### Section icons (`[finder.section_icons]`)
 
 ```toml
 [finder.section_icons]

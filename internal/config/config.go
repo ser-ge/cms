@@ -35,8 +35,11 @@ type SharedColorsConfig struct {
 	Current    string `toml:"current"`
 	Working    string `toml:"working"`
 	Waiting    string `toml:"waiting"`
+	Completed  string `toml:"completed"`
 	Idle       string `toml:"idle"`
+	Active     string `toml:"active"` // non-agent "open/present" indicator
 	MoveSrc    string `toml:"move_src"`
+	Match      string `toml:"match"` // fuzzy match highlight in picker
 	CtxLow     string `toml:"ctx_low"`
 	CtxMid     string `toml:"ctx_mid"`
 	CtxHigh    string `toml:"ctx_high"`
@@ -117,6 +120,7 @@ func (g GeneralConfig) ShouldRestore() bool {
 type IconsConfig struct {
 	WorkingFrames   []string `toml:"working_frames"`
 	Waiting         string   `toml:"waiting"`
+	Completed       string   `toml:"completed"`
 	Idle            string   `toml:"idle"`
 	Unknown         string   `toml:"unknown"`
 	ColumnSeparator string   `toml:"column_separator"`
@@ -163,10 +167,7 @@ type FinderConfig struct {
 	Sort       []string `toml:"sort"`
 	StateOrder []string `toml:"state_order"` // queue urgency order (used by "state" sort key)
 
-	// Display settings for agent summaries (session descriptions + queue).
-	DisplayProviderOrder  []string `toml:"display_provider_order"`
-	DisplayStateOrder     []string `toml:"display_state_order"`
-	ShowContextPercentage bool     `toml:"show_context_percentage"`
+	ShowContextPercentage bool `toml:"show_context_percentage"`
 
 	// Per-section icons (glyph identifies type, color encodes state).
 	SectionIcons SectionIconsConfig `toml:"section_icons"`
@@ -276,14 +277,17 @@ func DefaultColors() ColorsConfig {
 			Window:     "245",
 			Dim:        "240",
 			Selected:   "236",
-			Current:    "2",
-			Working:    "208",
+			Current:    "15",
+			Working:    "3",
 			Waiting:    "1",
+			Completed:  "208",
 			Idle:       "12",
+			Active:     "2",
 			MoveSrc:    "5",
+			Match:      "13",
 			CtxLow:     "2",
 			CtxMid:     "3",
-			CtxHigh:    "1",
+			CtxHigh:    "9",
 			Separator:  "240",
 			FooterRule: "240",
 		},
@@ -308,6 +312,7 @@ func DefaultIcons() IconsConfig {
 	return IconsConfig{
 		WorkingFrames:   []string{"\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"},
 		Waiting:         "?",
+		Completed:       "\u2713",
 		Idle:            "\u25CF",
 		Unknown:         "\u00B7",
 		ColumnSeparator: " \u2502 ",
@@ -331,10 +336,7 @@ func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
 		Include:    []string{"sessions", "queue", "worktrees", "projects"},
 		Sort:       []string{"active", "-current"},
-		StateOrder: []string{"waiting", "completed", "idle", "working"},
-
-		DisplayProviderOrder:  []string{"claude", "codex"},
-		DisplayStateOrder:     []string{"idle", "working", "completed", "waiting"},
+		StateOrder:            []string{"waiting", "completed", "idle", "working"},
 		ShowContextPercentage: true,
 
 		SectionIcons: SectionIconsConfig{
@@ -443,6 +445,7 @@ func (c *Config) normalize() {
 	di := DefaultIcons()
 	defaultSlice(&c.Icons.WorkingFrames, di.WorkingFrames)
 	defaultStr(&c.Icons.Waiting, di.Waiting)
+	defaultStr(&c.Icons.Completed, di.Completed)
 	defaultStr(&c.Icons.Idle, di.Idle)
 	defaultStr(&c.Icons.Unknown, di.Unknown)
 	defaultStr(&c.Icons.ColumnSeparator, di.ColumnSeparator)
@@ -456,8 +459,6 @@ func (c *Config) normalize() {
 	defaultSlice(&c.Finder.Include, df.Include)
 	defaultSlice(&c.Finder.Sort, df.Sort)
 	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
-	defaultSlice(&c.Finder.DisplayProviderOrder, df.DisplayProviderOrder)
-	defaultSlice(&c.Finder.DisplayStateOrder, df.DisplayStateOrder)
 	defaultStr(&c.Finder.SectionIcons.Sessions, df.SectionIcons.Sessions)
 	defaultStr(&c.Finder.SectionIcons.Queue, df.SectionIcons.Queue)
 	defaultStr(&c.Finder.SectionIcons.Worktrees, df.SectionIcons.Worktrees)
@@ -545,9 +546,7 @@ func DefaultConfigTOML() ([]byte, error) {
 	w(fmt.Sprintf("sort = %s\n", tomlStringArray(f.Sort)))
 	w("\n# Queue urgency order (used by \"state\" sort key).\n")
 	w(fmt.Sprintf("state_order = %s\n", tomlStringArray(f.StateOrder)))
-	w("\n# Display settings for agent summaries (session descriptions + queue).\n")
-	w(fmt.Sprintf("display_provider_order = %s\n", tomlStringArray(f.DisplayProviderOrder)))
-	w(fmt.Sprintf("display_state_order = %s\n", tomlStringArray(f.DisplayStateOrder)))
+	w("\n# Show max context percentage in aggregate session/worktree summaries.\n")
 	w(fmt.Sprintf("show_context_percentage = %v\n", f.ShowContextPercentage))
 	w("\n")
 

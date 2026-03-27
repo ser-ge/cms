@@ -116,16 +116,20 @@ sort = ["active", "-current"]
 # Queue urgency order (used by "state" sort key).
 state_order = ["waiting", "completed", "idle", "working"]
 
-# Display settings for agent summaries (session descriptions + queue).
-display_provider_order = ["claude", "codex"]
-display_state_order = ["idle", "working", "completed", "waiting"]
+# Show max context percentage in aggregate session/worktree summaries.
 show_context_percentage = true
 
-[finder.active_indicator]
-icon = "▪"                     # or "●", "◆", "→", etc.
-color = "2"                    # ANSI foreground color (green)
-# background = ""              # ANSI background color
-# bold = false
+# Section icons — each section type has a distinct glyph.
+# Icon *color* encodes item state (see "Icon colors" below).
+[finder.section_icons]
+sessions  = "S"
+queue     = "*"
+worktrees = "⎇"
+branches  = "B"
+panes     = ">"
+windows   = "W"
+marks     = "M"
+projects  = "P"
 
 # Per-section sort overrides — only specify what differs from global.
 [finder.sessions]
@@ -156,14 +160,43 @@ sort = ["state", "unseen", "oldest"]  # urgency sort
 
 Keys are evaluated left-to-right. The first key that distinguishes two items wins. Within equal items, `sort.SliceStable` preserves original order.
 
-### Active indicator
+### Icon colors
 
-Every item in the picker gets an "Active" status based on its live presence:
+Each section icon's color encodes item state. All colors are configurable
+in `[colors.shared]` (ANSI 256 palette).
+
+**Agent-bearing sections** (sessions, windows, panes, queue) use activity
+colors — icon takes the most urgent agent state per `state_order`:
+
+| Activity  | Default | Color          |
+|-----------|---------|----------------|
+| waiting   | `1`     | red            |
+| completed | `208`   | orange         |
+| working   | `3`     | yellow         |
+| idle      | `12`    | blue           |
+| no agent  | `240`   | gray           |
+
+**Worktrees** use git repo state (not agent state):
+
+| State          | Default | Color | Meaning                          |
+|----------------|---------|-------|----------------------------------|
+| dirty / ahead  | `1`     | red   | uncommitted changes or unpushed  |
+| clean diverged | `2`     | green | in flight, not yet merged        |
+| merged         | `240`   | gray  | done, can be cleaned up          |
+
+**Non-agent sections** (branches, marks, projects) use presence colors:
+
+| State    | Default | Color |
+|----------|---------|-------|
+| active   | `2`     | green |
+| inactive | `240`   | gray  |
+
+"Active" means:
 
 | Section | Active means |
 |---------|-------------|
 | sessions | attached |
-| worktrees | has tmux pane inside |
+| worktrees | has tmux pane and not merged, or dirty/ahead |
 | projects | has tmux session |
 | branches | has worktree checked out |
 | panes | has running agent |
@@ -171,7 +204,7 @@ Every item in the picker gets an "Active" status based on its live presence:
 | queue | unseen attention events |
 | marks | pane still alive |
 
-Active items always show the configured indicator icon. The `active` sort key controls whether they also sort first.
+The `active` sort key controls whether active items sort first.
 
 ### Cross-section dedup
 
@@ -323,129 +356,7 @@ command = "npm run lint"
 command = "npm test"
 ```
 
-### Hooks
-
-Hooks run as shell commands (`sh -c`) with the **working directory set to the target worktree**. Each hook receives two environment variables:
-
-| Variable | Value |
-|----------|-------|
-| `CMS_WORKTREE_PATH` | Absolute path to the target worktree |
-| `CMS_REPO_ROOT` | Absolute path to the main worktree (normal repo) or the bare repo directory (bare repo) |
-
-`go_cmd` also receives `CMS_PROMPT`.
-
-**Path resolution:** `CMS_REPO_ROOT` is resolved via `git rev-parse --git-common-dir`, so it stays stable regardless of which linked worktree you're in. What it points to depends on the repo layout:
-
-- **Normal repo** (has a `.git/` directory): `CMS_REPO_ROOT` is the main worktree — the checkout that contains `.git/`. This is the directory where your source files, `.env`, `.cms.toml`, etc. live. Linked worktrees can reference files in the main worktree via `$CMS_REPO_ROOT/...`.
-- **Bare repo** (no checkout, just the git database): `CMS_REPO_ROOT` is the bare repo directory itself (e.g., `/repos/myproject.git`). There are no source files here — all worktrees are linked worktrees. To share files like `.env` between worktrees, use an absolute path or the `env` table (see examples below).
-
-Relative paths in hook commands resolve from the target worktree (the working directory).
-
-#### Hook points
-
-| Hook | When it fires | Working directory |
-|------|--------------|-------------------|
-| `hooks` | After worktree creation | New worktree |
-| `pre_remove` | Before worktree removal | Worktree being removed |
-| `pre_commit` | Before squash commit (`land --squash`) | Current worktree |
-| `post_commit` | After squash commit | Current worktree |
-| `pre_merge` | Before merge into target | Target branch worktree |
-| `post_merge` | After merge completes | Target branch worktree |
-
-Hooks run sequentially. The first failure stops execution and aborts the operation.
-
-#### Config precedence
-
-Per-repo `.cms.toml` **replaces** (not merges) the user config for each hook type. If `.cms.toml` defines `[[worktree.hooks]]`, those completely override any post-create hooks from `~/.config/cms/config.toml`. Unset hook types fall back to the user config.
-
-#### Custom environment variables
-
-Hooks support an `env` table for passing extra variables:
-
-```toml
-[[worktree.hooks]]
-command = "cp $ENV_SOURCE .env"
-[worktree.hooks.env]
-ENV_SOURCE = "/path/to/shared/.env.development"
-```
-
-#### Examples — normal repo (main worktree + linked worktrees)
-
-In a normal repo layout, `$CMS_REPO_ROOT` points to the main worktree where your source files live. Linked worktrees can copy files directly from it.
-
-**Copy `.env` from the main worktree into every new worktree:**
-
-```toml
-# .cms.toml (at repo root) or ~/.config/cms/config.toml (global)
-[[worktree.hooks]]
-command = "cp \"$CMS_REPO_ROOT/.env\" .env"
-```
-
-Since the working directory is the new worktree, the bare `.env` target lands in the right place.
-
-**Copy multiple env files:**
-
-```toml
-[[worktree.hooks]]
-command = "cp \"$CMS_REPO_ROOT/.env\" .env"
-
-[[worktree.hooks]]
-command = "cp \"$CMS_REPO_ROOT/.env.local\" .env.local"
-```
-
-**Copy env + install dependencies:**
-
-```toml
-[[worktree.hooks]]
-command = "cp \"$CMS_REPO_ROOT/.env\" .env"
-
-[[worktree.hooks]]
-command = "npm install"
-```
-
-**Guard against missing files:**
-
-```toml
-[[worktree.hooks]]
-command = "test -f \"$CMS_REPO_ROOT/.env\" && cp \"$CMS_REPO_ROOT/.env\" .env || echo 'no .env to copy'"
-```
-
-#### Examples — bare repo (all worktrees are linked)
-
-In a bare repo layout, `$CMS_REPO_ROOT` points to the bare git directory (e.g., `/repos/myproject.git`) — there are no source files there. Use an absolute path or the `env` table to point to a shared `.env` location.
-
-**Use the `env` table to specify the env file location:**
-
-```toml
-[[worktree.hooks]]
-command = "cp \"$ENV_FILE\" .env"
-[worktree.hooks.env]
-ENV_FILE = "/home/deploy/secrets/myproject/.env"
-```
-
-**Copy from a sibling directory convention (e.g., a designated "shared" worktree):**
-
-```toml
-# If you keep a "shared" directory next to your worktrees:
-#   /work/myproject/shared/.env
-#   /work/myproject/feature-a/  (worktree)
-#   /work/myproject/feature-b/  (worktree)
-[[worktree.hooks]]
-command = "cp \"$SHARED_DIR/.env\" .env"
-[worktree.hooks.env]
-SHARED_DIR = "/work/myproject/shared"
-```
-
-**Copy from another worktree by name (works for both normal and bare repos):**
-
-```toml
-# Copy from a known worktree path.
-# Useful when one worktree (e.g., main) holds the canonical .env.
-[[worktree.hooks]]
-command = "cp \"$MAIN_WT/.env\" .env"
-[worktree.hooks.env]
-MAIN_WT = "/work/myproject/main"
-```
+Hooks and `go_cmd` receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment variables. `go_cmd` also receives `CMS_PROMPT`.
 
 ## Claude Code Hooks (optional)
 

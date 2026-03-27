@@ -550,7 +550,7 @@ func (m dashboardModel) paneLineCols(entry paneEntry) paneColumns {
 		case agent.ActivityIdle:
 			pc.indicator = idleStyle.Render(idleIndicator) + " "
 		case agent.ActivityCompleted:
-			pc.indicator = idleStyle.Render(idleIndicator) + " "
+			pc.indicator = completedStyle.Render(completedIndicator) + " "
 		default:
 			pc.indicator = dimStyle.Render(unknownIndicator) + " "
 		}
@@ -629,7 +629,7 @@ func renderAgentActivity(cs agent.AgentStatus) (string, string) {
 		style = idleStyle
 		label = "idle"
 	case agent.ActivityCompleted:
-		style = idleStyle
+		style = completedStyle
 		label = "completed"
 	default:
 		return "", ""

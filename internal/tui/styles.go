@@ -21,7 +21,9 @@ var (
 	moveSrcStyle    lipgloss.Style
 	workingStyle    lipgloss.Style
 	waitingStyle    lipgloss.Style
+	completedStyle  lipgloss.Style
 	idleStyle       lipgloss.Style
+	activeStyle     lipgloss.Style
 	helpStyle       lipgloss.Style
 	separatorStyle  lipgloss.Style
 	footerRuleStyle lipgloss.Style
@@ -34,8 +36,9 @@ var (
 	ctxHighStyle lipgloss.Style
 
 	workingFramesUI   []string
-	waitingIndicator  string
-	idleIndicator     string
+	waitingIndicator    string
+	completedIndicator  string
+	idleIndicator       string
 	unknownIndicator  string
 	columnSeparatorUI string
 	footerSeparatorUI string
@@ -64,7 +67,9 @@ func InitStyles(cfg config.Config) {
 	moveSrcStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.MoveSrc)).Bold(true)
 	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working))
 	waitingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting))
+	completedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Completed))
 	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Idle))
+	activeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Active))
 	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim)).Faint(true)
 	separatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Separator)).Faint(true)
 	footerRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.FooterRule)).Faint(true)
@@ -95,7 +100,7 @@ func InitStyles(cfg config.Config) {
 	pickerSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color(c.Shared.Selected)).Foreground(lipgloss.Color(c.Shared.Current)).Bold(true)
 	pickerNormalStyle = lipgloss.NewStyle()
 	pickerDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Window))
-	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Working)).Bold(true)
+	pickerMatchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Match)).Bold(true)
 	pickerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(c.Shared.Session))
 	pickerCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Dim))
 	pickerConfirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(c.Shared.Waiting)).Bold(true)
@@ -105,6 +110,7 @@ func InitStyles(cfg config.Config) {
 
 	workingFramesUI = append([]string(nil), cfg.Icons.WorkingFrames...)
 	waitingIndicator = cfg.Icons.Waiting
+	completedIndicator = cfg.Icons.Completed
 	idleIndicator = cfg.Icons.Idle
 	unknownIndicator = cfg.Icons.Unknown
 	columnSeparatorUI = cfg.Icons.ColumnSeparator
@@ -129,7 +135,7 @@ func ActivityStyle(a agent.Activity) lipgloss.Style {
 	case agent.ActivityWaitingInput:
 		return waitingStyle
 	case agent.ActivityCompleted:
-		return waitingStyle
+		return completedStyle
 	case agent.ActivityIdle:
 		return idleStyle
 	default:
@@ -211,7 +217,6 @@ func RenderMode(status agent.AgentStatus) string {
 }
 
 func RenderActivity(a agent.Activity) string {
-
 	switch a {
 	case agent.ActivityIdle:
 		return idleStyle.Render(agent.ActivityIdle.String())
@@ -220,9 +225,8 @@ func RenderActivity(a agent.Activity) string {
 	case agent.ActivityWaitingInput:
 		return waitingStyle.Render(agent.ActivityWaitingInput.String())
 	case agent.ActivityCompleted:
-		return waitingStyle.Render(agent.ActivityCompleted.String())
+		return completedStyle.Render(agent.ActivityCompleted.String())
 	default:
 		return "unknown"
 	}
-
 }

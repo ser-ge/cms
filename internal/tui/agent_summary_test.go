@@ -32,10 +32,13 @@ func TestAgentSummaryMixedProviders(t *testing.T) {
 
 	m := finderModel{cfg: config.DefaultConfig()}
 	summary := m.agentSummary(sess, agents)
-	if !strings.Contains(summary, "claude") {
-		t.Fatalf("summary %q missing claude label", summary)
+
+	// Should contain icon+count pairs, not provider labels.
+	if strings.Contains(summary, "claude") || strings.Contains(summary, "codex") {
+		t.Fatalf("summary %q should not contain provider labels", summary)
 	}
-	if !strings.Contains(summary, "codex") {
-		t.Fatalf("summary %q missing codex label", summary)
+	// Should have waiting (1), working (1), idle (1) icons.
+	if !strings.Contains(summary, "1") {
+		t.Fatalf("summary %q missing count", summary)
 	}
 }
