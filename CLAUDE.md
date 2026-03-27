@@ -81,6 +81,7 @@ internal/
   attention/
     queue.go                      Queue, Event, Reason (panes needing user attention)
     persist.go                    PersistActivitySince, LoadPersisted (tmux pane options)
+    persisted.go                  LoadPersistedExported (exported wrapper for bootstrap)
 
   hook/
     hook.go                       Kind, Event, Listener (Claude Code hook socket)
@@ -91,6 +92,11 @@ internal/
 
   session/
     session.go                    Create, Kill, Switch, SmartSwitch, SwitchToPane, OpenProject
+    snapshot.go                   SaveSnapshot, RestoreSnapshot (tmux session persistence)
+    template.go                   Session templates for project types
+
+  resume/
+    store.go                      SaveClaudeSession, LoadClaudeSession (agent resume state)
 
   project/
     project.go                    Scan, Project (git repo discovery from search paths)
@@ -99,6 +105,11 @@ internal/
     worktree.go                   CreateWorktree, SwitchWorktree, GoWorktree, RemoveWorktree, DeleteBranch, hooks
     cmd.go                        RunCmd, RunSwitch, RunGo, RunRemove, RunList (worktree CLI dispatch)
     land.go                       Land, squashCommits, resolveBranchesAndWorktrees, commit msg gen
+
+  trace/
+    types.go                      Event types for JSONL trace recording
+    record.go                     Recorder interface, JSONLRecorder, NopRecorder
+    jsonl_test.go                 JSONL serialization tests
 
   watcher/
     events.go                     StateMsg, AgentUpdateMsg, FocusChangedMsg, GitUpdateMsg
@@ -119,7 +130,14 @@ internal/
 
 scripts/
   create-test-repos.sh            Generate bare-repo worktree layouts for testing
-  harness.sh                      Integration harness: isolated tmux + config + test repos
+  harness.sh                      Integration harness: randomised isolation, per-run tmux server
+
+docs/
+  finder-sort.md                  Worked examples for finder sort key config
+  finder-design-system.md         Visual design tokens and style guide
+  restore.md                      Session restore design
+  agents/
+    harness.md                    Agent harness architecture, trace recording, test catalog
 ```
 
 ## Architecture Layers
