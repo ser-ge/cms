@@ -104,7 +104,7 @@ internal/
   worktree/
     worktree.go                   CreateWorktree, SwitchWorktree, GoWorktree, RemoveWorktree, DeleteBranch, hooks
     cmd.go                        RunCmd, RunSwitch, RunGo, RunRemove, RunList (worktree CLI dispatch)
-    land.go                       Land, squashCommits, resolveBranchesAndWorktrees, commit msg gen
+    land.go                       Land, LandOpts, landMergeAndCleanup, squashCommits, resolveBranchesAndWorktrees, commit msg gen
 
   trace/
     types.go                      Event types for JSONL trace recording

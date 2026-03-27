@@ -234,12 +234,26 @@ The prompt (arg with spaces) is passed to the command configured in `[worktree].
 
 ### `cms land` — land current branch into target
 
-Run from inside a feature worktree. Squashes (optional), rebases, merges, and cleans up. When the target branch is checked out in another worktree, the merge runs inside that worktree directly.
+Run from inside a feature worktree. Rebases onto the target branch, fast-forward merges, and cleans up the worktree, branch, and tmux window. The full pipeline:
+
+1. Stage uncommitted changes (only with `--squash`)
+2. Run `pre_commit` hooks
+3. Squash commits into one (only with `--squash`)
+4. Run `post_commit` hooks
+5. Rebase onto target
+6. Run `pre_merge` hooks (pre-land)
+7. Fast-forward merge into target (falls back to merge commit if ff fails)
+8. Run `post_merge` hooks (post-land)
+9. Remove worktree + branch + tmux window (unless `--keep`)
+
+When the target branch is checked out in another worktree, the merge runs inside that worktree directly (no checkout needed). After landing, pauses for confirmation before cleanup so you can review the result.
 
 ```bash
 cms land                       # land into default branch, ff-only
+cms land main                  # land into explicit target
 cms land --squash              # squash all commits into one
 cms land --squash -m "message" # squash with explicit commit message
+cms land --squash --no-edit    # squash, skip editor for commit message
 cms land --no-ff               # create a merge commit
 cms land --keep                # don't remove worktree after landing
 cms land --abort               # abort an in-progress rebase
@@ -247,9 +261,13 @@ cms land --continue            # resume after resolving conflicts
 cms land --autostash           # stash dirty target worktree without prompting
 ```
 
+Target defaults to `[worktree].base_branch`, then auto-detected default branch (origin/HEAD → main → master). Supports symbols: `^` (default branch), `-` (previous branch), `@` (current).
+
 If the target worktree has uncommitted changes, `cms land` will prompt to stash them before merging and restore them after. Use `--autostash` to skip the prompt. If the stash pop conflicts after merge, the stash is preserved (see `git stash list` in the target worktree).
 
-On `--continue`, branch resolution is deferred until after the rebase finishes (during a conflicted rebase, HEAD is detached). This ensures the merge step targets the correct branch.
+**Conflict recovery:** On rebase conflicts, land exits with instructions. Fix conflicts, `git rebase --continue`, then `cms land --continue` to finish the merge and cleanup. Or `cms land --abort` to cancel. On `--continue`, branch resolution is deferred until after the rebase finishes (during a conflicted rebase, HEAD is detached), ensuring the merge step targets the correct branch.
+
+**LLM commit messages:** With `--squash` and `[worktree].commit_cmd` configured, the diff is piped to the command for auto-generated commit messages. Falls back to a default message on failure.
 
 ### `cms rm` — remove worktree
 
