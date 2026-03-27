@@ -54,8 +54,9 @@ type ProviderColorsConfig struct {
 
 // SearchPath defines a directory to scan for projects.
 type SearchPath struct {
-	Path     string `toml:"path"`
-	MaxDepth int    `toml:"max_depth"`
+	Path       string   `toml:"path"`
+	MaxDepth   int      `toml:"max_depth"`
+	Exclusions []string `toml:"exclusions"`
 }
 
 type GeneralConfig struct {
@@ -63,7 +64,6 @@ type GeneralConfig struct {
 	SwitchPriority   []string     `toml:"switch_priority"`
 	EscapeChord      string       `toml:"escape_chord"`
 	EscapeChordMs    int          `toml:"escape_chord_ms"`
-	Exclusions       []string     `toml:"exclusions"`
 	SearchSubmodules bool         `toml:"search_submodules"`
 	SearchPaths      []SearchPath `toml:"search_paths"`
 
@@ -359,7 +359,6 @@ func DefaultGeneralConfig() GeneralConfig {
 		SwitchPriority:   []string{"waiting", "completed", "idle", "default", "working"},
 		EscapeChord:      "jj",
 		EscapeChordMs:    250,
-		Exclusions:       []string{},
 		SearchSubmodules: false,
 		SearchPaths: []SearchPath{
 			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
@@ -507,8 +506,6 @@ func DefaultConfigTOML() ([]byte, error) {
 	w("# Two-key chord to exit insert mode in the TUI.\n")
 	w(fmt.Sprintf("escape_chord = %q\n", g.EscapeChord))
 	w(fmt.Sprintf("escape_chord_ms = %d\n", g.EscapeChordMs))
-	w("# Session names to hide from the picker.\n")
-	w(fmt.Sprintf("exclusions = %s\n", tomlStringArray(g.Exclusions)))
 	w("# Scan git submodules when discovering projects.\n")
 	w(fmt.Sprintf("search_submodules = %v\n", g.SearchSubmodules))
 	w("# Restore tmux session snapshots when opening a project.\n")
@@ -526,6 +523,9 @@ func DefaultConfigTOML() ([]byte, error) {
 		w("[[general.search_paths]]\n")
 		w(fmt.Sprintf("path = %q\n", abbreviateHome(sp.Path)))
 		w(fmt.Sprintf("max_depth = %d\n", sp.MaxDepth))
+		if len(sp.Exclusions) > 0 {
+			w(fmt.Sprintf("exclusions = %s\n", tomlStringArray(sp.Exclusions)))
+		}
 	}
 
 	w("\n# Per-transition smoothing delays (ms). Suppresses flicker from rapid state changes.\n")

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/serge/cms/internal/config"
 	"github.com/serge/cms/internal/git"
@@ -17,13 +18,8 @@ type Project struct {
 }
 
 // Scan walks the configured search paths and returns all git repositories found.
-// Uses BFS with depth limiting, respects exclusion list.
+// Uses BFS with depth limiting, respects per-path exclusion lists.
 func Scan(cfg config.Config) []Project {
-	excluded := make(map[string]bool, len(cfg.General.Exclusions))
-	for _, e := range cfg.General.Exclusions {
-		excluded[e] = true
-	}
-
 	type searchEntry struct {
 		path  string
 		depth int
@@ -33,6 +29,7 @@ func Scan(cfg config.Config) []Project {
 	seen := map[string]bool{}
 
 	for _, sp := range cfg.General.SearchPaths {
+		excluded := buildExclusionSet(sp.Exclusions)
 		queue := []searchEntry{{path: sp.Path, depth: sp.MaxDepth}}
 
 		for len(queue) > 0 {
@@ -149,6 +146,21 @@ func deduplicateNames(projects []Project) {
 			}
 		}
 	}
+}
+
+// buildExclusionSet normalizes exclusion patterns into a set of directory
+// basenames. Trailing glob suffixes (/* or /**) are stripped so that
+// "archive", "archive/*", and "archive/**" all exclude the same directory.
+func buildExclusionSet(patterns []string) map[string]bool {
+	m := make(map[string]bool, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSuffix(p, "/**")
+		p = strings.TrimSuffix(p, "/*")
+		if p != "" {
+			m[p] = true
+		}
+	}
+	return m
 }
 
 func splitPath(path string) []string {

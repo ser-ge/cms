@@ -43,6 +43,48 @@ func TestScanIncludesSubmodulesWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestScanRespectsExclusions(t *testing.T) {
+	root := t.TempDir()
+
+	// visible/repo and archive/hidden — both are git repos.
+	mustMkdirAll(t, filepath.Join(root, "visible", ".git"))
+	mustMkdirAll(t, filepath.Join(root, "archive", "hidden", ".git"))
+
+	cfg := config.DefaultConfig()
+	cfg.General.SearchPaths = []config.SearchPath{{
+		Path:       root,
+		MaxDepth:   3,
+		Exclusions: []string{"archive"},
+	}}
+
+	projects := Scan(cfg)
+	if !containsProjectPath(projects, filepath.Join(root, "visible")) {
+		t.Fatalf("visible repo should be discovered")
+	}
+	if containsProjectPath(projects, filepath.Join(root, "archive", "hidden")) {
+		t.Fatalf("repo under excluded dir should not be discovered")
+	}
+}
+
+func TestScanExclusionsNormalizeGlobSuffix(t *testing.T) {
+	root := t.TempDir()
+	mustMkdirAll(t, filepath.Join(root, "archive", "hidden", ".git"))
+
+	for _, pattern := range []string{"archive", "archive/*", "archive/**"} {
+		cfg := config.DefaultConfig()
+		cfg.General.SearchPaths = []config.SearchPath{{
+			Path:       root,
+			MaxDepth:   3,
+			Exclusions: []string{pattern},
+		}}
+
+		projects := Scan(cfg)
+		if containsProjectPath(projects, filepath.Join(root, "archive", "hidden")) {
+			t.Errorf("pattern %q should exclude archive/hidden", pattern)
+		}
+	}
+}
+
 func containsProjectPath(projects []Project, path string) bool {
 	for _, p := range projects {
 		if p.Path == path {
