@@ -323,7 +323,94 @@ command = "npm run lint"
 command = "npm test"
 ```
 
-Hooks and `go_cmd` receive `CMS_WORKTREE_PATH` and `CMS_REPO_ROOT` environment variables. `go_cmd` also receives `CMS_PROMPT`.
+### Hooks
+
+Hooks run as shell commands (`sh -c`) with the **working directory set to the target worktree**. Each hook receives two environment variables:
+
+| Variable | Value |
+|----------|-------|
+| `CMS_WORKTREE_PATH` | Absolute path to the target worktree |
+| `CMS_REPO_ROOT` | Absolute path to the main worktree root (never a linked worktree) |
+
+`go_cmd` also receives `CMS_PROMPT`.
+
+**Path resolution:** `CMS_REPO_ROOT` always points to the canonical repo root — the directory containing `.git/` — regardless of which worktree you're in. This is resolved via `git rev-parse --git-common-dir`, so it stays stable even when hooks fire from a linked worktree. Relative paths in hook commands resolve from the target worktree (the working directory).
+
+#### Hook points
+
+| Hook | When it fires | Working directory |
+|------|--------------|-------------------|
+| `hooks` | After worktree creation | New worktree |
+| `pre_remove` | Before worktree removal | Worktree being removed |
+| `pre_commit` | Before squash commit (`land --squash`) | Current worktree |
+| `post_commit` | After squash commit | Current worktree |
+| `pre_merge` | Before merge into target | Target branch worktree |
+| `post_merge` | After merge completes | Target branch worktree |
+
+Hooks run sequentially. The first failure stops execution and aborts the operation.
+
+#### Config precedence
+
+Per-repo `.cms.toml` **replaces** (not merges) the user config for each hook type. If `.cms.toml` defines `[[worktree.hooks]]`, those completely override any post-create hooks from `~/.config/cms/config.toml`. Unset hook types fall back to the user config.
+
+#### Custom environment variables
+
+Hooks support an `env` table for passing extra variables:
+
+```toml
+[[worktree.hooks]]
+command = "cp $ENV_SOURCE .env"
+[worktree.hooks.env]
+ENV_SOURCE = "/path/to/shared/.env.development"
+```
+
+#### Examples
+
+**Copy an `.env` file from the main worktree into every new worktree:**
+
+```toml
+# .cms.toml (per-repo) or ~/.config/cms/config.toml (global)
+[[worktree.hooks]]
+command = "cp \"$CMS_REPO_ROOT/.env\" .env"
+```
+
+Since the working directory is the new worktree, the bare `.env` target lands in the right place. `$CMS_REPO_ROOT` points to the main worktree where the source `.env` lives.
+
+**Copy a project-specific `.env` from a shared location:**
+
+```toml
+[[worktree.hooks]]
+command = "cp \"$CMS_REPO_ROOT/.env.local\" .env.local"
+
+[[worktree.hooks]]
+command = "cp \"$CMS_REPO_ROOT/.env\" .env"
+```
+
+**Use the `env` table to keep paths out of the command string:**
+
+```toml
+[[worktree.hooks]]
+command = "cp \"$SECRETS_DIR/.env\" .env && npm install"
+[worktree.hooks.env]
+SECRETS_DIR = "/Users/shared/secrets/myproject"
+```
+
+**Install dependencies + copy env in one shot:**
+
+```toml
+[[worktree.hooks]]
+command = "cp \"$CMS_REPO_ROOT/.env\" .env"
+
+[[worktree.hooks]]
+command = "npm install"
+```
+
+**Guard against missing files:**
+
+```toml
+[[worktree.hooks]]
+command = "test -f \"$CMS_REPO_ROOT/.env\" && cp \"$CMS_REPO_ROOT/.env\" .env || echo 'no .env to copy'"
+```
 
 ## Claude Code Hooks (optional)
 
