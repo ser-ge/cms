@@ -5,7 +5,6 @@
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat)](LICENSE)
 
 
-"There are many like it, but this one is mine."
 
 `cms` is an agent-aware tmux session manager based on [tms](https://github.com/jrmoulton/tmux-sessionizer) which in turn is based on ThePrimeagen's [tmux-sessionizer](https://github.com/ThePrimeagen/.dotfiles/blob/master/bin/.local/scripts/tmux-sessionizer).
 
@@ -20,6 +19,7 @@ picker for years, vim brain kept trying and failing to be normal. The project
 spiralled.
 
 
+"There are many like it, but this one is mine."
 ## Quickstart
 
 ### The finder
