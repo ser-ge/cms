@@ -64,7 +64,8 @@ type Watcher struct {
 	smoothingTarget map[string]agent.Activity // paneID -> target activity when timer fires
 
 	// Lifecycle.
-	stopCh chan struct{}
+	bootstrapped bool // true after initState() has run (BootstrapSync or bootstrap)
+	stopCh       chan struct{}
 
 	recorder trace.Recorder
 }
@@ -285,15 +286,20 @@ func (w *Watcher) initState() ([]tmux.Session, map[string]agent.AgentStatus, tmu
 // If tmux isn't running yet, it sends an empty StateMsg so the TUI can still
 // show the finder (projects from disk). Control mode is started if available.
 func (w *Watcher) bootstrap() {
-	sessions, agents, current, ok := w.initState()
-	if !ok {
-		w.send(StateMsg{})
-		return
+	if w.bootstrapped {
+		// BootstrapSync already ran — use cached state, skip redundant FetchState.
+		sessions, agents, current := w.CachedState()
+		w.send(StateMsg{Sessions: sessions, Agents: agents, Current: current})
+	} else {
+		sessions, agents, current, ok := w.initState()
+		if !ok {
+			w.send(StateMsg{})
+			return
+		}
+		snapshotID := w.recorder.RecordTmuxState("bootstrap", sessions, current)
+		w.recorder.RecordIngress(trace.IngressBootstrapState, trace.BootstrapStatePayload{SnapshotID: snapshotID})
+		w.send(StateMsg{Sessions: sessions, Agents: agents, Current: current})
 	}
-
-	snapshotID := w.recorder.RecordTmuxState("bootstrap", sessions, current)
-	w.recorder.RecordIngress(trace.IngressBootstrapState, trace.BootstrapStatePayload{SnapshotID: snapshotID})
-	w.send(StateMsg{Sessions: sessions, Agents: agents, Current: current})
 
 	// Start control mode for event-driven updates.
 	ctrl, err := tmux.NewClient()
@@ -322,6 +328,7 @@ func (w *Watcher) bootstrap() {
 // event loops. Use for one-shot plain-text output.
 func (w *Watcher) BootstrapSync() {
 	w.initState()
+	w.bootstrapped = true
 }
 
 // runEventLoop reads control mode events and dispatches them.

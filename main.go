@@ -218,6 +218,7 @@ func main() {
 
 	w := watcher.New()
 	w.ApplyConfig(cfg.General)
+	w.BootstrapSync() // pre-fill CachedState so finder has sessions+agents on first render
 	m := tui.NewRootModel(initial, sections, cfg, w)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	w.Start(p.Send)

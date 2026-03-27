@@ -149,6 +149,21 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, wi
 		m.hasWindow = true
 	}
 
+	// When watcher has cached state (BootstrapSync was called), run cheap
+	// scans synchronously so they appear on first render with no pop-in.
+	// Worktrees and branches involve expensive git operations (merge-status
+	// checks) and remain async to avoid blocking the TUI.
+	if m.hasSess && len(m.sessData) > 0 {
+		if want["projects"] && !m.hasProj {
+			msg := projectsScannedMsg{project.Scan(cfg)}
+			m, _ = m.Update(msg)
+		}
+		if want["marks"] && !m.hasMark {
+			msg := loadMarksCmd(m.sessData)()
+			m, _ = m.Update(msg)
+		}
+	}
+
 	if m.hasSess || m.hasProj || m.hasQueue || m.hasWorktree || m.hasBranch || m.hasPane || m.hasMark {
 		m.rebuildPicker()
 	}
@@ -169,16 +184,17 @@ func (m finderModel) Init() tea.Cmd {
 	want := sectionSet(m.sections)
 	var cmds []tea.Cmd
 
-	if want["projects"] {
+	// Skip scans already completed synchronously in newFinderModel.
+	if want["projects"] && !m.hasProj {
 		cmds = append(cmds, scanProjectsCmd(m.cfg))
 	}
-	if want["worktrees"] || want["branches"] {
+	if (want["worktrees"] || want["branches"]) && !m.hasWorktree {
 		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher))
 	}
-	if want["branches"] {
+	if want["branches"] && !m.hasBranch {
 		cmds = append(cmds, scanBranchesCmd(m.sessData, m.watcher))
 	}
-	if want["marks"] {
+	if want["marks"] && !m.hasMark {
 		cmds = append(cmds, loadMarksCmd(m.sessData))
 	}
 
