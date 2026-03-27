@@ -11,6 +11,8 @@
 
 Fuzzy switcher for projects (repos), worktrees, and running agents.
 
+![cms demo](demo.gif)
+
 This project started because I've been (unsuccessfully) hitting "jj" to esc in the tms fzf
 picker for years, vim brain kept trying and failing to be normal. The project
 spiralled.
@@ -36,7 +38,6 @@ Flags: `-s` sessions, `-p` projects, `-a` agents, `-m` marks, `-w` worktrees,
 `-b` branches, `-W` windows, `-P` panes.  Composable: the order in which the sections
 stack in the finder is set by the order the flags are passed.
 
-![cms demo](demo.gif)
 
 ### "Open and hit enter" always useful
 
@@ -92,7 +93,6 @@ cms land --no-squash  # preserve individual commits
 
 One command: squash → rebase onto target → merge → cleanup worktree and branch. Conflicts? Fix, `git rebase --continue`, `cms land --continue`. Backup refs are saved automatically.
 
-The lifecycle: **go → work → land → gone.**
 
 ---
 
