@@ -289,7 +289,11 @@ func completionFish() string {
 
 	// Dynamic mark label completion for jump.
 	b.WriteString("# Dynamic mark completion for jump.\n")
-	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from jump' -a '(test -f ~/.config/cms/marks.json; and string match -r '\"(\\w+)\"' < ~/.config/cms/marks.json | string replace -r '\"(\\w+)\".*' '$1')'\n")
+	b.WriteString("function __cms_mark_labels\n")
+	b.WriteString("    test -f ~/.config/cms/marks.json; or return\n")
+	b.WriteString("    string replace -rf '^[^\"]*\"(\\w+)\"\\s*:.*' '$1' < ~/.config/cms/marks.json\n")
+	b.WriteString("end\n")
+	b.WriteString("complete -c cms -n '__fish_seen_subcommand_from jump' -a '(__cms_mark_labels)'\n")
 	b.WriteString("\n")
 
 	// Flags for specific commands.
