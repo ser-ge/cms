@@ -108,12 +108,6 @@ func Land(args []string) error {
 	wtCfg := &resolved
 	mainWt, _ := FindMainWorktree(root)
 
-	// Determine current branch (use cwd, not root -- root may be a bare repo).
-	currentBranch, err := git.Cmd(cwd, "rev-parse", "--abbrev-ref", "HEAD")
-	if err != nil {
-		return fmt.Errorf("cannot determine current branch: %w", err)
-	}
-
 	// Determine target branch.
 	var target string
 	if len(positional) > 0 {
@@ -132,36 +126,13 @@ func Land(args []string) error {
 		}
 	}
 
-	if currentBranch == target {
-		return fmt.Errorf("already on target branch %s, nothing to land", target)
-	}
-
 	// Verify target branch exists.
 	if _, err := git.Cmd(root, "show-ref", "--verify", "--quiet", "refs/heads/"+target); err != nil {
 		return fmt.Errorf("target branch %q does not exist", target)
 	}
 
-	// Find worktree info.
-	wts, err := git.ListWorktrees(root)
-	if err != nil {
-		return err
-	}
-	var currentWt *git.Worktree
-	for i := range wts {
-		if wts[i].Branch == currentBranch {
-			currentWt = &wts[i]
-			break
-		}
-	}
-	var targetWt *git.Worktree
-	for i := range wts {
-		if wts[i].Branch == target {
-			targetWt = &wts[i]
-			break
-		}
-	}
-
-	// Handle --continue: resume from step 6 (rebase --continue, then merge).
+	// Handle --continue: finish the rebase first (HEAD is detached during
+	// a conflicted rebase, so branch resolution must happen after).
 	if opts.Continue {
 		if isRebaseInProgress(cwd) {
 			fmt.Fprintf(os.Stderr, "%s rebase\n", green("continuing"))
@@ -171,7 +142,22 @@ func Land(args []string) error {
 		} else {
 			fmt.Fprintf(os.Stderr, "%s rebase already completed\n", dim("skipping"))
 		}
+		// Rebase is done — HEAD is back on the branch. Resolve now.
+		currentBranch, currentWt, targetWt, err := resolveBranchesAndWorktrees(cwd, root, target)
+		if err != nil {
+			return err
+		}
 		return landMergeAndCleanup(cwd, root, currentBranch, target, mainWt, currentWt, targetWt, opts, wtCfg)
+	}
+
+	// Normal path: resolve branch (HEAD is on a branch, not detached).
+	currentBranch, currentWt, targetWt, err := resolveBranchesAndWorktrees(cwd, root, target)
+	if err != nil {
+		return err
+	}
+
+	if currentBranch == target {
+		return fmt.Errorf("already on target branch %s, nothing to land", target)
 	}
 
 	fmt.Fprintf(os.Stderr, "%s %s into %s\n", green("landing"), bold(currentBranch), bold(target))
@@ -330,6 +316,29 @@ func isRebaseInProgress(dir string) bool {
 		}
 	}
 	return false
+}
+
+// resolveBranchesAndWorktrees determines the current branch and looks up
+// worktree entries for both the current and target branches.
+func resolveBranchesAndWorktrees(cwd, root, target string) (string, *git.Worktree, *git.Worktree, error) {
+	currentBranch, err := git.Cmd(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("cannot determine current branch: %w", err)
+	}
+	wts, err := git.ListWorktrees(root)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	var currentWt, targetWt *git.Worktree
+	for i := range wts {
+		switch wts[i].Branch {
+		case currentBranch:
+			currentWt = &wts[i]
+		case target:
+			targetWt = &wts[i]
+		}
+	}
+	return currentBranch, currentWt, targetWt, nil
 }
 
 // squashCommits squashes all branch commits into a single commit.

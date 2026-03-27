@@ -234,7 +234,7 @@ The prompt (arg with spaces) is passed to the command configured in `[worktree].
 
 ### `cms land` — land current branch into target
 
-Run from inside a feature worktree. Squashes (optional), rebases, merges, and cleans up.
+Run from inside a feature worktree. Squashes (optional), rebases, merges, and cleans up. When the target branch is checked out in another worktree, the merge runs inside that worktree directly.
 
 ```bash
 cms land                       # land into default branch, ff-only
@@ -245,6 +245,8 @@ cms land --keep                # don't remove worktree after landing
 cms land --abort               # abort an in-progress rebase
 cms land --continue            # resume after resolving conflicts
 ```
+
+On `--continue`, branch resolution is deferred until after the rebase finishes (during a conflicted rebase, HEAD is detached). This ensures the merge step targets the correct branch.
 
 ### `cms rm` — remove worktree
 
