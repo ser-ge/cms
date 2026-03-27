@@ -231,7 +231,7 @@ func (w *Watcher) HookStats() (activeCount int, listening bool) {
 }
 
 // initState fetches tmux state, detects agents, restores persisted timestamps,
-// seeds the attention queue, and updates the watcher cache. Returns false if
+// seeds the agents queue, and updates the watcher cache. Returns false if
 // tmux is unavailable.
 func (w *Watcher) initState() ([]tmux.Session, map[string]agent.AgentStatus, tmux.CurrentTarget, bool) {
 	sessions, pt, err := tmux.FetchState()

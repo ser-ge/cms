@@ -140,7 +140,7 @@ type DashboardConfig struct {
 // An empty Sort list inherits from FinderConfig.Sort.
 type PickerSortConfig struct {
 	Sort       []string `toml:"sort"`        // sort key priority list (e.g. ["recent", "-current"])
-	StateOrder []string `toml:"state_order"` // queue urgency order (e.g. ["waiting","completed","working","idle"])
+	StateOrder []string `toml:"state_order"` // agents queue urgency order (e.g. ["waiting","completed","working","idle"])
 }
 
 // SectionIconsConfig holds the icon glyph for each finder section.
@@ -148,7 +148,7 @@ type PickerSortConfig struct {
 // sections, active/dim for others).
 type SectionIconsConfig struct {
 	Sessions  string `toml:"sessions"`  // default "S"
-	Queue     string `toml:"queue"`     // default "*"
+	AgentsQueue string `toml:"agents_queue"` // default "*"
 	Worktrees string `toml:"worktrees"` // default "⎇"
 	Branches  string `toml:"branches"`  // default "B"
 	Panes     string `toml:"panes"`     // default ">"
@@ -166,7 +166,7 @@ type FinderConfig struct {
 	// Prefix "-" demotes (e.g. "-current" pushes current item to bottom).
 	// Valid keys: active, current, recent, state, unseen, oldest, newest.
 	Sort       []string `toml:"sort"`
-	StateOrder []string `toml:"state_order"` // queue urgency order (used by "state" sort key)
+	StateOrder []string `toml:"state_order"` // agents queue urgency order (used by "state" sort key)
 
 	ShowContextPercentage bool `toml:"show_context_percentage"`
 
@@ -176,7 +176,7 @@ type FinderConfig struct {
 	// Per-section sort overrides.
 	Sessions  PickerSortConfig `toml:"sessions"`
 	Projects  PickerSortConfig `toml:"projects"`
-	Queue     PickerSortConfig `toml:"queue"`
+	AgentsQueue PickerSortConfig `toml:"agents_queue"`
 	Worktrees PickerSortConfig `toml:"worktrees"`
 	Branches  PickerSortConfig `toml:"branches"`
 	Windows   PickerSortConfig `toml:"windows"`
@@ -193,7 +193,7 @@ func (f FinderConfig) SortKeys(section string) []string {
 	return f.Sort
 }
 
-// GetStateOrder returns the queue urgency sort order for the given section.
+// GetStateOrder returns the agents queue urgency sort order for the given section.
 func (f FinderConfig) GetStateOrder(section string) []string {
 	if psc := f.sectionConfig(section); len(psc.StateOrder) > 0 {
 		return psc.StateOrder
@@ -207,8 +207,8 @@ func (f FinderConfig) sectionConfig(pickerType string) PickerSortConfig {
 		return f.Sessions
 	case "projects":
 		return f.Projects
-	case "queue":
-		return f.Queue
+	case "agents":
+		return f.AgentsQueue
 	case "worktrees":
 		return f.Worktrees
 	case "branches":
@@ -336,14 +336,14 @@ func boolPtr(b bool) *bool { return &b }
 
 func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
-		Include:    []string{"sessions", "queue", "worktrees", "projects"},
+		Include:    []string{"sessions", "agents", "worktrees", "projects"},
 		Sort:       []string{"active", "-current"},
 		StateOrder:            []string{"waiting", "completed", "idle", "working"},
 		ShowContextPercentage: true,
 
 		SectionIcons: SectionIconsConfig{
 			Sessions:  "S",
-			Queue:     "*",
+			AgentsQueue: "*",
 			Worktrees: "\u2387", // ⎇
 			Branches:  "B",
 			Panes:     ">",
@@ -352,7 +352,7 @@ func DefaultFinderConfig() FinderConfig {
 			Projects:  "P",
 		},
 		Sessions: PickerSortConfig{Sort: []string{"recent", "-current"}},
-		Queue:    PickerSortConfig{Sort: []string{"state", "unseen", "oldest"}},
+		AgentsQueue: PickerSortConfig{Sort: []string{"state", "unseen", "oldest"}},
 	}
 }
 
@@ -463,7 +463,7 @@ func (c *Config) normalize() {
 	defaultSlice(&c.Finder.Sort, df.Sort)
 	defaultSlice(&c.Finder.StateOrder, df.StateOrder)
 	defaultStr(&c.Finder.SectionIcons.Sessions, df.SectionIcons.Sessions)
-	defaultStr(&c.Finder.SectionIcons.Queue, df.SectionIcons.Queue)
+	defaultStr(&c.Finder.SectionIcons.AgentsQueue, df.SectionIcons.AgentsQueue)
 	defaultStr(&c.Finder.SectionIcons.Worktrees, df.SectionIcons.Worktrees)
 	defaultStr(&c.Finder.SectionIcons.Branches, df.SectionIcons.Branches)
 	defaultStr(&c.Finder.SectionIcons.Panes, df.SectionIcons.Panes)
@@ -547,7 +547,7 @@ func DefaultConfigTOML() ([]byte, error) {
 	w("# Keys evaluated left-to-right; first difference wins.\n")
 	w("# Prefix \"-\" demotes (pushes matching items to bottom).\n")
 	w(fmt.Sprintf("sort = %s\n", tomlStringArray(f.Sort)))
-	w("\n# Queue urgency order (used by \"state\" sort key).\n")
+	w("\n# Agents queue urgency order (used by \"state\" sort key).\n")
 	w(fmt.Sprintf("state_order = %s\n", tomlStringArray(f.StateOrder)))
 	w("\n# Show max context percentage in aggregate session/worktree summaries.\n")
 	w(fmt.Sprintf("show_context_percentage = %v\n", f.ShowContextPercentage))
@@ -555,7 +555,7 @@ func DefaultConfigTOML() ([]byte, error) {
 
 	w("[finder.section_icons]\n")
 	w(fmt.Sprintf("sessions = %q\n", f.SectionIcons.Sessions))
-	w(fmt.Sprintf("queue = %q\n", f.SectionIcons.Queue))
+	w(fmt.Sprintf("agents_queue = %q\n", f.SectionIcons.AgentsQueue))
 	w(fmt.Sprintf("worktrees = %q\n", f.SectionIcons.Worktrees))
 	w(fmt.Sprintf("branches = %q\n", f.SectionIcons.Branches))
 	w(fmt.Sprintf("panes = %q\n", f.SectionIcons.Panes))
@@ -569,8 +569,8 @@ func DefaultConfigTOML() ([]byte, error) {
 	w(fmt.Sprintf("sort = %s  # last-visited first, attached last\n", tomlStringArray(f.Sessions.Sort)))
 	w("\n")
 
-	w("[finder.queue]\n")
-	w(fmt.Sprintf("sort = %s  # urgency sort\n", tomlStringArray(f.Queue.Sort)))
+	w("[finder.agents_queue]\n")
+	w(fmt.Sprintf("sort = %s  # urgency sort\n", tomlStringArray(f.AgentsQueue.Sort)))
 	w("\n")
 
 	w("# [finder.worktrees]\n")

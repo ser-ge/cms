@@ -22,7 +22,7 @@ var commands = []command{
 	// Finder modes.
 	{Name: "sessions", Aliases: []string{"-s"}, Short: "Sessions only", Group: "Finder"},
 	{Name: "projects", Aliases: []string{"-p"}, Short: "Projects only", Group: "Finder"},
-	{Name: "queue", Aliases: []string{"-q"}, Short: "Attention queue (urgency-sorted agent panes)", Group: "Finder"},
+	{Name: "agents", Aliases: []string{"-a"}, Short: "Agents queue (urgency-sorted agent panes)", Group: "Finder"},
 	{Name: "marks", Aliases: []string{"-m"}, Short: "Marks only", Group: "Finder"},
 	{Name: "worktrees", Short: "Worktrees only (current repo)", Group: "Finder"},
 	{Name: "windows", Short: "Windows only (all sessions)", Group: "Finder"},
@@ -75,7 +75,7 @@ func renderHelp() string {
 	b.WriteString(boldStyle.Render("Usage:") + "\n")
 	b.WriteString("  cms                        " + dimStyle.Render("Open finder (universal fuzzy switcher)") + "\n")
 	b.WriteString("  cms " + accentStyle.Render("<command>") + " [args]         " + dimStyle.Render("Run a command") + "\n")
-	b.WriteString("  cms " + accentStyle.Render("-s|-p|-q|-m") + "             " + dimStyle.Render("Open finder with filter") + "\n")
+	b.WriteString("  cms " + accentStyle.Render("-s|-p|-a|-m") + "             " + dimStyle.Render("Open finder with filter") + "\n")
 	b.WriteString("  cms " + accentStyle.Render("[sections]") + " --plain      " + dimStyle.Render("Print items as plain text (LLM-friendly)") + "\n")
 	b.WriteString("  cms " + accentStyle.Render("[sections]") + " --watch      " + dimStyle.Render("Live-updating plain text output") + "\n\n")
 
@@ -214,7 +214,7 @@ func unknownCommandMsg(name string) string {
 
 func unknownFlagMsg(flag string) string {
 	msg := fmt.Sprintf("unknown flag: %s", flag)
-	msg += "\n\n" + dimStyle.Render("Available flags: -s (sessions), -p (projects), -q (queue), -m (marks), --plain, --watch")
+	msg += "\n\n" + dimStyle.Render("Available flags: -s (sessions), -p (projects), -a (agents), -m (marks), --plain, --watch")
 	msg += "\n" + dimStyle.Render("Run 'cms --help' for a list of commands.")
 	return msg
 }

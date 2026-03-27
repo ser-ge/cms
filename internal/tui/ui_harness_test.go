@@ -51,24 +51,24 @@ func TestRenderHarnessFinder(t *testing.T) {
 	t.Log("\n" + m.View())
 }
 
-func TestRenderHarnessQueue(t *testing.T) {
+func TestRenderHarnessAgentsQueue(t *testing.T) {
 	if os.Getenv("CMS_RENDER_HARNESS") == "" {
-		t.Skip("set CMS_RENDER_HARNESS=1 to print queue render output")
+		t.Skip("set CMS_RENDER_HARNESS=1 to print agents queue render output")
 	}
 
 	cfg := config.DefaultConfig()
 	InitStyles(cfg)
 	w := harnessWatcher()
 
-	m := newFinderModel(cfg, w, []string{"queue"}, 120, 18)
-	t.Log("=== queue harness ===")
+	m := newFinderModel(cfg, w, []string{"agents"}, 120, 18)
+	t.Log("=== agents queue harness ===")
 	t.Log("\n" + m.View())
 
 	// Also test with debug enabled to verify debug overlay.
 	debug.Enabled = true
 	defer func() { debug.Enabled = false }()
-	m2 := newFinderModel(cfg, w, []string{"queue"}, 120, 18)
-	t.Log("=== queue harness (debug) ===")
+	m2 := newFinderModel(cfg, w, []string{"agents"}, 120, 18)
+	t.Log("=== agents queue harness (debug) ===")
 	t.Log("\n" + m2.View())
 }
 
@@ -81,7 +81,7 @@ func TestRenderHarnessAllSections(t *testing.T) {
 	InitStyles(cfg)
 	w := harnessWatcher()
 
-	for _, section := range []string{"sessions", "queue", "windows", "panes"} {
+	for _, section := range []string{"sessions", "agents", "windows", "panes"} {
 		m := newFinderModel(cfg, w, []string{section}, 140, 24)
 		t.Logf("=== %s ===", section)
 		t.Log("\n" + m.View())
@@ -119,14 +119,14 @@ func TestRenderHarnessLive(t *testing.T) {
 		}
 	}
 	finder := newFinderModel(cfg, w, []string{"sessions"}, 140, 24)
-	queue := newFinderModel(cfg, w, []string{"queue"}, 140, 24)
+	queue := newFinderModel(cfg, w, []string{"agents"}, 140, 24)
 
 	t.Logf("live sessions=%d agents=%d current=%s:%d.%d", len(sessions), len(agents), current.Session, current.Window, current.Pane)
 	t.Log("=== live dashboard ===")
 	t.Log("\n" + dash.View())
 	t.Log("=== live finder ===")
 	t.Log("\n" + finder.View())
-	t.Log("=== live queue ===")
+	t.Log("=== live agents queue ===")
 	t.Log("\n" + queue.View())
 }
 
@@ -178,7 +178,7 @@ func harnessWatcher() *watcher.Watcher {
 	agents := harnessAgents()
 	w.UpdateCacheForTest(sessions, agents, tmux.CurrentTarget{Session: "cms", Window: 0, Pane: 1})
 
-	// Seed activitySince with staggered times so the queue shows varied durations.
+	// Seed activitySince with staggered times so the agents queue shows varied durations.
 	now := time.Now()
 	w.SetActivitySinceForTest("%1", now.Add(-8*time.Minute))  // idle 8m
 	w.SetActivitySinceForTest("%2", now.Add(-15*time.Second))  // working 15s

@@ -147,7 +147,7 @@ func (w *Watcher) transitionAgent(paneID string, source agent.StatusSource, prev
 
 	if source == agent.SourceHook {
 		// Hooks are authoritative -- no hold logic.
-		// Promote Working->Idle to Completed so attention queue sees it.
+		// Promote Working->Idle to Completed so agents queue sees it.
 		if prev.Activity == agent.ActivityWorking && parsed == agent.ActivityIdle {
 			resolved = agent.ActivityCompleted
 		} else if prev.Activity == agent.ActivityCompleted && parsed == agent.ActivityIdle {

@@ -66,7 +66,7 @@ func main() {
 	var plainMode, watchMode bool
 
 	// Parse short and long flags before subcommand.
-	// Short flags compose: -s = sessions, -swq = sessions+worktrees+queue.
+	// Short flags compose: -s = sessions, -swa = sessions+worktrees+agents.
 	// Long flags: --plain, --watch (can be mixed with short flags in any order).
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		if strings.HasPrefix(args[0], "--") {
@@ -237,7 +237,7 @@ func main() {
 var shortFlagMap = map[byte]string{
 	's': "sessions",
 	'p': "projects",
-	'q': "queue",
+	'a': "agents",
 	'm': "marks",
 	'w': "worktrees",
 	'b': "branches",
@@ -246,7 +246,7 @@ var shortFlagMap = map[byte]string{
 }
 
 // parseShortFlags expands a string of single-letter flags into section names.
-// Returns nil if any letter is unknown. E.g. "swq" → ["sessions","worktrees","queue"].
+// Returns nil if any letter is unknown. E.g. "swa" → ["sessions","worktrees","agents"].
 func parseShortFlags(letters string) []string {
 	seen := map[string]bool{}
 	var result []string
@@ -292,7 +292,7 @@ func exitIfErr(err error) {
 }
 
 func executePostAction(a *tui.PostAction, cfg config.Config) error {
-	// Direct pane switch (from dashboard, queue, pane picker, marks).
+	// Direct pane switch (from dashboard, agents queue, pane picker, marks).
 	if a.PaneID != "" {
 		return session.SwitchToPane(a.PaneID)
 	}

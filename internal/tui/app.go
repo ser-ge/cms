@@ -18,7 +18,7 @@ const (
 
 // ValidSections lists all known finder section names.
 var ValidSections = []string{
-	"sessions", "projects", "queue", "worktrees", "branches",
+	"sessions", "projects", "agents", "worktrees", "branches",
 	"panes", "windows", "marks",
 }
 
@@ -33,7 +33,7 @@ const (
 	KindPane
 	KindMark
 	KindWindow
-	KindQueue
+	KindAgentsQueue
 )
 
 // SectionName returns the finder section name for this item kind.
@@ -53,8 +53,8 @@ func (k ItemKind) SectionName() string {
 		return "marks"
 	case KindWindow:
 		return "windows"
-	case KindQueue:
-		return "queue"
+	case KindAgentsQueue:
+		return "agents"
 	}
 	return "unknown"
 }
@@ -65,7 +65,7 @@ type PostAction struct {
 	Kind           ItemKind
 	SessionName    string
 	ProjectPath    string
-	PaneID         string // direct pane switch (dashboard, queue, pane, mark)
+	PaneID         string // direct pane switch (dashboard, agents queue, pane, mark)
 	WorktreePath   string // for KindWorktree (switch to existing)
 	WorktreeBranch string // for KindWorktree (switch to existing)
 	BranchName     string // for KindWorktree (create new, from cms new)
@@ -150,7 +150,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "/":
 				return m.switchTo(ScreenFinder)
 			case "a":
-				return m.switchToFinder([]string{"queue"})
+				return m.switchToFinder([]string{"agents"})
 			case "q":
 				return m, tea.Quit
 			}

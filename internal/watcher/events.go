@@ -28,7 +28,7 @@ type GitUpdateMsg struct {
 	GitInfo map[string]git.Info // workingDir -> Info
 }
 
-// AttentionUpdateMsg notifies the TUI that the attention queue changed.
+// AttentionUpdateMsg notifies the TUI that the agents queue changed.
 type AttentionUpdateMsg struct{}
 
 // ErrMsg wraps an error for delivery to the TUI.

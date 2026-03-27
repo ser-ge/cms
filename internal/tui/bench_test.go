@@ -214,11 +214,11 @@ func stubFinderModel(cfg config.Config, sessions []tmux.Session, agents map[stri
 	} else {
 		m.hasSess = true
 	}
-	if want["queue"] {
-		m.buildQueueItems()
-		m.hasQueue = true
+	if want["agents"] {
+		m.buildAgentsQueueItems()
+		m.hasAgentsQueue = true
 	} else {
-		m.hasQueue = true
+		m.hasAgentsQueue = true
 	}
 	if want["panes"] {
 		m.buildPaneItems()
@@ -266,7 +266,7 @@ func BenchmarkFinderBuildSessionItems(b *testing.B) {
 	}
 }
 
-func BenchmarkFinderBuildQueueItems(b *testing.B) {
+func BenchmarkFinderBuildAgentsQueueItems(b *testing.B) {
 	cfg := benchCfg()
 	for _, n := range []int{5, 20, 50} {
 		sessions := generateSessions(n, 3)
@@ -276,7 +276,7 @@ func BenchmarkFinderBuildQueueItems(b *testing.B) {
 			m := finderModel{cfg: cfg, sessData: sessions, agentData: agents, watcher: w}
 			b.ResetTimer()
 			for b.Loop() {
-				m.buildQueueItems()
+				m.buildAgentsQueueItems()
 			}
 		})
 	}
@@ -325,7 +325,7 @@ func BenchmarkFinderRebuildPicker(b *testing.B) {
 			}
 		})
 		b.Run(fmt.Sprintf("sessions=%d/all_sections", n), func(b *testing.B) {
-			m := stubFinderModel(cfg, sessions, agents, []string{"sessions", "queue", "panes", "windows"})
+			m := stubFinderModel(cfg, sessions, agents, []string{"sessions", "agents", "panes", "windows"})
 			b.ResetTimer()
 			for b.Loop() {
 				m.rebuildPicker()
@@ -340,7 +340,7 @@ func BenchmarkFinderView(b *testing.B) {
 		sessions := generateSessions(n, 3)
 		agents := generateAgents(sessions)
 		b.Run(fmt.Sprintf("sessions=%d", n), func(b *testing.B) {
-			m := stubFinderModel(cfg, sessions, agents, []string{"sessions", "queue", "panes", "windows"})
+			m := stubFinderModel(cfg, sessions, agents, []string{"sessions", "agents", "panes", "windows"})
 			b.ResetTimer()
 			for b.Loop() {
 				_ = m.View()
@@ -357,11 +357,11 @@ func BenchmarkFinderFullRefresh(b *testing.B) {
 		sessions := generateSessions(n, 3)
 		agents := generateAgents(sessions)
 		b.Run(fmt.Sprintf("sessions=%d", n), func(b *testing.B) {
-			m := stubFinderModel(cfg, sessions, agents, []string{"sessions", "queue", "panes", "windows"})
+			m := stubFinderModel(cfg, sessions, agents, []string{"sessions", "agents", "panes", "windows"})
 			b.ResetTimer()
 			for b.Loop() {
 				m.buildSessionItems(agents)
-				m.buildQueueItems()
+				m.buildAgentsQueueItems()
 				m.buildPaneItems()
 				m.buildWindowItems()
 				m.rebuildPicker()
@@ -401,7 +401,7 @@ func BenchmarkJoinParts(b *testing.B) {
 	}
 }
 
-func BenchmarkBuildQueueDescription(b *testing.B) {
+func BenchmarkBuildAgentsQueueDescription(b *testing.B) {
 	benchCfg()
 	cs := agent.AgentStatus{
 		Running:    true,
@@ -412,7 +412,7 @@ func BenchmarkBuildQueueDescription(b *testing.B) {
 		ModeLabel:  "workspace-write",
 	}
 	for b.Loop() {
-		_ = buildQueueDescription(cs, 5*60*1e9, true)
+		_ = buildAgentsQueueDescription(cs, 5*60*1e9, true)
 	}
 }
 
@@ -467,7 +467,7 @@ func BenchmarkNormalizeName(b *testing.B) {
 }
 
 func BenchmarkSectionSet(b *testing.B) {
-	sections := []string{"sessions", "projects", "queue", "worktrees", "branches", "panes", "windows", "marks"}
+	sections := []string{"sessions", "projects", "agents", "worktrees", "branches", "panes", "windows", "marks"}
 	for b.Loop() {
 		_ = sectionSet(sections)
 	}

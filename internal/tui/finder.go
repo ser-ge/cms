@@ -30,11 +30,11 @@ type finderEntry struct {
 	worktreePath   string // KindWorktree
 	worktreeBranch string // KindWorktree
 	worktreeMerged bool   // KindWorktree: branch is integrated into base
-	paneID         string // KindPane, KindQueue, KindMark
+	paneID         string // KindPane, KindAgentsQueue, KindMark
 	markLabel      string // KindMark
-	unseen         bool   // KindQueue (for markAttentionSeen + "unseen" sort key)
-	queueStateRank int    // KindQueue: stateRank for "state" sort key
-	queueSortTime  int64  // KindQueue: timestamp for "oldest"/"newest" sort keys
+	unseen         bool   // KindAgentsQueue (for markAttentionSeen + "unseen" sort key)
+	agentsQueueStateRank int    // KindAgentsQueue: stateRank for "state" sort key
+	agentsQueueSortTime  int64  // KindAgentsQueue: timestamp for "oldest"/"newest" sort keys
 }
 
 type finderModel struct {
@@ -48,8 +48,8 @@ type finderModel struct {
 	sessIdx   []finderEntry
 	projects      []PickerItem
 	projIdx       []finderEntry
-	queueItems    []PickerItem
-	queueIdx      []finderEntry
+	agentsQueueItems    []PickerItem
+	agentsQueueIdx      []finderEntry
 	worktreeItems []PickerItem
 	worktreeIdx   []finderEntry
 	paneItems     []PickerItem
@@ -62,7 +62,7 @@ type finderModel struct {
 	branchIdx     []finderEntry
 	hasSess       bool
 	hasProj       bool
-	hasQueue      bool
+	hasAgentsQueue      bool
 	hasWorktree   bool
 	hasBranch     bool
 	hasPane       bool
@@ -97,7 +97,7 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, wi
 	}
 
 	// Pre-populate sessions from watcher cache. Most sections need session
-	// data (queue reads agents, panes flatten sessions, worktrees need
+	// data (agents queue reads agents, panes flatten sessions, worktrees need
 	// current pane's working dir). Only "projects" alone can skip.
 	needsSessions := len(want) != 1 || !want["projects"]
 	if needsSessions {
@@ -117,8 +117,8 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, wi
 	if !want["projects"] {
 		m.hasProj = true
 	}
-	if !want["queue"] {
-		m.hasQueue = true
+	if !want["agents"] {
+		m.hasAgentsQueue = true
 	}
 	if !want["worktrees"] {
 		m.hasWorktree = true
@@ -137,9 +137,9 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, wi
 	}
 
 	// Build sync data sources that are wanted.
-	if want["queue"] {
-		m.buildQueueItems()
-		m.hasQueue = true
+	if want["agents"] {
+		m.buildAgentsQueueItems()
+		m.hasAgentsQueue = true
 	}
 	if want["panes"] {
 		m.buildPaneItems()
@@ -165,7 +165,7 @@ func newFinderModel(cfg config.Config, w *watcher.Watcher, sections []string, wi
 		}
 	}
 
-	if m.hasSess || m.hasProj || m.hasQueue || m.hasWorktree || m.hasBranch || m.hasPane || m.hasMark {
+	if m.hasSess || m.hasProj || m.hasAgentsQueue || m.hasWorktree || m.hasBranch || m.hasPane || m.hasMark {
 		m.rebuildPicker()
 	}
 
@@ -443,7 +443,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		m.sessData = msg.Sessions
 		m.agentData = msg.Agents
 		m.buildSessionItems(msg.Agents)
-		m.buildQueueItems()
+		m.buildAgentsQueueItems()
 		m.buildPaneItems()
 		m.buildWindowItems()
 		m.hasSess = true
@@ -455,12 +455,12 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		debug.Logf("finder: agent update panes=%d", len(msg.Updates))
 		m.agentData = agent.ApplyUpdates(m.agentData, msg.Updates)
 		m.buildSessionItems(m.agentData)
-		m.buildQueueItems()
+		m.buildAgentsQueueItems()
 		m.rebuildPicker()
 		return m, nil
 
 	case watcher.AttentionUpdateMsg:
-		m.buildQueueItems()
+		m.buildAgentsQueueItems()
 		m.rebuildPicker()
 		return m, nil
 
@@ -519,7 +519,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 				branch = "(detached)"
 			}
 
-			// Title: project/branch (same style as queue).
+			// Title: project/branch (same style as agents queue).
 			title := projectName + "/" + branch
 
 			// Static description: merged status (expensive git check, done once at scan).
@@ -627,7 +627,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 		return m, nil
 	}
 
-	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasBranch && !m.hasPane && !m.hasWindow && !m.hasMark {
+	if !m.hasSess && !m.hasProj && !m.hasAgentsQueue && !m.hasWorktree && !m.hasBranch && !m.hasPane && !m.hasWindow && !m.hasMark {
 		return m, nil
 	}
 
@@ -645,7 +645,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			switch entry.kind {
 			case KindSession:
 				cmd = killSessionCmd(entry.sessionName)
-			case KindPane, KindQueue, KindWindow:
+			case KindPane, KindAgentsQueue, KindWindow:
 				if entry.paneID != "" {
 					cmd = killPaneCmd(entry.paneID)
 				}
@@ -663,7 +663,7 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 			// Check if Enter was pressed (item was explicitly selected).
 			if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "enter" {
 				switch entry.kind {
-				case KindQueue:
+				case KindAgentsQueue:
 					if entry.unseen {
 						cmd = markAttentionSeenCmd(&m.watcher.Attention, entry.paneID)
 					}
@@ -754,8 +754,8 @@ func (m *finderModel) sectionItems(section string) ([]PickerItem, []finderEntry)
 	switch section {
 	case "sessions":
 		return m.sortedSectionItems(m.sessions, m.sessIdx, "sessions", m.sessionIsCurrent, m.sessionIsRecent)
-	case "queue":
-		return m.sortedSectionItems(m.queueItems, m.queueIdx, "queue", nil, nil)
+	case "agents":
+		return m.sortedSectionItems(m.agentsQueueItems, m.agentsQueueIdx, "agents", nil, nil)
 	case "worktrees":
 		items, idx := m.worktreeItemsWithOpenStatus()
 		return m.sortedSectionItems(items, idx, "worktrees", m.worktreeIsCurrent, nil)
@@ -844,15 +844,15 @@ func evalSortKey(
 		}
 		return isRecent(ia), isRecent(ib)
 	case "state":
-		ka, kb := idx[ia].queueStateRank, idx[ib].queueStateRank
+		ka, kb := idx[ia].agentsQueueStateRank, idx[ib].agentsQueueStateRank
 		return ka < kb, ka > kb
 	case "unseen":
 		return idx[ia].unseen, idx[ib].unseen
 	case "oldest":
-		ta, tb := idx[ia].queueSortTime, idx[ib].queueSortTime
+		ta, tb := idx[ia].agentsQueueSortTime, idx[ib].agentsQueueSortTime
 		return ta < tb, ta > tb
 	case "newest":
-		ta, tb := idx[ia].queueSortTime, idx[ib].queueSortTime
+		ta, tb := idx[ia].agentsQueueSortTime, idx[ib].agentsQueueSortTime
 		return ta > tb, ta < tb
 	}
 	return false, false
@@ -1218,7 +1218,7 @@ func buildPaneDescription(path string, cs agent.AgentStatus, maxPathW int) strin
 	)
 }
 
-// buildQueueItems constructs agent pane items for the queue view.
+// buildAgentsQueueItems constructs agent pane items for the agents queue view.
 // Sorting is handled by sortedSectionItems via config-driven sort keys;
 // this method only builds items and populates sort data on finderEntry.
 // stateRank returns the sort priority for an activity based on the configured
@@ -1234,15 +1234,15 @@ func stateRank(a agent.Activity, order []string) int {
 	return len(order)
 }
 
-func (m *finderModel) buildQueueItems() {
+func (m *finderModel) buildAgentsQueueItems() {
 	paneCap := 0
 	for _, s := range m.sessData {
 		for _, w := range s.Windows {
 			paneCap += len(w.Panes)
 		}
 	}
-	m.queueItems = make([]PickerItem, 0, paneCap)
-	m.queueIdx = make([]finderEntry, 0, paneCap)
+	m.agentsQueueItems = make([]PickerItem, 0, paneCap)
+	m.agentsQueueIdx = make([]finderEntry, 0, paneCap)
 
 	actSince := m.watcher.ActivitySince()
 	attnEvents := m.watcher.Attention.Snapshot()
@@ -1255,7 +1255,7 @@ func (m *finderModel) buildQueueItems() {
 		}
 	}
 
-	stateOrder := m.cfg.Finder.GetStateOrder("queue")
+	stateOrder := m.cfg.Finder.GetStateOrder("agents")
 	now := time.Now()
 
 	for _, sess := range m.sessData {
@@ -1283,7 +1283,7 @@ func (m *finderModel) buildQueueItems() {
 					title += "/" + b
 				}
 
-				desc := buildQueueDescription(cs, elapsed, hasSince)
+				desc := buildAgentsQueueDescription(cs, elapsed, hasSince)
 
 				filterVal := sess.Name
 				if pane.Git.Branch != "" {
@@ -1313,19 +1313,19 @@ func (m *finderModel) buildQueueItems() {
 					iconStyle = iconStyle.Faint(true)
 				}
 
-				m.queueItems = append(m.queueItems, PickerItem{
+				m.agentsQueueItems = append(m.agentsQueueItems, PickerItem{
 					Title:       title,
 					Description: desc,
 					FilterValue: filterVal,
 					Active:      unseen,
-					Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Queue, iconStyle),
+					Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.AgentsQueue, iconStyle),
 				})
-				m.queueIdx = append(m.queueIdx, finderEntry{
-					kind:           KindQueue,
+				m.agentsQueueIdx = append(m.agentsQueueIdx, finderEntry{
+					kind:           KindAgentsQueue,
 					paneID:         pane.ID,
 					unseen:         unseen,
-					queueStateRank: rank,
-					queueSortTime:  sortTime,
+					agentsQueueStateRank: rank,
+					agentsQueueSortTime:  sortTime,
 				})
 			}
 		}
@@ -1333,20 +1333,20 @@ func (m *finderModel) buildQueueItems() {
 
 	// Pad titles to uniform width so description columns align.
 	maxTitle := 0
-	for _, item := range m.queueItems {
+	for _, item := range m.agentsQueueItems {
 		if w := len(item.Title); w > maxTitle {
 			maxTitle = w
 		}
 	}
-	for i := range m.queueItems {
-		m.queueItems[i].Title = fmt.Sprintf("%-*s", maxTitle, m.queueItems[i].Title)
+	for i := range m.agentsQueueItems {
+		m.agentsQueueItems[i].Title = fmt.Sprintf("%-*s", maxTitle, m.agentsQueueItems[i].Title)
 	}
-	m.hasQueue = true
+	m.hasAgentsQueue = true
 }
 
-// buildQueueDescription returns a fixed-width columnar description.
+// buildAgentsQueueDescription returns a fixed-width columnar description.
 // Columns: provider  context%  activity  mode  duration
-func buildQueueDescription(cs agent.AgentStatus, elapsed time.Duration, hasSince bool) string {
+func buildAgentsQueueDescription(cs agent.AgentStatus, elapsed time.Duration, hasSince bool) string {
 	const (
 		providerW = 6  // "claude"
 		contextW  = 4  // "100%"
@@ -1406,11 +1406,11 @@ func formatDuration(d time.Duration) string {
 }
 
 func (m finderModel) View() string {
-	if !m.hasSess && !m.hasProj && !m.hasQueue && !m.hasWorktree && !m.hasBranch && !m.hasPane && !m.hasWindow && !m.hasMark {
+	if !m.hasSess && !m.hasProj && !m.hasAgentsQueue && !m.hasWorktree && !m.hasBranch && !m.hasPane && !m.hasWindow && !m.hasMark {
 		return "  Loading...\n"
 	}
 	want := sectionSet(m.sections)
-	if len(want) == 1 && want["queue"] && len(m.queueItems) == 0 {
+	if len(want) == 1 && want["agents"] && len(m.agentsQueueItems) == 0 {
 		return "  No agent sessions\n"
 	}
 	return m.picker.View()
@@ -1420,7 +1420,7 @@ func (m finderModel) View() string {
 
 // PlainRow is a single item for plain-text output.
 type PlainRow struct {
-	Section string // section name (e.g. "sessions", "queue")
+	Section string // section name (e.g. "sessions", "agents")
 	Title   string // unstyled title
 	Desc    string // ANSI-stripped description
 	Active  bool
