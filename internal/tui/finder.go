@@ -311,8 +311,8 @@ type providerSummary struct {
 
 // buildSessionItems populates session picker items from raw session data.
 func (m *finderModel) buildSessionItems(agents map[string]agent.AgentStatus) {
-	m.sessions = nil
-	m.sessIdx = nil
+	m.sessions = make([]PickerItem, 0, len(m.sessData))
+	m.sessIdx = make([]finderEntry, 0, len(m.sessData))
 	stateOrder := m.cfg.Finder.GetStateOrder("sessions")
 	for _, sess := range m.sessData {
 		// Count agents per activity state.
@@ -1074,8 +1074,12 @@ func (m *finderModel) filteredBranchItems() ([]PickerItem, []finderEntry) {
 
 // buildWindowItems populates window picker items from session data.
 func (m *finderModel) buildWindowItems() {
-	m.windowItems = nil
-	m.windowIdx = nil
+	winCap := 0
+	for _, s := range m.sessData {
+		winCap += len(s.Windows)
+	}
+	m.windowItems = make([]PickerItem, 0, winCap)
+	m.windowIdx = make([]finderEntry, 0, winCap)
 	stateOrder := m.cfg.Finder.GetStateOrder("windows")
 	for _, sess := range m.sessData {
 		for _, win := range sess.Windows {
@@ -1129,8 +1133,14 @@ func (m *finderModel) buildWindowItems() {
 // buildPaneItems populates pane picker items from session data.
 // Agent panes get columnar descriptions: path  provider  context%  activity  mode.
 func (m *finderModel) buildPaneItems() {
-	m.paneItems = nil
-	m.paneIdx = nil
+	paneCap := 0
+	for _, s := range m.sessData {
+		for _, w := range s.Windows {
+			paneCap += len(w.Panes)
+		}
+	}
+	m.paneItems = make([]PickerItem, 0, paneCap)
+	m.paneIdx = make([]finderEntry, 0, paneCap)
 
 	// First pass: collect items and find max path width for alignment.
 	type paneEntry struct {
@@ -1259,8 +1269,14 @@ func stateRank(a agent.Activity, order []string) int {
 }
 
 func (m *finderModel) buildQueueItems() {
-	m.queueItems = nil
-	m.queueIdx = nil
+	paneCap := 0
+	for _, s := range m.sessData {
+		for _, w := range s.Windows {
+			paneCap += len(w.Panes)
+		}
+	}
+	m.queueItems = make([]PickerItem, 0, paneCap)
+	m.queueIdx = make([]finderEntry, 0, paneCap)
 
 	actSince := m.watcher.ActivitySince()
 	attnEvents := m.watcher.Attention.Snapshot()

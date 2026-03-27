@@ -93,15 +93,19 @@ func (m pickerModel) Value() string {
 	return m.input.Value()
 }
 
-// resetWith replaces items while preserving query, cursor, and mode.
+// resetWith replaces items while preserving query, cursor, mode, and fzf slab.
 func (m pickerModel) resetWith(items []PickerItem, escapeChord string, escapeChordMs int) pickerModel {
 	query := m.Value()
 	cursor := m.cursor
 	mode := m.mode
 	width := m.width
 	height := m.height
+	slab := m.slab // preserve across rebuild
 
 	m = newPicker("", items, escapeChord, escapeChordMs)
+	if slab != nil {
+		m.slab = slab
+	}
 	m.width = width
 	m.height = height
 	m.mode = mode
@@ -484,6 +488,7 @@ func (m pickerModel) View() string {
 
 // highlightMatches renders a string with matched character positions in orange/bold.
 // Non-matched characters use baseStyle (pass nil style for default).
+// Consecutive matched/unmatched runes are batched into single Render calls.
 func highlightMatches(s string, matchIdxs []int, baseStyle *lipgloss.Style) string {
 	if len(matchIdxs) == 0 {
 		if baseStyle != nil {
@@ -497,15 +502,37 @@ func highlightMatches(s string, matchIdxs []int, baseStyle *lipgloss.Style) stri
 	}
 
 	var b strings.Builder
-	for i, ch := range s {
-		if matchSet[i] {
-			b.WriteString(pickerMatchStyle.Render(string(ch)))
+	var run strings.Builder
+	inMatch := false
+	first := true
+
+	flush := func() {
+		if run.Len() == 0 {
+			return
+		}
+		text := run.String()
+		run.Reset()
+		if inMatch {
+			b.WriteString(pickerMatchStyle.Render(text))
 		} else if baseStyle != nil {
-			b.WriteString(baseStyle.Render(string(ch)))
+			b.WriteString(baseStyle.Render(text))
 		} else {
-			b.WriteRune(ch)
+			b.WriteString(text)
 		}
 	}
+
+	for i, ch := range s {
+		isMatch := matchSet[i]
+		if first {
+			inMatch = isMatch
+			first = false
+		} else if isMatch != inMatch {
+			flush()
+			inMatch = isMatch
+		}
+		run.WriteRune(ch)
+	}
+	flush()
 	return b.String()
 }
 

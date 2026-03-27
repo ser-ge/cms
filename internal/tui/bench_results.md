@@ -83,13 +83,36 @@ Async scans (projects, worktrees, branches, marks) arrive later and trigger `reb
 5. **FullRefresh at 50 sessions** — 1.8ms, ~1MB. Acceptable for real workloads (typical: 5-20 sessions).
 6. **View is near-free** — only renders visible items (viewport windowing works).
 
-## Optimization targets (by impact)
+## Optimizations applied
+
+### 1. Reuse fzf slab across resetWith
+`resetWith()` now preserves the 208KB slab instead of re-allocating on every `rebuildPicker()`.
+
+### 2. Batch highlightMatches
+Per-rune `lipgloss.Render()` replaced with consecutive run batching. 3 Render calls instead of 10+ for typical matches.
+
+### 3. Pre-allocate slices in build methods
+`buildSessionItems`, `buildQueueItems`, `buildPaneItems`, `buildWindowItems` now pre-allocate output slices.
+
+### After vs Before (median of 3 runs, count=3)
+
+| Benchmark | Before B/op | After B/op | Delta | Before allocs | After allocs |
+|---|---:|---:|---:|---:|---:|
+| HighlightMatches/8 | 888 | 496 | **-44%** | 52 | 28 (-46%) |
+| View 10/with_filter | 7,558 | 5,717 | **-24%** | 322 | 212 (-34%) |
+| View 50/with_filter | 26,302 | 19,305 | **-27%** | 1,108 | 690 (-38%) |
+| View 200/with_filter | 43,191 | 36,196 | **-16%** | 1,135 | 717 (-37%) |
+| BuildSessionItems/5 | 6,437 | 4,323 | **-33%** | 198 | 192 |
+| BuildSessionItems/50 | 60,372 | 41,539 | **-31%** | 1,865 | 1,853 |
+| BuildWindowItems/50 | 49,388 | 30,552 | **-38%** | 1,239 | 1,227 |
+| BuildPaneItems/50 | 207,941 | 178,450 | **-14%** | 3,287 | 3,272 |
+| FullRefresh/20 | 528,249 | 490,271 | **-7%** | 3,945 | 3,902 |
+| FullRefresh/50 | 957,222 | 881,101 | **-8%** | 9,190 | 9,138 |
+
+### Remaining targets
 
 | Target | Savings | Difficulty |
 |---|---|---|
-| Reuse fzf slab across resetWith | 208KB/rebuild | trivial |
-| Batch highlightMatches (collect runs, single Render per run) | ~50 allocs/item | easy |
-| Pre-allocate slices in build methods | reduce grow-copies | easy |
 | Debounce rebuildPicker on rapid watcher updates | fewer full rebuilds | medium |
 
 ## How to run
