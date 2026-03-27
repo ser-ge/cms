@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/serge/cms/internal/tmux"
 )
 
 // RunCmd handles `cms hook [--socket PATH] <event-kind>`.
@@ -66,9 +68,22 @@ func RunCmd(args []string) error {
 		p.Message = ccPayload.Notification.Message
 	}
 
+	// Set/unset @cms_claude_session directly on the tmux pane so the
+	// option persists even when the CMS TUI (watcher) isn't running.
+	// This is the primary mechanism; the watcher also sets it via the
+	// socket relay as a redundant path.
+	switch kindStr {
+	case "session-start":
+		if ccPayload.SessionID != "" {
+			tmux.Run("set-option", "-p", "-t", paneID, "@cms_claude_session", ccPayload.SessionID)
+		}
+	case "session-end":
+		tmux.Run("set-option", "-p", "-u", "-t", paneID, "@cms_claude_session")
+	}
+
 	log.Printf("hook-cmd: %s pane=%s session=%s socket=%s", kindStr, paneID, ccPayload.SessionID, socketPath)
 
-	// Send to the CMS daemon socket.
+	// Send to the CMS daemon socket (watcher updates agent state, traces, etc.).
 	return SendPayload(socketPath, p)
 }
 
