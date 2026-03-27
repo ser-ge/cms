@@ -1,6 +1,6 @@
 [general]
 default_session = ""
-# Priority order for `cms next` — jump to agent panes in this state order.
+# Priority order for pane selection when switching to a session or window.
 switch_priority = ["waiting", "completed", "idle", "default", "working"]
 # Two-key chord to exit insert mode in the TUI.
 escape_chord = "jj"
@@ -19,7 +19,7 @@ exclusions = []
 
 [finder]
 # What bare `cms` shows and in what order.
-include = ["sessions", "agents", "worktrees", "projects"]
+include = ["agents", "sessions", "worktrees", "projects"]
 
 # Global sort key priority list. Per-section overrides below.
 # Keys evaluated left-to-right; first difference wins.

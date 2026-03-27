@@ -342,7 +342,7 @@ func boolPtr(b bool) *bool { return &b }
 
 func DefaultFinderConfig() FinderConfig {
 	return FinderConfig{
-		Include:    []string{"sessions", "agents", "worktrees", "projects"},
+		Include:    []string{"agents", "sessions", "worktrees", "projects"},
 		Sort:       []string{"active", "-current"},
 		StateOrder:            []string{"waiting", "completed", "idle", "working"},
 		ShowContextPercentage: true,
@@ -521,7 +521,7 @@ func defaultConfigTOMLFrom(g GeneralConfig, f FinderConfig) ([]byte, error) {
 
 	w("[general]\n")
 	w(fmt.Sprintf("default_session = %q\n", g.DefaultSession))
-	w("# Priority order for `cms next` — jump to agent panes in this state order.\n")
+	w("# Priority order for pane selection when switching to a session or window.\n")
 	w(fmt.Sprintf("switch_priority = %s\n", tomlStringArray(g.SwitchPriority)))
 	w("# Two-key chord to exit insert mode in the TUI.\n")
 	w(fmt.Sprintf("escape_chord = %q\n", g.EscapeChord))
