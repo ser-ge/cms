@@ -32,7 +32,7 @@ func TestProfileLiveStartup(t *testing.T) {
 
 	// Phase 1: Config load
 	t0 := time.Now()
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestProfileLiveStartup(t *testing.T) {
 	// Phase 6: Watcher init + BootstrapSync (the real --plain path)
 	t5 := time.Now()
 	w := watcher.New()
-	w.ApplyConfig(cfg.General)
+	w.ApplyConfig(cfg.General, cfg.Status)
 	w.BootstrapSync()
 	bootstrapDur := time.Since(t5)
 
@@ -140,7 +140,7 @@ func BenchmarkLiveDetectAll(b *testing.B) {
 
 func BenchmarkLiveProjectScan(b *testing.B) {
 	requireLiveTmux(b)
-	cfg, _ := config.Load()
+	cfg, _, _ := config.Load()
 	b.ResetTimer()
 	for b.Loop() {
 		project.Scan(cfg)
@@ -149,21 +149,21 @@ func BenchmarkLiveProjectScan(b *testing.B) {
 
 func BenchmarkLiveBootstrapSync(b *testing.B) {
 	requireLiveTmux(b)
-	cfg, _ := config.Load()
+	cfg, _, _ := config.Load()
 	b.ResetTimer()
 	for b.Loop() {
 		w := watcher.New()
-		w.ApplyConfig(cfg.General)
+		w.ApplyConfig(cfg.General, cfg.Status)
 		w.BootstrapSync()
 	}
 }
 
 func BenchmarkLiveRunHeadless(b *testing.B) {
 	requireLiveTmux(b)
-	cfg, _ := config.Load()
+	cfg, _, _ := config.Load()
 	tui.InitStyles(cfg)
 	w := watcher.New()
-	w.ApplyConfig(cfg.General)
+	w.ApplyConfig(cfg.General, cfg.Status)
 	w.BootstrapSync()
 	b.ResetTimer()
 	for b.Loop() {
@@ -173,10 +173,10 @@ func BenchmarkLiveRunHeadless(b *testing.B) {
 
 func BenchmarkLiveNewRootModel(b *testing.B) {
 	requireLiveTmux(b)
-	cfg, _ := config.Load()
+	cfg, _, _ := config.Load()
 	tui.InitStyles(cfg)
 	w := watcher.New()
-	w.ApplyConfig(cfg.General)
+	w.ApplyConfig(cfg.General, cfg.Status)
 	w.BootstrapSync()
 	b.ResetTimer()
 	for b.Loop() {

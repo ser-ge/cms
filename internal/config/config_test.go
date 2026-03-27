@@ -24,6 +24,25 @@ func TestDefaultConfigTOML(t *testing.T) {
 	}
 }
 
+func TestFullConfigTOML(t *testing.T) {
+	data, err := FullConfigTOML()
+	if err != nil {
+		t.Fatalf("FullConfigTOML: %v", err)
+	}
+	text := string(data)
+	for _, section := range []string{"[general]", "[status]", "[finder]", "[colors.shared]", "[icons]", "[dashboard]"} {
+		if !strings.Contains(text, section) {
+			t.Errorf("full config missing %s", section)
+		}
+	}
+	// Must not appear in default config.
+	defData, _ := DefaultConfigTOML()
+	defText := string(defData)
+	if strings.Contains(defText, "[status]") {
+		t.Error("default config should not contain [status]")
+	}
+}
+
 func TestWriteDefaultConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

@@ -19,7 +19,7 @@ import (
 // With watch=true it keeps running, re-rendering on watcher updates.
 func runPlainMode(sections []string, cfg config.Config, watch bool) {
 	w := watcher.New()
-	w.ApplyConfig(cfg.General)
+	w.ApplyConfig(cfg.General, cfg.Status)
 
 	if !watch {
 		w.BootstrapSync()

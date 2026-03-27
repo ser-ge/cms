@@ -65,7 +65,7 @@ search_paths = [
 ]
 
 [finder]
-include = ["sessions", "projects", "worktrees", "queue"]
+include = ["sessions", "projects", "worktrees", "agents"]
 EOF
 echo ""
 echo "Config: $CONFIG_DIR/config.toml"

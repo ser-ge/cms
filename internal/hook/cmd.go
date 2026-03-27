@@ -248,7 +248,7 @@ func RunInstall() error {
 	}
 
 	if installed == 0 && skipped > 0 {
-		fmt.Println("cms hooks already installed")
+		fmt.Fprintln(os.Stderr, "cms hooks already installed")
 		return nil
 	}
 
@@ -267,11 +267,10 @@ func RunInstall() error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	fmt.Printf("installed cms hooks into %s (%d events)\n", path, installed)
+	fmt.Fprintf(os.Stderr, "installed cms hooks into %s (%d events)\n", path, installed)
 	if skipped > 0 {
-		fmt.Printf("skipped %d events (already installed)\n", skipped)
+		fmt.Fprintf(os.Stderr, "skipped %d events (already installed)\n", skipped)
 	}
-	fmt.Printf("socket: %s\n", socketPath)
 	return nil
 }
 

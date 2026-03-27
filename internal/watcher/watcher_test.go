@@ -441,10 +441,10 @@ func TestPersistActivitySinceMismatchIgnored(t *testing.T) {
 // testWatcherWithSmoothing sets up a watcher with smoothing config applied.
 func testWatcherWithSmoothing(workingToIdleMs, workingToCompletedMs int) (*Watcher, *[]tea.Msg) {
 	w, msgs := testWatcher()
-	cfg := config.DefaultGeneralConfig()
+	cfg := config.DefaultStatusConfig()
 	cfg.Smoothing.WorkingToIdleMs = workingToIdleMs
 	cfg.Smoothing.WorkingToCompletedMs = workingToCompletedMs
-	w.ApplyConfig(cfg)
+	w.ApplyConfig(config.DefaultGeneralConfig(), cfg)
 	return w, msgs
 }
 
@@ -535,11 +535,11 @@ func TestSmoothingCancelledOnSameState(t *testing.T) {
 
 func TestSmoothingGlobalOverride(t *testing.T) {
 	w, _ := testWatcher()
-	cfg := config.DefaultGeneralConfig()
+	cfg := config.DefaultStatusConfig()
 	cfg.TransitionSmoothingMs = 5000 // global override
 	cfg.Smoothing.WorkingToIdleMs = 0
 	cfg.Smoothing.WorkingToCompletedMs = 0
-	w.ApplyConfig(cfg)
+	w.ApplyConfig(config.DefaultGeneralConfig(), cfg)
 
 	paneID := "%1"
 	w.stateMu.Lock()

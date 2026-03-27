@@ -59,7 +59,7 @@ state_order = ["waiting", "completed", "idle", "working"]
 [finder.sessions]
 sort = ["recent", "-current"]
 
-[finder.queue]
+[finder.agents_queue]
 sort = ["state", "unseen", "oldest"]
 ```
 
@@ -112,7 +112,7 @@ The `include` list and CLI flags control which sections appear and in what order
 
 ```toml
 [finder]
-include = ["sessions", "queue", "worktrees", "marks", "projects"]
+include = ["sessions", "agents", "worktrees", "marks", "projects"]
 ```
 
 In the picker, the first section in `include` appears closest to the input. Section order is independent of sort.

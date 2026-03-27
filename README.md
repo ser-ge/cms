@@ -146,85 +146,15 @@ cms config init
 
 This writes to `$XDG_CONFIG_HOME/cms/config.toml` (or `~/.config/cms/config.toml`).
 
-Print the full default config to stdout (useful for piping or reviewing):
+Print the default config to stdout (useful for piping or reviewing):
 
 ```bash
-cms config default
-cms config default > ~/.config/cms/config.toml
+cms config default                              # user-facing config
+cms config full                                 # all options including internal tuning
+cms config default > ~/.config/cms/config.toml  # overwrite with defaults
 ```
 
-```toml
-[general]
-default_session = ""
-# Priority order for `cms next` — jump to agent panes in this state order.
-switch_priority = ["waiting", "completed", "idle", "default", "working"]
-# Two-key chord to exit insert mode in the TUI.
-escape_chord = "jj"
-escape_chord_ms = 250
-# Session names to hide from the picker.
-exclusions = []
-# Scan git submodules when discovering projects.
-search_submodules = false
-# Restore tmux session snapshots when opening a project.
-restore = true
-# Seconds before a Completed agent decays to Idle (0 = never).
-completed_decay_s = 30000
-# When false, hooks go stale after initial detection; when true, hooks suppress transitions.
-always_hooks_for_status = false
-# Global smoothing delay (ms) for all state transitions (0 = use per-transition values).
-# transition_smoothing_ms = 0
-
-# Directories to scan for git projects.
-[[general.search_paths]]
-path = "~/projects"
-max_depth = 3
-
-# Per-transition smoothing delays (ms). Suppresses flicker from rapid state changes.
-[general.smoothing]
-working_to_idle_ms = 3000
-working_to_completed_ms = 2000
-idle_to_working_ms = 0
-completed_to_idle_ms = 0
-
-[finder]
-# What bare `cms` shows and in what order.
-include = ["sessions", "agents", "worktrees", "projects"]
-
-# Global sort key priority list. Per-section overrides below.
-# Keys evaluated left-to-right; first difference wins.
-# Prefix "-" demotes (pushes matching items to bottom).
-sort = ["active", "-current"]
-
-# Agents urgency order (used by "state" sort key).
-state_order = ["waiting", "completed", "idle", "working"]
-
-# Show max context percentage in aggregate session/worktree summaries.
-show_context_percentage = true
-
-# Section icons — each section type has a distinct glyph.
-# Icon *color* encodes item state (see "Icon colors" below).
-[finder.section_icons]
-sessions  = "S"
-agents    = "*"
-worktrees = "⎇"
-branches  = "B"
-panes     = ">"
-windows   = "W"
-marks     = "M"
-projects  = "P"
-
-# Per-section sort overrides — only specify what differs from global.
-[finder.sessions]
-sort = ["recent", "-current"]  # last-visited first, attached last
-
-[finder.agents]
-sort = ["state", "unseen", "oldest"]  # urgency sort
-
-# [finder.worktrees]
-# sort = ["active", "-current"]
-# [finder.branches]
-# sort = ["active"]
-```
+See [examples/config.toml](examples/config.toml) for the user config and [examples/config-full.toml](examples/config-full.toml) for every option including status tracking tuning, colors, icons, and dashboard layout.
 
 ### Sort keys
 

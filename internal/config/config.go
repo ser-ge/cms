@@ -13,6 +13,7 @@ import (
 // Config holds cms settings loaded from ~/.config/cms/config.toml.
 type Config struct {
 	General   GeneralConfig   `toml:"general"`
+	Status    StatusConfig    `toml:"status"`
 	Colors    ColorsConfig    `toml:"colors"`
 	Icons     IconsConfig     `toml:"icons"`
 	Dashboard DashboardConfig `toml:"dashboard"`
@@ -71,13 +72,18 @@ type GeneralConfig struct {
 	SearchPaths      []SearchPath `toml:"search_paths"`
 
 	Restore         *bool `toml:"restore"`            // master switch for snapshot restore on project open (default: true)
-	CompletedDecayS int   `toml:"completed_decay_s"` // Completed->Idle auto-decay in seconds (default 300)
-	AlwaysHooksForStatus *bool `toml:"always_hooks_for_status"` // when true (default), hooks never go stale; observer skips transitions while any hook has been seen
+	CompletedDecayS int   `toml:"completed_decay_s"` // Completed->Idle auto-decay in seconds (default 30000)
+}
+
+// StatusConfig holds agent status tracking tuning — smoothing and hook behavior.
+// These are internal tuning knobs, not exported in the minimal default config.
+type StatusConfig struct {
+	AlwaysHooksForStatus *bool `toml:"always_hooks_for_status"` // when true, hooks never go stale; observer skips transitions while any hook has been seen
 
 	// Transition smoothing: delay state changes to suppress flicker.
 	// Global override applies to all transitions if > 0.
-	TransitionSmoothingMs int              `toml:"transition_smoothing_ms"`
-	Smoothing             SmoothingConfig  `toml:"smoothing"`
+	TransitionSmoothingMs int             `toml:"transition_smoothing_ms"`
+	Smoothing             SmoothingConfig `toml:"smoothing"`
 }
 
 // SmoothingConfig holds per-transition smoothing delays in milliseconds.
@@ -91,20 +97,20 @@ type SmoothingConfig struct {
 
 // SmoothingMs returns the smoothing delay in ms for a transition,
 // applying the global override if set.
-func (g GeneralConfig) SmoothingMs(from, to string) int {
-	if g.TransitionSmoothingMs > 0 {
-		return g.TransitionSmoothingMs
+func (s StatusConfig) SmoothingMs(from, to string) int {
+	if s.TransitionSmoothingMs > 0 {
+		return s.TransitionSmoothingMs
 	}
 	key := from + "_to_" + to
 	switch key {
 	case "working_to_idle":
-		return g.Smoothing.WorkingToIdleMs
+		return s.Smoothing.WorkingToIdleMs
 	case "working_to_completed":
-		return g.Smoothing.WorkingToCompletedMs
+		return s.Smoothing.WorkingToCompletedMs
 	case "idle_to_working":
-		return g.Smoothing.IdleToWorkingMs
+		return s.Smoothing.IdleToWorkingMs
 	case "completed_to_idle":
-		return g.Smoothing.CompletedToIdleMs
+		return s.Smoothing.CompletedToIdleMs
 	}
 	return 0
 }
@@ -365,10 +371,15 @@ func DefaultGeneralConfig() GeneralConfig {
 		EscapeChordMs:    250,
 		SearchSubmodules: false,
 		SearchPaths: []SearchPath{
-			{Path: filepath.Join(home, "projects"), MaxDepth: 3},
+			{Path: home, MaxDepth: 3},
 		},
-		Restore:              boolPtr(true),
-		CompletedDecayS:      30000,
+		Restore:         boolPtr(true),
+		CompletedDecayS: 30000,
+	}
+}
+
+func DefaultStatusConfig() StatusConfig {
+	return StatusConfig{
 		AlwaysHooksForStatus: boolPtr(false),
 		Smoothing: SmoothingConfig{
 			WorkingToIdleMs:      3000,
@@ -381,6 +392,7 @@ func DefaultGeneralConfig() GeneralConfig {
 func DefaultConfig() Config {
 	return Config{
 		General:   DefaultGeneralConfig(),
+		Status:    DefaultStatusConfig(),
 		Colors:    DefaultColors(),
 		Icons:     DefaultIcons(),
 		Dashboard: DefaultDashboardConfig(),
@@ -389,27 +401,27 @@ func DefaultConfig() Config {
 }
 
 // Load reads config from ~/.config/cms/config.toml.
-// Returns DefaultConfig if the file doesn't exist.
+// Returns DefaultConfig and firstRun=true if the file doesn't exist.
 // Returns an error if the config is invalid or contains unknown keys.
-func Load() (Config, error) {
+func Load() (cfg Config, firstRun bool, err error) {
 	path := configPath()
-	cfg := DefaultConfig()
+	cfg = DefaultConfig()
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return cfg, nil
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return cfg, true, nil
 	}
 
 	md, err := toml.Decode(string(data), &cfg)
 	if err != nil {
-		return cfg, fmt.Errorf("%s: %w", path, err)
+		return cfg, false, fmt.Errorf("%s: %w", path, err)
 	}
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		var keys []string
 		for _, k := range undecoded {
 			keys = append(keys, k.String())
 		}
-		return cfg, fmt.Errorf("%s: unknown config keys: %s", path, strings.Join(keys, ", "))
+		return cfg, false, fmt.Errorf("%s: unknown config keys: %s", path, strings.Join(keys, ", "))
 	}
 
 	// Expand ~ in all search paths.
@@ -422,7 +434,7 @@ func Load() (Config, error) {
 
 	cfg.normalize()
 
-	return cfg, nil
+	return cfg, false, nil
 }
 
 func defaultStr(field *string, def string) {
@@ -500,9 +512,10 @@ func ExpandHome(path string) string {
 }
 
 func DefaultConfigTOML() ([]byte, error) {
-	g := DefaultGeneralConfig()
-	f := DefaultFinderConfig()
+	return defaultConfigTOMLFrom(DefaultGeneralConfig(), DefaultFinderConfig())
+}
 
+func defaultConfigTOMLFrom(g GeneralConfig, f FinderConfig) ([]byte, error) {
 	var buf bytes.Buffer
 	w := func(s string) { buf.WriteString(s) }
 
@@ -519,28 +532,14 @@ func DefaultConfigTOML() ([]byte, error) {
 	w(fmt.Sprintf("restore = %v\n", g.ShouldRestore()))
 	w("# Seconds before a Completed agent decays to Idle (0 = never).\n")
 	w(fmt.Sprintf("completed_decay_s = %d\n", g.CompletedDecayS))
-	w("# When false, hooks go stale after initial detection; when true, hooks suppress transitions.\n")
-	w(fmt.Sprintf("always_hooks_for_status = %v\n", *g.AlwaysHooksForStatus))
-	w("# Global smoothing delay (ms) for all state transitions (0 = use per-transition values).\n")
-	w("# transition_smoothing_ms = 0\n")
-	w("\n")
-
 	w("# Directories to scan for git projects.\n")
 	for _, sp := range g.SearchPaths {
 		w("[[general.search_paths]]\n")
 		w(fmt.Sprintf("path = %q\n", abbreviateHome(sp.Path)))
 		w(fmt.Sprintf("max_depth = %d\n", sp.MaxDepth))
-		if len(sp.Exclusions) > 0 {
-			w(fmt.Sprintf("exclusions = %s\n", tomlStringArray(sp.Exclusions)))
-		}
+		w(fmt.Sprintf("exclusions = %s\n", tomlStringArray(sp.Exclusions)))
 	}
 
-	w("\n# Per-transition smoothing delays (ms). Suppresses flicker from rapid state changes.\n")
-	w("[general.smoothing]\n")
-	w(fmt.Sprintf("working_to_idle_ms = %d\n", g.Smoothing.WorkingToIdleMs))
-	w(fmt.Sprintf("working_to_completed_ms = %d\n", g.Smoothing.WorkingToCompletedMs))
-	w(fmt.Sprintf("idle_to_working_ms = %d\n", g.Smoothing.IdleToWorkingMs))
-	w(fmt.Sprintf("completed_to_idle_ms = %d\n", g.Smoothing.CompletedToIdleMs))
 	w("\n")
 
 	w("[finder]\n")
@@ -582,6 +581,108 @@ func DefaultConfigTOML() ([]byte, error) {
 	w("# sort = [\"active\"]\n")
 
 	return buf.Bytes(), nil
+}
+
+// FullConfigTOML returns a commented TOML document with every configurable option,
+// including internal tuning knobs (status, colors, icons, dashboard).
+func FullConfigTOML() ([]byte, error) {
+	base, err := DefaultConfigTOML()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := DefaultConfig()
+	s := cfg.Status
+	c := cfg.Colors
+	i := cfg.Icons
+	d := cfg.Dashboard
+
+	var buf bytes.Buffer
+	w := func(s string) { buf.WriteString(s) }
+
+	buf.Write(base)
+	w("\n")
+
+	w("# Agent status tracking tuning. Most users won't need to change these.\n")
+	w("[status]\n")
+	w("# When true, hooks never go stale; observer skips transitions while any hook has been seen.\n")
+	w(fmt.Sprintf("always_hooks_for_status = %v\n", *s.AlwaysHooksForStatus))
+	w("# Global smoothing delay (ms) for all state transitions (0 = use per-transition values).\n")
+	w("# transition_smoothing_ms = 0\n")
+	w("\n")
+
+	w("# Per-transition smoothing delays (ms). Suppresses flicker from rapid state changes.\n")
+	w("[status.smoothing]\n")
+	w(fmt.Sprintf("working_to_idle_ms = %d\n", s.Smoothing.WorkingToIdleMs))
+	w(fmt.Sprintf("working_to_completed_ms = %d\n", s.Smoothing.WorkingToCompletedMs))
+	w(fmt.Sprintf("idle_to_working_ms = %d\n", s.Smoothing.IdleToWorkingMs))
+	w(fmt.Sprintf("completed_to_idle_ms = %d\n", s.Smoothing.CompletedToIdleMs))
+	w("\n")
+
+	w("# UI color scheme. Values are ANSI color numbers (0-255) or hex (#rrggbb).\n")
+	w("[colors.shared]\n")
+	w(fmt.Sprintf("session = %q\n", c.Shared.Session))
+	w(fmt.Sprintf("window = %q\n", c.Shared.Window))
+	w(fmt.Sprintf("dim = %q\n", c.Shared.Dim))
+	w(fmt.Sprintf("selected = %q\n", c.Shared.Selected))
+	w(fmt.Sprintf("current = %q\n", c.Shared.Current))
+	w(fmt.Sprintf("working = %q\n", c.Shared.Working))
+	w(fmt.Sprintf("waiting = %q\n", c.Shared.Waiting))
+	w(fmt.Sprintf("completed = %q\n", c.Shared.Completed))
+	w(fmt.Sprintf("idle = %q\n", c.Shared.Idle))
+	w(fmt.Sprintf("active = %q\n", c.Shared.Active))
+	w(fmt.Sprintf("move_src = %q\n", c.Shared.MoveSrc))
+	w(fmt.Sprintf("match = %q\n", c.Shared.Match))
+	w(fmt.Sprintf("ctx_low = %q\n", c.Shared.CtxLow))
+	w(fmt.Sprintf("ctx_mid = %q\n", c.Shared.CtxMid))
+	w(fmt.Sprintf("ctx_high = %q\n", c.Shared.CtxHigh))
+	w(fmt.Sprintf("separator = %q\n", c.Shared.Separator))
+	w(fmt.Sprintf("footer_rule = %q\n", c.Shared.FooterRule))
+	w("\n")
+
+	writeProviderColors(w, "claude", c.Claude)
+	writeProviderColors(w, "codex", c.Codex)
+
+	w("# Icon glyphs used in the TUI.\n")
+	w("[icons]\n")
+	w(fmt.Sprintf("working_frames = %s\n", tomlStringArray(i.WorkingFrames)))
+	w(fmt.Sprintf("working = %q\n", i.Working))
+	w(fmt.Sprintf("waiting = %q\n", i.Waiting))
+	w(fmt.Sprintf("completed = %q\n", i.Completed))
+	w(fmt.Sprintf("idle = %q\n", i.Idle))
+	w(fmt.Sprintf("unknown = %q\n", i.Unknown))
+	w(fmt.Sprintf("column_separator = %q\n", i.ColumnSeparator))
+	w(fmt.Sprintf("footer_separator = %q\n", i.FooterSeparator))
+	w("\n")
+
+	w("# Dashboard layout.\n")
+	w("[dashboard]\n")
+	w(fmt.Sprintf("columns = %s\n", tomlStringArray(d.Columns)))
+	w(fmt.Sprintf("window_headers = %q\n", d.WindowHeaders))
+	w(fmt.Sprintf("footer_padding = %v\n", d.FooterPadding))
+	w(fmt.Sprintf("footer_separator = %v\n", d.FooterSeparator))
+	w(fmt.Sprintf("show_context_percentage = %v\n", d.ShowContextPercentage))
+	w("\n")
+
+	w("# Worktree management. Also configurable per-repo in .cms.toml.\n")
+	w("[worktree]\n")
+	w("# base_dir = \"../worktrees\"\n")
+	w("# base_branch = \"main\"\n")
+	w(fmt.Sprintf("auto_open = %v\n", cfg.Worktree.AutoOpen))
+	w("# commit_cmd = \"claude -p ...\"\n")
+	w("# go_cmd = \"claude -p \\\"$CMS_PROMPT\\\"\"\n")
+
+	return buf.Bytes(), nil
+}
+
+func writeProviderColors(w func(string), name string, p ProviderColorsConfig) {
+	w(fmt.Sprintf("[colors.%s]\n", name))
+	w(fmt.Sprintf("accent = %q\n", p.Accent))
+	w(fmt.Sprintf("plan = %q\n", p.Plan))
+	w(fmt.Sprintf("accept = %q\n", p.Accept))
+	w(fmt.Sprintf("safe = %q\n", p.Safe))
+	w(fmt.Sprintf("danger = %q\n", p.Danger))
+	w("\n")
 }
 
 // tomlStringArray formats a string slice as a TOML inline array.

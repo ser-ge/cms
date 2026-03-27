@@ -59,7 +59,7 @@ type Watcher struct {
 
 	// Transition smoothing: suppress flicker by holding the current state
 	// for a configurable delay before committing a transition.
-	smoothingCfg    config.GeneralConfig      // carries SmoothingMs()
+	smoothingCfg    config.StatusConfig       // carries SmoothingMs()
 	smoothingTimers map[string]*time.Timer    // paneID -> pending smoothing timer
 	smoothingTarget map[string]agent.Activity // paneID -> target activity when timer fires
 
@@ -101,16 +101,16 @@ func New() *Watcher {
 }
 
 // ApplyConfig sets timing from user configuration.
-func (w *Watcher) ApplyConfig(cfg config.GeneralConfig) {
-	if cfg.CompletedDecayS > 0 {
-		w.completedDecay = time.Duration(cfg.CompletedDecayS) * time.Second
+func (w *Watcher) ApplyConfig(general config.GeneralConfig, status config.StatusConfig) {
+	if general.CompletedDecayS > 0 {
+		w.completedDecay = time.Duration(general.CompletedDecayS) * time.Second
 	}
-	if cfg.AlwaysHooksForStatus != nil {
-		w.hookPersist = *cfg.AlwaysHooksForStatus
+	if status.AlwaysHooksForStatus != nil {
+		w.hookPersist = *status.AlwaysHooksForStatus
 	} else {
 		w.hookPersist = true
 	}
-	w.smoothingCfg = cfg
+	w.smoothingCfg = status
 }
 
 // Start begins the watcher goroutines. Must be called after tea.NewProgram.

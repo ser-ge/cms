@@ -12,7 +12,7 @@ import (
 )
 
 func TestFinderFlow(t *testing.T) {
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		t.Skipf("config error: %v", err)
 	}

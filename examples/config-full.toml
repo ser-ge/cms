@@ -1,0 +1,130 @@
+[general]
+default_session = ""
+# Priority order for `cms next` — jump to agent panes in this state order.
+switch_priority = ["waiting", "completed", "idle", "default", "working"]
+# Two-key chord to exit insert mode in the TUI.
+escape_chord = "jj"
+escape_chord_ms = 250
+# Scan git submodules when discovering projects.
+search_submodules = false
+# Restore tmux session snapshots when opening a project.
+restore = true
+# Seconds before a Completed agent decays to Idle (0 = never).
+completed_decay_s = 30000
+# Directories to scan for git projects.
+[[general.search_paths]]
+path = "~"
+max_depth = 3
+exclusions = []
+
+[finder]
+# What bare `cms` shows and in what order.
+include = ["sessions", "agents", "worktrees", "projects"]
+
+# Global sort key priority list. Per-section overrides below.
+# Keys evaluated left-to-right; first difference wins.
+# Prefix "-" demotes (pushes matching items to bottom).
+sort = ["active", "-current"]
+
+# Agents queue urgency order (used by "state" sort key).
+state_order = ["waiting", "completed", "idle", "working"]
+
+# Show max context percentage in aggregate session/worktree summaries.
+show_context_percentage = true
+
+[finder.section_icons]
+sessions = "S"
+agents_queue = "*"
+worktrees = "⎇"
+branches = "B"
+panes = ">"
+windows = "W"
+marks = "M"
+projects = "P"
+
+# Per-section sort overrides — only specify what differs from global.
+[finder.sessions]
+sort = ["recent", "-current"]  # last-visited first, attached last
+
+[finder.agents_queue]
+sort = ["state", "unseen", "oldest"]  # urgency sort
+
+# [finder.worktrees]
+# sort = ["active", "-current"]
+# [finder.branches]
+# sort = ["active"]
+
+# Agent status tracking tuning. Most users won't need to change these.
+[status]
+# When true, hooks never go stale; observer skips transitions while any hook has been seen.
+always_hooks_for_status = false
+# Global smoothing delay (ms) for all state transitions (0 = use per-transition values).
+# transition_smoothing_ms = 0
+
+# Per-transition smoothing delays (ms). Suppresses flicker from rapid state changes.
+[status.smoothing]
+working_to_idle_ms = 3000
+working_to_completed_ms = 2000
+idle_to_working_ms = 0
+completed_to_idle_ms = 0
+
+# UI color scheme. Values are ANSI color numbers (0-255) or hex (#rrggbb).
+[colors.shared]
+session = "15"
+window = "245"
+dim = "240"
+selected = "236"
+current = "15"
+working = "3"
+waiting = "1"
+completed = "208"
+idle = "12"
+active = "2"
+move_src = "5"
+match = "13"
+ctx_low = "2"
+ctx_mid = "3"
+ctx_high = "9"
+separator = "240"
+footer_rule = "240"
+
+[colors.claude]
+accent = "5"
+plan = "4"
+accept = "5"
+safe = "6"
+danger = "1"
+
+[colors.codex]
+accent = "6"
+plan = "12"
+accept = "14"
+safe = "10"
+danger = "9"
+
+# Icon glyphs used in the TUI.
+[icons]
+working_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+working = "⚡"
+waiting = "?"
+completed = "✓"
+idle = "●"
+unknown = "·"
+column_separator = " │ "
+footer_separator = "╌"
+
+# Dashboard layout.
+[dashboard]
+columns = ["name", "branch", "command", "activity", "context", "mode"]
+window_headers = "auto"
+footer_padding = true
+footer_separator = true
+show_context_percentage = true
+
+# Worktree management. Also configurable per-repo in .cms.toml.
+[worktree]
+# base_dir = "../worktrees"
+# base_branch = "main"
+auto_open = false
+# commit_cmd = "claude -p ..."
+# go_cmd = "claude -p \"$CMS_PROMPT\""

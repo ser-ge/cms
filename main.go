@@ -41,9 +41,61 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load()
+	// Config generation commands don't need config loading.
+	if len(args) >= 1 && args[0] == "config" {
+		if len(args) > 1 {
+			switch args[1] {
+			case "init":
+				path, err := config.WriteDefaultConfigFile()
+				if err != nil {
+					if err == os.ErrExist {
+						exitErr(fmt.Errorf("config already exists at %s", path))
+					}
+					exitErr(err)
+				}
+				fmt.Println(path)
+				return
+			case "default":
+				data, err := config.DefaultConfigTOML()
+				exitIfErr(err)
+				os.Stdout.Write(data)
+				return
+			case "full":
+				data, err := config.FullConfigTOML()
+				exitIfErr(err)
+				os.Stdout.Write(data)
+				return
+			}
+		}
+		exitErr(fmt.Errorf("usage: cms config {init|default|full}"))
+		return
+	}
+
+	cfg, firstRun, err := config.Load()
 	if err != nil {
 		exitErr(err)
+	}
+
+	// First-run setup: prompt for search path and hooks if no config exists.
+	if firstRun {
+		result, err := config.RunSetup()
+		if err != nil {
+			exitErr(err)
+		}
+		if result.Cancelled {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", result.ConfigPath)
+		if result.InstallHooks {
+			if err := hook.RunInstall(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: hook install failed: %v\n", err)
+			}
+		}
+		// Reload after setup wrote the config.
+		cfg, _, err = config.Load()
+		if err != nil {
+			exitErr(err)
+		}
 	}
 	tui.InitStyles(cfg)
 
@@ -137,29 +189,6 @@ func main() {
 			exitIfErr(worktree.RunList())
 			return
 
-		// Config.
-		case "config":
-			if len(args) > 1 {
-				switch args[1] {
-				case "init":
-					path, err := config.WriteDefaultConfigFile()
-					if err != nil {
-						if err == os.ErrExist {
-							exitErr(fmt.Errorf("config already exists at %s", path))
-						}
-						exitErr(err)
-					}
-					fmt.Println(path)
-					return
-				case "default":
-					data, err := config.DefaultConfigTOML()
-					exitIfErr(err)
-					os.Stdout.Write(data)
-					return
-				}
-			}
-			exitErr(fmt.Errorf("usage: cms config {init|default}"))
-
 		// TUI screens.
 		case "new":
 			initial = tui.ScreenNewWorktree
@@ -226,7 +255,7 @@ func main() {
 	}
 
 	w := watcher.New()
-	w.ApplyConfig(cfg.General)
+	w.ApplyConfig(cfg.General, cfg.Status)
 	w.BootstrapSync() // pre-fill CachedState so finder has sessions+agents on first render
 	m := tui.NewRootModel(initial, sections, cfg, w)
 	p := tea.NewProgram(m, tea.WithAltScreen())

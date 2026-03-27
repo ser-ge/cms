@@ -106,7 +106,7 @@ func Land(args []string) error {
 		return err
 	}
 
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		return err
 	}

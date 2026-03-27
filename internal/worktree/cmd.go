@@ -114,7 +114,7 @@ func SwitchWorktree(root, branch string, opts SwitchOpts) error {
 		return err
 	}
 
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func GoWorktree(root, branch string, opts SwitchOpts) error {
 		return err
 	}
 
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		return err
 	}
@@ -574,7 +574,7 @@ func RunRemove(args []string) error {
 	}
 
 	// Run pre-remove hooks.
-	cfg, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		return err
 	}

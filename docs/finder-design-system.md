@@ -243,9 +243,9 @@ ctx_high  = "9"    # bright red — ≥80%
 
 ```toml
 [finder.section_icons]
-sessions  = "S"
-queue     = "*"
-worktrees = "⎇"
+sessions     = "S"
+agents_queue = "*"
+worktrees    = "⎇"
 branches  = "B"
 panes     = ">"
 windows   = "W"
