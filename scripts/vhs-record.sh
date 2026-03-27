@@ -12,7 +12,6 @@
 #   --width <px>          Terminal width in pixels (default: 1200)
 #   --height <px>         Terminal height in pixels (default: 600)
 #   --font-size <n>       Font size (default: 16)
-#   --sections <list>     cms finder sections (default: sessions,worktrees)
 #   --tape <file>         Custom tape template (default: scripts/demo.tape)
 #   --manual              Set up environment then drop into interactive shell
 #
@@ -24,7 +23,6 @@ THEME="Catppuccin Mocha"
 WIDTH=1200
 HEIGHT=600
 FONT_SIZE=16
-SECTIONS="sessions,worktrees"
 TAPE_TEMPLATE=""
 MANUAL=false
 
@@ -36,7 +34,6 @@ while [[ $# -gt 0 ]]; do
     --width)      WIDTH="$2";     shift 2 ;;
     --height)     HEIGHT="$2";    shift 2 ;;
     --font-size)  FONT_SIZE="$2"; shift 2 ;;
-    --sections)   SECTIONS="$2";  shift 2 ;;
     --tape)       TAPE_TEMPLATE="$2"; shift 2 ;;
     --manual)     MANUAL=true;    shift ;;
     -h|--help)
@@ -61,7 +58,7 @@ done
 RUN_ID="$(head -c6 /dev/urandom | xxd -p)"
 HARNESS_ROOT="/tmp/cms-vhs-$RUN_ID"
 REPOS="$HARNESS_ROOT/repos"
-CONFIG_DIR="$HARNESS_ROOT/config/cms"
+CONFIG_DIR="$HARNESS_ROOT/config"
 TMUX_SERVER="cms-vhs-$RUN_ID"
 TMUX_CONF="$HARNESS_ROOT/tmux.conf"
 T="tmux -L $TMUX_SERVER -f $TMUX_CONF"
@@ -83,26 +80,9 @@ echo "Building cms..."
 go build -o "$CMS_BIN" "$SCRIPT_DIR/.."
 echo "  $CMS_BIN"
 
-# ── Write isolated config ───────────────────────────────────────────
+# ── Install config ─────────────────────────────────────────────────
 mkdir -p "$CONFIG_DIR"
-
-# Convert comma-separated sections to TOML array
-TOML_SECTIONS=""
-IFS=',' read -ra SECTS <<< "$SECTIONS"
-for s in "${SECTS[@]}"; do
-  TOML_SECTIONS+="\"$s\", "
-done
-TOML_SECTIONS="[${TOML_SECTIONS%, }]"
-
-cat > "$CONFIG_DIR/config.toml" <<EOF
-[general]
-search_paths = [
-  { path = "$REPOS", max_depth = 2 },
-]
-
-[finder]
-include = $TOML_SECTIONS
-EOF
+sed "s|/tmp/cms-demo/repos|$REPOS|" "$SCRIPT_DIR/../config.toml" > "$CONFIG_DIR/config.toml"
 echo ""
 echo "Config: $CONFIG_DIR/config.toml"
 
@@ -115,17 +95,17 @@ set -g status off
 TMUXEOF
 
 # ── Start isolated tmux server ───────────────────────────────────────
-$T new-session  -d -s project_a -c "$REPOS/project_a/main"        -x 160 -y 40
-$T split-window -t project_a   -c "$REPOS/project_a/feature-auth"
-$T split-window -t project_a   -c "$REPOS/project_a/feature-api"
+$T new-session  -d -s webstore  -c "$REPOS/webstore/main"        -x 160 -y 40
+$T split-window -h -t webstore  -c "$REPOS/webstore/feature-auth"
+$T split-window -h -t webstore  -c "$REPOS/webstore/feature-api"
 
-$T new-session  -d -s project_b -c "$REPOS/project_b/main"
-$T split-window -t project_b   -c "$REPOS/project_b/shipped-v2"
-$T split-window -t project_b   -c "$REPOS/project_b/feature-dashboard"
+$T new-session  -d -s analytics -c "$REPOS/analytics/main"
+$T split-window -h -t analytics -c "$REPOS/analytics/shipped-v2"
+$T split-window -h -t analytics -c "$REPOS/analytics/feature-dashboard"
 
-$T new-session  -d -s project_d -c "$REPOS/project_d/main"
-$T split-window -t project_d   -c "$REPOS/project_d/feat-search"
-$T split-window -t project_d   -c "$REPOS/project_d/fix-perf"
+$T new-session  -d -s platform  -c "$REPOS/platform/main"
+$T split-window -h -t platform  -c "$REPOS/platform/feat-search"
+$T split-window -h -t platform  -c "$REPOS/platform/fix-perf"
 
 echo ""
 echo "Tmux sessions:"
@@ -139,17 +119,17 @@ if $MANUAL; then
   # Create sessions on the user's default tmux server (not isolated)
   echo ""
   echo "Creating tmux sessions on default server..."
-  tmux new-session  -d -s project_a -c "$REPOS/project_a/main"        2>/dev/null || true
-  tmux split-window -t project_a   -c "$REPOS/project_a/feature-auth" 2>/dev/null || true
-  tmux split-window -t project_a   -c "$REPOS/project_a/feature-api"  2>/dev/null || true
+  tmux new-session  -d -s webstore  -c "$REPOS/webstore/main"             2>/dev/null || true
+  tmux split-window -h -t webstore  -c "$REPOS/webstore/feature-auth"     2>/dev/null || true
+  tmux split-window -h -t webstore  -c "$REPOS/webstore/feature-api"      2>/dev/null || true
 
-  tmux new-session  -d -s project_b -c "$REPOS/project_b/main"             2>/dev/null || true
-  tmux split-window -t project_b   -c "$REPOS/project_b/shipped-v2"        2>/dev/null || true
-  tmux split-window -t project_b   -c "$REPOS/project_b/feature-dashboard" 2>/dev/null || true
+  tmux new-session  -d -s analytics -c "$REPOS/analytics/main"             2>/dev/null || true
+  tmux split-window -h -t analytics -c "$REPOS/analytics/shipped-v2"       2>/dev/null || true
+  tmux split-window -h -t analytics -c "$REPOS/analytics/feature-dashboard" 2>/dev/null || true
 
-  tmux new-session  -d -s project_d -c "$REPOS/project_d/main"          2>/dev/null || true
-  tmux split-window -t project_d   -c "$REPOS/project_d/feat-search"    2>/dev/null || true
-  tmux split-window -t project_d   -c "$REPOS/project_d/fix-perf"       2>/dev/null || true
+  tmux new-session  -d -s platform  -c "$REPOS/platform/main"             2>/dev/null || true
+  tmux split-window -h -t platform  -c "$REPOS/platform/feat-search"      2>/dev/null || true
+  tmux split-window -h -t platform  -c "$REPOS/platform/fix-perf"         2>/dev/null || true
 
   echo ""
   echo "Tmux sessions (default server):"
@@ -158,13 +138,13 @@ if $MANUAL; then
   # Write a helper env file that the user can source
   ENV_FILE="$HARNESS_ROOT/env.sh"
   cat > "$ENV_FILE" <<ENVEOF
-export XDG_CONFIG_HOME="$HARNESS_ROOT/config"
+export CMS_CONFIG_DIR="$HARNESS_ROOT/config"
 export PATH="$HARNESS_ROOT:\$PATH"
 ENVEOF
 
   ENV_FILE_FISH="$HARNESS_ROOT/env.fish"
   cat > "$ENV_FILE_FISH" <<ENVEOF
-set -gx XDG_CONFIG_HOME "$HARNESS_ROOT/config"
+set -gx CMS_CONFIG_DIR "$HARNESS_ROOT/config"
 fish_add_path --prepend "$HARNESS_ROOT"
 ENVEOF
 
@@ -178,16 +158,16 @@ ENVEOF
   echo "  source $ENV_FILE"
   echo ""
   echo "Then run:"
-  echo "  cms $SECTIONS"
+  echo "  cms"
   echo ""
   echo "To hand-record with VHS:"
   echo "  vhs record > my-demo.tape"
   echo "  vhs my-demo.tape"
   echo ""
   echo "To clean up when done:"
-  echo "  tmux kill-session -t project_a"
-  echo "  tmux kill-session -t project_b"
-  echo "  tmux kill-session -t project_d"
+  echo "  tmux kill-session -t webstore"
+  echo "  tmux kill-session -t analytics"
+  echo "  tmux kill-session -t platform"
   echo "  rm -rf $HARNESS_ROOT"
   echo ""
 
@@ -211,10 +191,9 @@ sed \
   -e "s|__WIDTH__|$WIDTH|g" \
   -e "s|__HEIGHT__|$HEIGHT|g" \
   -e "s|__FONT_SIZE__|$FONT_SIZE|g" \
-  -e "s|__XDG_CONFIG_HOME__|$HARNESS_ROOT/config|g" \
+  -e "s|__CMS_CONFIG_DIR__|$HARNESS_ROOT/config|g" \
   -e "s|__CMS_TMUX_SOCKET__|$TMUX_SOCKET|g" \
   -e "s|__BIN_DIR__|$HARNESS_ROOT|g" \
-  -e "s|__SECTIONS__|$SECTIONS|g" \
   "$TAPE_TEMPLATE" > "$TAPE_FILE"
 
 echo ""

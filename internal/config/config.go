@@ -480,6 +480,9 @@ func (c *Config) normalize() {
 }
 
 func configPath() string {
+	if dir := os.Getenv("CMS_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, "config.toml")
+	}
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "cms", "config.toml")
 	}

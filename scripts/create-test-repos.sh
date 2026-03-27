@@ -82,17 +82,17 @@ echo ""
 
 # --- Projects ---
 
-# project_a: simple multi-feature project
-make_project "project_a" "feature-auth" "feature-api" "bugfix-login"
+# webstore: simple multi-feature project
+make_project "webstore" "feature-auth" "feature-api" "bugfix-login"
 
-# project_b: has a merged branch + active ones
-make_project_with_merged "project_b" "shipped-v2" "feature-dashboard" "refactor-db"
+# analytics: has a merged branch + active ones
+make_project_with_merged "analytics" "shipped-v2" "feature-dashboard" "refactor-db"
 
-# project_c: single worktree (just main)
-make_project "project_c"
+# docs: single worktree (just main)
+make_project "docs"
 
-# project_d: many branches to test scrolling/filtering
-make_project "project_d" \
+# platform: many branches to test scrolling/filtering
+make_project "platform" \
   "feat-search" "feat-export" "feat-import" "feat-notifications" \
   "fix-perf" "fix-memory" "chore-deps" "chore-ci"
 

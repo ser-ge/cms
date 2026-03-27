@@ -13,7 +13,7 @@ Set TypingSpeed 60ms
 Set WindowBar Colorful
 
 # Isolated cms environment
-Env XDG_CONFIG_HOME "__XDG_CONFIG_HOME__"
+Env CMS_CONFIG_DIR "__CMS_CONFIG_DIR__"
 Env CMS_TMUX_SOCKET "__CMS_TMUX_SOCKET__"
 
 # Add built cms to PATH and clear screen (hidden from recording)
@@ -28,7 +28,7 @@ Show
 
 # Launch cms fuzzy finder
 Sleep 300ms
-Type "cms __SECTIONS__"
+Type "cms"
 Sleep 500ms
 Enter
 Sleep 3s
