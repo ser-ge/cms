@@ -141,8 +141,12 @@ func TestHandleHookEventSessionStart(t *testing.T) {
 	if status.Source != agent.SourceHook {
 		t.Fatalf("source = %v, want SourceHook", status.Source)
 	}
-	if len(rec.ingress) != 1 || rec.ingress[0].Kind != trace.IngressHookEvent {
-		t.Fatalf("expected hook ingress event, got %#v", rec.ingress)
+	if len(rec.ingress) < 1 || rec.ingress[0].Kind != trace.IngressHookEvent {
+		t.Fatalf("expected hook ingress event first, got %#v", rec.ingress)
+	}
+	// Second event is the activity_transition trace.
+	if len(rec.ingress) < 2 || rec.ingress[1].Kind != trace.IngressActivityTransition {
+		t.Fatalf("expected activity_transition second, got %#v", rec.ingress)
 	}
 }
 

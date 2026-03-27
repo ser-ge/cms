@@ -14,6 +14,7 @@ const (
 	IngressFullRefreshSnapshot IngressKind = "full_refresh_snapshot"
 	IngressTimerFired          IngressKind = "timer_fired"
 	IngressCaptureSnapshot     IngressKind = "capture_snapshot"
+	IngressActivityTransition  IngressKind = "activity_transition"
 )
 
 type TmuxStateKind string
@@ -78,6 +79,15 @@ type CaptureSnapshotPayload struct {
 	PaneID  string `json:"pane_id"`
 	Source  string `json:"source"`
 	Content string `json:"content"`
+}
+
+type ActivityTransitionPayload struct {
+	PaneID   string `json:"pane_id"`
+	Source   string `json:"source"`   // "hook" or "observer"
+	From     string `json:"from"`     // previous activity
+	Parsed   string `json:"parsed"`   // raw parsed activity (before hold/smoothing)
+	Resolved string `json:"resolved"` // after hold logic, before smoothing
+	Final    string `json:"final"`    // after smoothing (what's actually applied)
 }
 
 type TmuxSnapshotPayload struct {

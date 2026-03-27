@@ -163,7 +163,25 @@ func (w *Watcher) transitionAgent(paneID string, source agent.StatusSource, prev
 
 	// Apply smoothing: if the resolved state differs from current,
 	// check if we need a smoothing delay.
-	return w.applySmoothing(paneID, source, prev.Activity, resolved)
+	final := w.applySmoothing(paneID, source, prev.Activity, resolved)
+
+	w.recorder.RecordIngress(trace.IngressActivityTransition, trace.ActivityTransitionPayload{
+		PaneID:   paneID,
+		Source:   sourceLabel(source),
+		From:     prev.Activity.String(),
+		Parsed:   parsed.String(),
+		Resolved: resolved.String(),
+		Final:    final.String(),
+	})
+
+	return final
+}
+
+func sourceLabel(s agent.StatusSource) string {
+	if s == agent.SourceHook {
+		return "hook"
+	}
+	return "observer"
 }
 
 // resolveObserver computes the target activity for observer-sourced updates,
@@ -264,7 +282,16 @@ func (w *Watcher) commitSmoothedTransition(paneID string, source agent.StatusSou
 	default:
 	}
 
+	// Check that this timer is still the active smoothing entry.
+	// A concurrent hook/observer event may have cancelled or replaced it.
 	w.mu.Lock()
+	pendingTarget, stillPending := w.smoothingTarget[paneID]
+	if !stillPending || pendingTarget != target {
+		// Another event already cancelled or replaced our smoothing.
+		w.mu.Unlock()
+		debug.Logf("watcher: smoothing commit pane=%s cancelled (target changed)", paneID)
+		return
+	}
 	delete(w.smoothingTimers, paneID)
 	delete(w.smoothingTarget, paneID)
 	w.mu.Unlock()

@@ -455,12 +455,16 @@ func (w *Watcher) handleHookEvent(ev hook.Event) {
 	switch ev.Kind {
 	case hook.SessionStart:
 		status.Running = true
-		status.Activity = agent.ActivityIdle
+		// Preserve existing activity if the observer already detected the agent
+		// as working. session-start means "I'm here", not "I stopped working".
+		if !has || existing.Activity == agent.ActivityUnknown {
+			status.Activity = agent.ActivityIdle
+		}
 		status.SessionID = ev.SessionID
 		if err := resume.SaveClaudeSession(paneID, ev.SessionID); err != nil {
 			debug.Logf("watcher: resume save failed pane=%s err=%v", paneID, err)
 		}
-		debug.Logf("watcher: hook session-start pane=%s session=%s", paneID, ev.SessionID)
+		debug.Logf("watcher: hook session-start pane=%s session=%s prev_activity=%s", paneID, ev.SessionID, existing.Activity)
 
 	case hook.Stop:
 		status.Activity = agent.ActivityIdle // transitionAgent will promote to Completed if prev was Working

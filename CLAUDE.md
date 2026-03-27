@@ -111,12 +111,20 @@ internal/
     record.go                     Recorder interface, JSONLRecorder, NopRecorder
     jsonl_test.go                 JSONL serialization tests
 
+  trace/
+    types.go                      IngressKind, ActivityTransitionPayload, all trace event types
+    record.go                     Recorder interface, JSONLRecorder, normalize helpers
+
   watcher/
     events.go                     StateMsg, AgentUpdateMsg, FocusChangedMsg, GitUpdateMsg
     watcher.go                    Watcher: New, Start, Stop, CachedState (returns deep copies)
     pane_tracker.go               Output debounce, recheck, activity transitions, hysteresis
     proc_poller.go                Process table polling loop
     git_poller.go                 Git info polling loop
+    live_harness_test.go          Live harness helper (pane captures, wait loops)
+    live_trace_smoke_test.go      Live tmux smoke test (CMS_LIVE_TRACE_SMOKE)
+    claude_integration_test.go    Claude hook integration tests (CMS_CLAUDE_INTEGRATION)
+    claude_multistep_test.go      Multi-step agentic transition diagnostic
 
   tui/
     styles.go                     All shared lipgloss styles, InitStyles, ProviderAccent
@@ -184,4 +192,7 @@ Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
 - **Queue renders fixed-width columns.** Title is `session/branch`, description columns are provider (6), context% (4), activity (9, padded for ANSI), duration (4). Titles padded to longest across all items.
 - **Picker supports normal-mode actions.** `PickerAction` enum (e.g. `PickerActionDelete`) with y/n confirmation prompt. Picker sets `action` + `chosen`; finder dispatches by item kind (kill session/pane, remove mark).
 - **Marks are file-backed.** Stored as JSON at `~/.config/cms/marks.json`. Pane IDs are globally addressable in tmux; session/window stored for display only.
+- **Internal commands bypass config loading.** `cms internal hook` and `cms internal refresh` are dispatched in `main()` before `config.Load()`. Hook commands are called by Claude Code and must never fail due to config validation errors. Any new internal subcommand must also run before config.
+- **`session-start` preserves existing activity.** If the observer already detected an agent as Working before the `session-start` hook arrives, the hook preserves the current activity instead of resetting to Idle. `session-start` means "I'm here", not "I stopped working".
+- **`activity_transition` trace events record the full state machine.** Every call to `transitionAgent` emits a trace with `from`, `parsed` (raw), `resolved` (after hold/promotion), and `final` (after smoothing) activity plus source (hook/observer). Use `ingress.jsonl` to diagnose status cycling.
 - **Use `go build -o /dev/null ./...` for validation.** The cms binary manages tmux; writing it to disk can interfere with the running session.

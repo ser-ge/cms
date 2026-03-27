@@ -135,6 +135,8 @@ func normalizePayload(payload any) any {
 		return p
 	case CaptureSnapshotPayload:
 		return p
+	case ActivityTransitionPayload:
+		return p
 	default:
 		return payload
 	}

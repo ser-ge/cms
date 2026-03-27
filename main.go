@@ -25,6 +25,17 @@ type jumpCandidate struct {
 
 func main() {
 	initDebugLogger()
+
+	args := os.Args[1:]
+
+	// Internal commands (e.g. hook forwarding) must run before config loading.
+	// Hook commands are called by Claude Code and must never fail due to
+	// config validation errors — they must be unconditionally reliable.
+	if len(args) >= 1 && args[0] == "internal" {
+		exitIfErr(runInternal(args[1:]))
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		exitErr(err)
@@ -33,8 +44,6 @@ func main() {
 
 	initial := tui.ScreenFinder
 	sections := cfg.Finder.Include // default: config-driven
-
-	args := os.Args[1:]
 
 	// Global help.
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
@@ -137,10 +146,7 @@ func main() {
 			exitIfErr(hook.RunUninstall())
 			return
 
-		// Internal (hidden from help).
-		case "internal":
-			exitIfErr(runInternal(args[1:]))
-			return
+		// "internal" is handled before config load (see top of main).
 		case "session":
 			if len(os.Args) > 2 && os.Args[2] == "save" {
 				target, err := tmux.FetchCurrentTarget()

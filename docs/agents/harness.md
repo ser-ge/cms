@@ -39,6 +39,7 @@ Current event kinds:
 - `full_refresh_snapshot`
 - `timer_fired`
 - `capture_snapshot`
+- `activity_transition`
 
 These are recorded from the watcher at real ingress points:
 
@@ -49,6 +50,7 @@ These are recorded from the watcher at real ingress points:
 - full refresh
 - observer pane captures
 - settle/smoothing/completed-decay timers
+- every activity state transition (from/parsed/resolved/final + source)
 
 ### `tmux_state.jsonl`
 
@@ -195,6 +197,33 @@ Current known live blocker:
 
 - Claude startup environment noise, especially MCP/auth/plugin startup state, can block or delay the scenarios before they reach the hook we want
 
+### 3. Multi-step agentic transition diagnostic
+
+File:
+
+- `internal/watcher/claude_multistep_test.go`
+
+Gate:
+
+```bash
+CMS_CLAUDE_INTEGRATION=1 go test ./internal/watcher -run TestClaudeMultiStepTransitions -v -timeout 5m
+```
+
+What it does:
+
+- seeds a small Go project (3 files, 5 functions)
+- gives Claude a multi-step task requiring Read, Write, and Bash tool calls
+- records full activity transition trace with `activity_transition` events
+- analyzes the transition timeline for Working→Completed→Working cycles
+- reports hook event counts, cycle count, and max cycle gap
+
+What it proved:
+
+- `session-start` hook arriving after observer already set Working caused a false Working→Completed cycle (fixed: session-start now preserves existing activity)
+- hooks were silently failing due to config.Load() running before internal command dispatch (fixed: internal commands bypass config)
+- observer hold window (2s) and smoothing (3s working→idle) are sufficient for sub-second gaps during active tool use
+- MCP server startup failures can prevent hooks from firing in some runs
+
 ## Claude-Specific Findings From The Harness
 
 The harness already established several facts about the installed Claude CLI/environment:
@@ -325,4 +354,10 @@ Run full Claude integration test:
 
 ```bash
 CMS_CLAUDE_INTEGRATION=1 go test ./internal/watcher -run TestClaudeHookIntegration -v
+```
+
+Run multi-step transition diagnostic:
+
+```bash
+CMS_CLAUDE_INTEGRATION=1 go test ./internal/watcher -run TestClaudeMultiStepTransitions -v -timeout 5m
 ```
