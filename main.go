@@ -18,6 +18,9 @@ import (
 	"github.com/serge/cms/internal/worktree"
 )
 
+// version is set at build time via ldflags.
+var version = "dev"
+
 type jumpCandidate struct {
 	paneID   string
 	activity agent.Activity
@@ -27,6 +30,12 @@ func main() {
 	initDebugLogger()
 
 	args := os.Args[1:]
+
+	// Version flag — runs before config loading.
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "-V") {
+		fmt.Println("cms", version)
+		return
+	}
 
 	// Internal commands (e.g. hook forwarding) must run before config loading.
 	// Hook commands are called by Claude Code and must never fail due to

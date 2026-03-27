@@ -1,6 +1,28 @@
 # cms
 
+[![Release](https://img.shields.io/github/v/release/ser-ge/cms)](https://github.com/ser-ge/cms/releases)
+[![Go](https://img.shields.io/github/go-mod-go-version/ser-ge/cms)](https://go.dev/)
+[![License](https://img.shields.io/github/license/ser-ge/cms)](LICENSE)
+
 `cms` is a tmux session picker and dashboard with Claude and Codex awareness.
+
+## Install
+
+### Homebrew
+
+```bash
+brew install ser-ge/tap/cms
+```
+
+### Go
+
+```bash
+go install github.com/ser-ge/cms@latest
+```
+
+### Binary
+
+Download from [GitHub Releases](https://github.com/ser-ge/cms/releases).
 
 ## Quickstart
 

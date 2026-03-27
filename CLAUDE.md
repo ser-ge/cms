@@ -198,3 +198,21 @@ Infrastructure  tmux/*           tmux I/O (types, commands, control mode)
 - **`session-start` preserves existing activity.** If the observer already detected an agent as Working before the `session-start` hook arrives, the hook preserves the current activity instead of resetting to Idle. `session-start` means "I'm here", not "I stopped working".
 - **`activity_transition` trace events record the full state machine.** Every call to `transitionAgent` emits a trace with `from`, `parsed` (raw), `resolved` (after hold/promotion), and `final` (after smoothing) activity plus source (hook/observer). Use `ingress.jsonl` to diagnose status cycling.
 - **Use `go build -o /dev/null ./...` for validation.** The cms binary manages tmux; writing it to disk can interfere with the running session.
+
+## Commit Convention
+
+All commits use conventional commit format. This drives changelog generation.
+
+```
+feat: ...       New feature (bumps minor)
+fix: ...        Bug fix (bumps patch)
+refactor: ...   Code restructuring (no version bump)
+docs: ...       Documentation only
+test: ...       Tests only
+chore: ...      Build, CI, tooling
+perf: ...       Performance improvement
+```
+
+- Breaking changes: add `!` after type — `feat!: remove --legacy flag`
+- Scope is optional: `feat(worktree): add land command`
+- Subject: lowercase, imperative, no period

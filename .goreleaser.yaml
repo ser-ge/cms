@@ -1,0 +1,43 @@
+version: 2
+
+builds:
+  - main: .
+    binary: cms
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: ["tar.gz"]
+    name_template: "cms_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat'
+    - title: Bug Fixes
+      regexp: '^fix'
+    - title: Performance
+      regexp: '^perf'
+    - title: Other
+      order: 999
+
+homebrew_casks:
+  - repository:
+      owner: ser-ge
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/ser-ge/cms
+    description: Tmux session picker and dashboard with Claude and Codex awareness
+    license: MIT
+    binaries:
+      - cms
