@@ -27,17 +27,20 @@ for arg in "$@"; do
 done
 SECTIONS="${SECTIONS:-worktrees}"
 
-HARNESS_ROOT="/tmp/cms-harness"
+RUN_ID="$(head -c6 /dev/urandom | xxd -p)"
+HARNESS_ROOT="/tmp/cms-harness-$RUN_ID"
 REPOS="$HARNESS_ROOT/repos"
 CONFIG_DIR="$HARNESS_ROOT/config/cms"
-TMUX_SERVER="cms-harness"
+TMUX_SERVER="cms-h-$RUN_ID"
 TMUX_CONF="$HARNESS_ROOT/tmux.conf"
 T="tmux -L $TMUX_SERVER -f $TMUX_CONF"
 
 # ── Cleanup ────────────────────────────────────────────────────────────
-cleanup() { $T kill-server 2>/dev/null || true; }
+cleanup() {
+  $T kill-server 2>/dev/null || true
+  rm -rf "$HARNESS_ROOT"
+}
 trap cleanup EXIT
-cleanup
 
 # ── Create test repos ──────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -123,8 +126,10 @@ $T list-panes -a -F '  #{session_name}:#{window_index}.#{pane_index}  #{pane_cur
 
 # ── Attach and run cms ─────────────────────────────────────────────────
 # Set up env in pane 0 so cms uses our isolated config.
+# CMS_TMUX_SOCKET tells cms to talk to the harness server, not the user's default.
+TMUX_SOCKET="/tmp/tmux-$(id -u)/$TMUX_SERVER"
 $T send-keys -t project_a:.0 \
-  "export XDG_CONFIG_HOME='$HARNESS_ROOT/config' PATH='$HARNESS_ROOT:\$PATH'" Enter
+  "export XDG_CONFIG_HOME='$HARNESS_ROOT/config' PATH='$HARNESS_ROOT:\$PATH' CMS_TMUX_SOCKET='$TMUX_SOCKET'" Enter
 $T send-keys -t project_a:.0 "cms $SECTIONS" Enter
 
 echo ""

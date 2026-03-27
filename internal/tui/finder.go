@@ -328,7 +328,9 @@ func (m *finderModel) buildSessionItems(agents map[string]agent.AgentStatus) {
 
 		var parts []string
 		parts = append(parts, fmt.Sprintf("%dw", len(sess.Windows)))
-		if counts := renderStateCounts(stateCounts); counts != "" {
+		if summary := m.agentSummary(sess, agents); summary != "" {
+			parts = append(parts, summary)
+		} else if counts := renderStateCounts(stateCounts); counts != "" {
 			parts = append(parts, counts)
 		}
 		if sess.Attached {
