@@ -175,6 +175,7 @@ type FinderConfig struct {
 	StateOrder []string `toml:"state_order"` // agents queue urgency order (used by "state" sort key)
 
 	ShowContextPercentage bool `toml:"show_context_percentage"`
+	LocalScope bool `toml:"local_scope"` // restrict items to current session's context
 
 	// Per-section icons (glyph identifies type, color encodes state).
 	SectionIcons SectionIconsConfig `toml:"section_icons"`

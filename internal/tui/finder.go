@@ -190,10 +190,10 @@ func (m finderModel) Init() tea.Cmd {
 		cmds = append(cmds, scanProjectsCmd(m.cfg))
 	}
 	if (want["worktrees"] || want["branches"]) && !m.hasWorktree {
-		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher))
+		cmds = append(cmds, scanWorktreesCmd(m.sessData, m.agentData, m.watcher, m.cfg.Finder.LocalScope))
 	}
 	if want["branches"] && !m.hasBranch {
-		cmds = append(cmds, scanBranchesCmd(m.sessData, m.watcher))
+		cmds = append(cmds, scanBranchesCmd(m.sessData, m.watcher, m.cfg.Finder.LocalScope))
 	}
 	if want["marks"] && !m.hasMark {
 		cmds = append(cmds, loadMarksCmd(m.sessData))
@@ -217,72 +217,128 @@ func scanProjectsCmd(cfg config.Config) tea.Cmd {
 	}
 }
 
-type worktreesScannedMsg struct {
-	worktrees []git.Worktree
+// repoWorktrees groups worktrees from a single repo root.
+type repoWorktrees struct {
 	repoRoot  string
+	worktrees []git.Worktree
 }
 
-// scanWorktreesCmd discovers worktrees for the current pane's repo.
-func scanWorktreesCmd(sessions []tmux.Session, agents map[string]agent.AgentStatus, w *watcher.Watcher) tea.Cmd {
-	return func() tea.Msg {
-		_, _, current := w.CachedState()
-		cwd := currentPaneWorkingDir(sessions, current)
-		if cwd == "" {
-			// Fallback to process working directory (e.g. at startup before
-			// watcher has populated current target).
-			cwd, _ = os.Getwd()
-		}
-		if cwd == "" {
-			return worktreesScannedMsg{}
-		}
-		root, err := worktree.FindRepoRoot(cwd)
-		if err != nil {
-			return worktreesScannedMsg{}
-		}
-		wts, err := git.ListWorktrees(root)
-		if err != nil {
-			return worktreesScannedMsg{}
-		}
-		return worktreesScannedMsg{worktrees: wts, repoRoot: root}
-	}
+type worktreesScannedMsg struct {
+	repos []repoWorktrees
 }
 
-// scanBranchesCmd lists local branches and cross-references with worktrees.
-func scanBranchesCmd(sessions []tmux.Session, w *watcher.Watcher) tea.Cmd {
-	return func() tea.Msg {
-		_, _, current := w.CachedState()
-		cwd := currentPaneWorkingDir(sessions, current)
-		if cwd == "" {
-			cwd, _ = os.Getwd()
-		}
-		if cwd == "" {
-			return branchesScannedMsg{}
-		}
-		root, err := worktree.FindRepoRoot(cwd)
-		if err != nil {
-			return branchesScannedMsg{}
-		}
-		branches, err := git.ListLocalBranches(root)
-		if err != nil {
-			return branchesScannedMsg{}
-		}
-		// Build set of branches that have worktrees.
-		wtBranches := map[string]bool{}
-		wts, _ := git.ListWorktrees(root)
-		for _, wt := range wts {
-			if wt.Branch != "" {
-				wtBranches[wt.Branch] = true
-			}
-		}
-		return branchesScannedMsg{branches: branches, repoRoot: root, worktreeBranches: wtBranches}
-	}
+// repoBranches groups branches from a single repo root.
+type repoBranches struct {
+	repoRoot         string
+	branches         []string
+	worktreeBranches map[string]bool
 }
 
 type branchesScannedMsg struct {
-	branches []string
-	repoRoot string
-	// Branches that have worktrees (for Active marking).
-	worktreeBranches map[string]bool
+	repos []repoBranches
+}
+
+// collectRepoRoots returns unique repo roots from pane working dirs.
+// When localScope is true, only the current pane's repo is returned.
+func collectRepoRoots(sessions []tmux.Session, current tmux.CurrentTarget, localScope bool) []string {
+	if localScope {
+		cwd := currentPaneWorkingDir(sessions, current)
+		if cwd == "" {
+			cwd, _ = os.Getwd()
+		}
+		if cwd == "" {
+			return nil
+		}
+		root, err := worktree.FindRepoRoot(cwd)
+		if err != nil {
+			return nil
+		}
+		return []string{root}
+	}
+
+	// Collect unique repo roots from all panes across all sessions.
+	seen := map[string]bool{}
+	var roots []string
+	for _, sess := range sessions {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				if pane.WorkingDir == "" {
+					continue
+				}
+				root, err := worktree.FindRepoRoot(pane.WorkingDir)
+				if err != nil {
+					continue
+				}
+				if !seen[root] {
+					seen[root] = true
+					roots = append(roots, root)
+				}
+			}
+		}
+	}
+	// Fallback to process working directory if no panes had repos.
+	if len(roots) == 0 {
+		cwd, _ := os.Getwd()
+		if cwd != "" {
+			if root, err := worktree.FindRepoRoot(cwd); err == nil {
+				roots = append(roots, root)
+			}
+		}
+	}
+	return roots
+}
+
+// scanWorktreesCmd discovers worktrees across repos.
+// When session-scoped, only the current pane's repo is scanned.
+func scanWorktreesCmd(sessions []tmux.Session, agents map[string]agent.AgentStatus, w *watcher.Watcher, localScope bool) tea.Cmd {
+	return func() tea.Msg {
+		_, _, current := w.CachedState()
+		roots := collectRepoRoots(sessions, current, localScope)
+		if len(roots) == 0 {
+			return worktreesScannedMsg{}
+		}
+		var repos []repoWorktrees
+		for _, root := range roots {
+			wts, err := git.ListWorktrees(root)
+			if err != nil {
+				continue
+			}
+			repos = append(repos, repoWorktrees{repoRoot: root, worktrees: wts})
+		}
+		return worktreesScannedMsg{repos: repos}
+	}
+}
+
+// scanBranchesCmd lists local branches across repos.
+// When session-scoped, only the current pane's repo is scanned.
+func scanBranchesCmd(sessions []tmux.Session, w *watcher.Watcher, localScope bool) tea.Cmd {
+	return func() tea.Msg {
+		_, _, current := w.CachedState()
+		roots := collectRepoRoots(sessions, current, localScope)
+		if len(roots) == 0 {
+			return branchesScannedMsg{}
+		}
+		var repos []repoBranches
+		for _, root := range roots {
+			branches, err := git.ListLocalBranches(root)
+			if err != nil {
+				continue
+			}
+			wtBranches := map[string]bool{}
+			wts, _ := git.ListWorktrees(root)
+			for _, wt := range wts {
+				if wt.Branch != "" {
+					wtBranches[wt.Branch] = true
+				}
+			}
+			repos = append(repos, repoBranches{
+				repoRoot:         root,
+				branches:         branches,
+				worktreeBranches: wtBranches,
+			})
+		}
+		return branchesScannedMsg{repos: repos}
+	}
 }
 
 type marksLoadedMsg struct {
@@ -504,49 +560,48 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 	case worktreesScannedMsg:
 		m.worktreeItems = nil
 		m.worktreeIdx = nil
-		defBranch := ""
-		if msg.repoRoot != "" {
-			defBranch, _ = worktree.DefaultBranch(msg.repoRoot)
-		}
-		projectName := filepath.Base(msg.repoRoot)
+		for _, repo := range msg.repos {
+			defBranch, _ := worktree.DefaultBranch(repo.repoRoot)
+			projectName := filepath.Base(repo.repoRoot)
 
-		for _, wt := range msg.worktrees {
-			if wt.IsBare {
-				continue
-			}
-			branch := wt.Branch
-			if branch == "" {
-				branch = "(detached)"
-			}
-
-			// Title: project/branch (same style as agents queue).
-			title := projectName + "/" + branch
-
-			// Static description: merged status (expensive git check, done once at scan).
-			desc := ""
-			merged := false
-			if !wt.IsMain && defBranch != "" && wt.Branch != "" && wt.Branch != defBranch {
-				if integrated, reason := worktree.IsBranchIntegrated(msg.repoRoot, wt.Branch, defBranch); integrated {
-					desc = "[merged: " + reason + "]"
-					merged = true
+			for _, wt := range repo.worktrees {
+				if wt.IsBare {
+					continue
 				}
-			}
+				branch := wt.Branch
+				if branch == "" {
+					branch = "(detached)"
+				}
 
-			// Icon and Active are set to defaults here; worktreeItemsWithOpenStatus()
-			// recomputes them on every rebuildPicker() using live agent data.
-			m.worktreeItems = append(m.worktreeItems, PickerItem{
-				Title:       title,
-				Description: desc,
-				FilterValue: branch + " " + wt.Path,
-				Active:      wt.IsMain,
-				Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, dimStyle),
-			})
-			m.worktreeIdx = append(m.worktreeIdx, finderEntry{
-				kind:           KindWorktree,
-				worktreePath:   wt.Path,
-				worktreeBranch: wt.Branch,
-				worktreeMerged: merged,
-			})
+				// Title: project/branch (same style as agents queue).
+				title := projectName + "/" + branch
+
+				// Static description: merged status (expensive git check, done once at scan).
+				desc := ""
+				merged := false
+				if !wt.IsMain && defBranch != "" && wt.Branch != "" && wt.Branch != defBranch {
+					if integrated, reason := worktree.IsBranchIntegrated(repo.repoRoot, wt.Branch, defBranch); integrated {
+						desc = "[merged: " + reason + "]"
+						merged = true
+					}
+				}
+
+				// Icon and Active are set to defaults here; worktreeItemsWithOpenStatus()
+				// recomputes them on every rebuildPicker() using live agent data.
+				m.worktreeItems = append(m.worktreeItems, PickerItem{
+					Title:       title,
+					Description: desc,
+					FilterValue: branch + " " + wt.Path,
+					Active:      wt.IsMain,
+					Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Worktrees, dimStyle),
+				})
+				m.worktreeIdx = append(m.worktreeIdx, finderEntry{
+					kind:           KindWorktree,
+					worktreePath:   wt.Path,
+					worktreeBranch: wt.Branch,
+					worktreeMerged: merged,
+				})
+			}
 		}
 		m.hasWorktree = true
 		m.rebuildPicker()
@@ -555,27 +610,35 @@ func (m finderModel) Update(msg tea.Msg) (finderModel, tea.Cmd) {
 	case branchesScannedMsg:
 		m.branchItems = nil
 		m.branchIdx = nil
-		for _, branch := range msg.branches {
-			desc := "local branch"
-			hasWT := msg.worktreeBranches[branch]
-			if hasWT {
-				desc = "has worktree"
+		for _, repo := range msg.repos {
+			projectName := filepath.Base(repo.repoRoot)
+			multiRepo := len(msg.repos) > 1
+			for _, branch := range repo.branches {
+				desc := "local branch"
+				hasWT := repo.worktreeBranches[branch]
+				if hasWT {
+					desc = "has worktree"
+				}
+				iconStyle := dimStyle
+				if hasWT {
+					iconStyle = activeStyle
+				}
+				title := branch
+				if multiRepo {
+					title = projectName + "/" + branch
+				}
+				m.branchItems = append(m.branchItems, PickerItem{
+					Title:       title,
+					Description: desc,
+					FilterValue: branch,
+					Active:      hasWT,
+					Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Branches, iconStyle),
+				})
+				m.branchIdx = append(m.branchIdx, finderEntry{
+					kind:           KindBranch,
+					worktreeBranch: branch,
+				})
 			}
-			iconStyle := dimStyle
-			if hasWT {
-				iconStyle = activeStyle
-			}
-			m.branchItems = append(m.branchItems, PickerItem{
-				Title:       branch,
-				Description: desc,
-				FilterValue: branch,
-				Active:      hasWT,
-				Icon:        RenderSectionIcon(m.cfg.Finder.SectionIcons.Branches, iconStyle),
-			})
-			m.branchIdx = append(m.branchIdx, finderEntry{
-				kind:           KindBranch,
-				worktreeBranch: branch,
-			})
 		}
 		m.hasBranch = true
 		m.rebuildPicker()
@@ -1086,16 +1149,31 @@ func (m *finderModel) filteredBranchItems() ([]PickerItem, []finderEntry) {
 	return m.sortedSectionItems(items, entries, "branches", isCurrent, nil)
 }
 
+// sessionFilteredData returns session data filtered to the attached session
+// when session scope is enabled, or all sessions otherwise.
+func (m *finderModel) sessionFilteredData() []tmux.Session {
+	if !m.cfg.Finder.LocalScope {
+		return m.sessData
+	}
+	for _, sess := range m.sessData {
+		if sess.Attached {
+			return []tmux.Session{sess}
+		}
+	}
+	return m.sessData // fallback: no attached session found
+}
+
 // buildWindowItems populates window picker items from session data.
 func (m *finderModel) buildWindowItems() {
+	sessions := m.sessionFilteredData()
 	winCap := 0
-	for _, s := range m.sessData {
+	for _, s := range sessions {
 		winCap += len(s.Windows)
 	}
 	m.windowItems = make([]PickerItem, 0, winCap)
 	m.windowIdx = make([]finderEntry, 0, winCap)
 	stateOrder := m.cfg.Finder.GetStateOrder("windows")
-	for _, sess := range m.sessData {
+	for _, sess := range sessions {
 		for _, win := range sess.Windows {
 			title := fmt.Sprintf("%s:%s", sess.Name, win.Name)
 
@@ -1147,8 +1225,9 @@ func (m *finderModel) buildWindowItems() {
 // buildPaneItems populates pane picker items from session data.
 // Agent panes get columnar descriptions: path  provider  context%  activity  mode.
 func (m *finderModel) buildPaneItems() {
+	sessions := m.sessionFilteredData()
 	paneCap := 0
-	for _, s := range m.sessData {
+	for _, s := range sessions {
 		for _, w := range s.Windows {
 			paneCap += len(w.Panes)
 		}
@@ -1167,7 +1246,7 @@ func (m *finderModel) buildPaneItems() {
 	}
 	var pending []paneEntry
 
-	for _, sess := range m.sessData {
+	for _, sess := range sessions {
 		for _, win := range sess.Windows {
 			for _, pane := range win.Panes {
 				title := fmt.Sprintf("%s:%s.%d", sess.Name, win.Name, pane.Index)
@@ -1509,11 +1588,11 @@ func RunHeadless(cfg config.Config, w *watcher.Watcher, sections []string) *Head
 		m, _ = m.Update(projectsScannedMsg{project.Scan(cfg)})
 	}
 	if want["worktrees"] || want["branches"] {
-		msg := scanWorktreesCmd(m.sessData, m.agentData, w)()
+		msg := scanWorktreesCmd(m.sessData, m.agentData, w, cfg.Finder.LocalScope)()
 		m, _ = m.Update(msg)
 	}
 	if want["branches"] {
-		msg := scanBranchesCmd(m.sessData, w)()
+		msg := scanBranchesCmd(m.sessData, w, cfg.Finder.LocalScope)()
 		m, _ = m.Update(msg)
 	}
 	if want["marks"] {

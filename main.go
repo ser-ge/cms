@@ -126,11 +126,11 @@ func main() {
 		return
 	}
 
-	var plainMode, watchMode bool
+	var plainMode, watchMode, localScope bool
 
 	// Parse short and long flags before subcommand.
 	// Short flags compose: -s = sessions, -swa = sessions+worktrees+agents.
-	// Long flags: --plain, --watch (can be mixed with short flags in any order).
+	// Long flags: --plain, --watch, --local (can be mixed with short flags in any order).
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		if strings.HasPrefix(args[0], "--") {
 			switch args[0] {
@@ -138,6 +138,8 @@ func main() {
 				plainMode = true
 			case "--watch":
 				watchMode = true
+			case "--local":
+				localScope = true
 			default:
 				exitErr(fmt.Errorf("%s", unknownFlagMsg(args[0])))
 			}
@@ -237,13 +239,15 @@ func main() {
 			parsed := parseSections(args[0])
 			if parsed != nil {
 				sections = parsed
-				// Check for trailing --plain/--watch after section name.
+				// Check for trailing --plain/--watch/--local after section name.
 				for _, a := range args[1:] {
 					switch a {
 					case "--plain":
 						plainMode = true
 					case "--watch":
 						watchMode = true
+					case "--local":
+						localScope = true
 					default:
 						exitErr(fmt.Errorf("%s", unknownFlagMsg(a)))
 					}
@@ -252,6 +256,11 @@ func main() {
 				exitErr(fmt.Errorf("%s", unknownCommandMsg(args[0])))
 			}
 		}
+	}
+
+	// CLI --local overrides config.
+	if localScope {
+		cfg.Finder.LocalScope = true
 	}
 
 	// Plain/watch mode: headless finder with text output.
