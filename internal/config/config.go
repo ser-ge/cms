@@ -754,6 +754,64 @@ func WriteDefaultConfigFile() (string, error) {
 	return path, nil
 }
 
+// DefaultProjectTOML returns the default .cms.toml content with comments.
+func DefaultProjectTOML() []byte {
+	var buf bytes.Buffer
+	w := func(s string) { buf.WriteString(s) }
+
+	w("# cms project config — https://github.com/serge/cms\n")
+	w("# Place at the repo root as .cms.toml\n\n")
+
+	w("[worktree]\n")
+	w("# base_dir = \"../worktrees\"   # where worktrees are created\n")
+	w("# base_branch = \"\"            # branch to fork from (auto-detects main/master)\n")
+	w("# auto_open = false            # auto-create worktrees on session open\n")
+	w("# commit_cmd = \"\"             # LLM command for commit message generation\n")
+	w("# go_cmd = \"\"                 # command to run after 'cms go <branch> <prompt>'\n")
+	w("\n")
+	w("# [[worktree.hooks]]           # post-create hooks\n")
+	w("# command = \"npm install\"\n")
+	w("\n")
+	w("# [[worktree.pre_remove]]      # before worktree deletion\n")
+	w("# command = \"make clean\"\n")
+	w("\n")
+	w("# [[worktree.pre_commit]]      # before squash commit\n")
+	w("# command = \"npm run lint\"\n")
+	w("\n")
+	w("# [[worktree.pre_merge]]       # before landing\n")
+	w("# command = \"npm test\"\n")
+	w("\n")
+
+	w("[session]\n")
+	w("# name = \"\"                   # override session name\n")
+	w("# bootstrap = \"\"              # bootstrap script path\n")
+	w("# mode = \"\"                   # template_only | restore_only | template_then_restore\n")
+	w("\n")
+
+	w("[session.claude]\n")
+	w("resume = true                  # resume Claude Code sessions on restore\n")
+	w("# command = \"\"                # custom Claude command for resume\n")
+	w("# only_if_pane_empty = false\n")
+	w("# only_in_marked_panes = false\n")
+
+	return buf.Bytes()
+}
+
+// WriteProjectConfig writes a default .cms.toml to the given directory.
+// Returns the file path and os.ErrExist if the file already exists.
+func WriteProjectConfig(dir string) (string, error) {
+	path := filepath.Join(dir, ".cms.toml")
+	if _, err := os.Stat(path); err == nil {
+		return path, os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return path, err
+	}
+	if err := os.WriteFile(path, DefaultProjectTOML(), 0o644); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
 // LoadProjectConfig reads .cms.toml from the given directory (typically the
 // repo root). Returns a zero-value config when the file is missing.
 func LoadProjectConfig(dir string) ProjectConfig {

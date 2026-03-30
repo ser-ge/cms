@@ -45,6 +45,7 @@ var commands = []command{
 	{Name: "ls", Short: "List worktrees (paths, branches, merge status)", Group: "Worktree"},
 
 	// Config.
+	{Name: "init", Short: "Create .cms.toml in the current repo root", Group: "Config"},
 	{Name: "config", Args: "{init|default}", Short: "Manage config", Long: "  init      Write default config file\n  default   Print default config to stdout", Group: "Config"},
 	{Name: "hook-print", Short: "Print Claude Code hook config", Group: "Config"},
 	{Name: "hook-install", Short: "Install Claude Code hooks into settings", Group: "Config"},

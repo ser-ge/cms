@@ -72,6 +72,23 @@ func main() {
 		return
 	}
 
+	// "cms init" — create .cms.toml at the repo root.
+	if len(args) >= 1 && args[0] == "init" {
+		repoRoot, err := worktree.FindRepoRoot(".")
+		if err != nil {
+			exitErr(fmt.Errorf("not inside a git repository"))
+		}
+		path, err := config.WriteProjectConfig(repoRoot)
+		if err != nil {
+			if err == os.ErrExist {
+				exitErr(fmt.Errorf(".cms.toml already exists at %s", path))
+			}
+			exitErr(err)
+		}
+		fmt.Println(path)
+		return
+	}
+
 	cfg, firstRun, err := config.Load()
 	if err != nil {
 		exitErr(err)
