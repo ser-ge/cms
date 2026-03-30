@@ -359,7 +359,7 @@ func DefaultFinderConfig() FinderConfig {
 			Projects:  "P",
 		},
 		Sessions: PickerSortConfig{Sort: []string{"recent", "-current"}},
-		AgentsQueue: PickerSortConfig{Sort: []string{"state", "unseen", "oldest"}},
+		AgentsQueue: PickerSortConfig{Sort: []string{"state", "unseen", "-current", "oldest"}},
 	}
 }
 

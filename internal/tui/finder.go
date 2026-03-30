@@ -866,7 +866,7 @@ func (m *finderModel) sectionItems(section string) ([]PickerItem, []finderEntry)
 	case "sessions":
 		return m.sortedSectionItems(m.sessions, m.sessIdx, "sessions", m.sessionIsCurrent, m.sessionIsRecent)
 	case "agents":
-		return m.sortedSectionItems(m.agentsQueueItems, m.agentsQueueIdx, "agents", nil, nil)
+		return m.sortedSectionItems(m.agentsQueueItems, m.agentsQueueIdx, "agents", m.agentsQueueIsCurrent, nil)
 	case "worktrees":
 		items, idx := m.worktreeItemsWithOpenStatus()
 		return m.sortedSectionItems(items, idx, "worktrees", m.worktreeIsCurrent, nil)
@@ -1008,6 +1008,16 @@ func (m *finderModel) windowIsCurrent(i int) bool {
 
 func (m *finderModel) paneIsCurrent(i int) bool {
 	return m.paneItems[i].Active
+}
+
+func (m *finderModel) agentsQueueIsCurrent(i int) bool {
+	name := m.agentsQueueIdx[i].sessionName
+	for _, sess := range m.sessData {
+		if sess.Name == name {
+			return sess.Attached
+		}
+	}
+	return false
 }
 
 // worktreeItemsWithOpenStatus returns worktree items with Active and agent
@@ -1449,6 +1459,7 @@ func (m *finderModel) buildAgentsQueueItems() {
 				})
 				m.agentsQueueIdx = append(m.agentsQueueIdx, finderEntry{
 					kind:           KindAgentsQueue,
+					sessionName:    sess.Name,
 					paneID:         pane.ID,
 					unseen:         unseen,
 					agentsQueueStateRank: rank,
