@@ -220,6 +220,29 @@ func TestParseCodexPaneUnknownDefaultsToIdle(t *testing.T) {
 	}
 }
 
+func TestParseClaudePaneSpinnerFarAbovePrompt(t *testing.T) {
+	// When Claude outputs many lines of text, the spinner can be 20+ lines
+	// above the prompt. The detection window must be wide enough to find it.
+	lines := []string{"Some earlier output", "✢ Writing…"}
+	// Add 25 lines of generated text between spinner and prompt.
+	for i := 0; i < 25; i++ {
+		lines = append(lines, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.")
+	}
+	lines = append(lines,
+		"────────────────────────────────────────",
+		"❯",
+		"Sonnet 4.5 (120k context) | 42% ctx | main",
+	)
+	content := strings.Join(lines, "\n")
+
+	status := AgentStatus{Running: true, Provider: ProviderClaude}
+	parseClaudePane(content, &status)
+
+	if status.Activity != ActivityWorking {
+		t.Fatalf("activity = %v, want Working (spinner 25 lines above prompt)", status.Activity)
+	}
+}
+
 func TestShouldHoldWorking(t *testing.T) {
 	if !ShouldHoldWorking(AgentStatus{Provider: ProviderClaude}) {
 		t.Fatal("claude should keep working hold behavior")

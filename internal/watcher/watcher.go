@@ -89,7 +89,7 @@ func New() *Watcher {
 		hookSeen:        map[string]time.Time{},
 		hookCh:          make(chan hook.Event, 64),
 		activitySince:   map[string]time.Time{},
-		workingHold:     2 * time.Second,
+		workingHold:     4 * time.Second,
 		hookStale:       30 * time.Second,
 		completedDecay:  0,
 		hookPersist:     true,

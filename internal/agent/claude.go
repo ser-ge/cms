@@ -89,7 +89,7 @@ func detectClaudeActivity(lines []string) Activity {
 	// These appear between content and the ❯ prompt when Claude is generating.
 	if promptLine > 0 {
 		// Scan the ~10 lines above the prompt for spinner activity
-		start := promptLine - 10
+		start := promptLine - 30
 		if start < 0 {
 			start = 0
 		}

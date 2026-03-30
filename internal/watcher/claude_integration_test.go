@@ -100,6 +100,110 @@ func TestClaudeHookIntegration(t *testing.T) {
 	})
 }
 
+// TestClaudeObserverLongOutput runs Claude without hooks (observer-only) and
+// asks it to generate a long text. The test verifies that the observer
+// maintains Working status throughout the generation without false
+// Completed/Idle transitions.
+//
+// Gate:
+//
+//	CMS_CLAUDE_INTEGRATION=1 go test ./internal/watcher -run TestClaudeObserverLongOutput -v -timeout 5m
+func TestClaudeObserverLongOutput(t *testing.T) {
+	if os.Getenv("CMS_CLAUDE_INTEGRATION") == "" {
+		t.Skip("set CMS_CLAUDE_INTEGRATION=1 to run live Claude observer integration tests")
+	}
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Skip("claude not available")
+	}
+
+	traceDir := t.TempDir()
+	h := newLiveHarness(t, traceDir)
+	projectDir := t.TempDir()
+
+	sessionName := "claude-observer-" + sanitizeSessionName(t.Name())
+	paneID := newTmuxSession(t, sessionName, projectDir)
+	defer killTmuxSession(t, sessionName)
+
+	rec, err := trace.NewJSONLRecorder(traceDir)
+	if err != nil {
+		t.Fatalf("NewJSONLRecorder: %v", err)
+	}
+	defer func() { _ = rec.Close() }()
+
+	w := New()
+	w.SetRecorder(rec)
+	// Do NOT set up hooks — this tests the observer-only path.
+	msgs := make(chan tea.Msg, 256)
+	w.Start(func(m tea.Msg) { msgs <- m })
+	defer w.Stop()
+
+	h.waitFor(10*time.Second, nil, func() bool {
+		return strings.Contains(readIfExists(filepath.Join(traceDir, "ingress.jsonl")), `"kind":"bootstrap_state"`)
+	})
+
+	// Ask Claude to write a long story — no hooks configured, so observer must detect Working.
+	cmd := fmt.Sprintf(
+		"claude --model haiku --permission-mode bypassPermissions \"Write a detailed short story about a dragon who learns to code. Make it at least 40 lines long. Do not use any tools, just write the story directly.\"",
+	)
+	if _, err := tmux.Run("send-keys", "-t", paneID, cmd, "Enter"); err != nil {
+		t.Fatalf("send-keys claude command: %v", err)
+	}
+	h.capturePaneNow("after-send-keys", paneID)
+	acceptClaudeTrustPrompt(t, h, paneID)
+
+	// Wait for Claude to start producing output (look for activity transitions).
+	started := waitForBool(60*time.Second, func() bool {
+		acceptClaudeTrustPrompt(t, h, paneID)
+		ingress := readIfExists(filepath.Join(traceDir, "ingress.jsonl"))
+		return strings.Contains(ingress, `"final":"working"`)
+	})
+	if !started {
+		h.capturePaneNow("never-started", paneID)
+		ingress := readIfExists(filepath.Join(traceDir, "ingress.jsonl"))
+		t.Fatalf("observer never detected Working state\n=== ingress.jsonl ===\n%s", ingress)
+	}
+	h.capturePaneNow("working-detected", paneID)
+
+	// Let Claude generate for a while, capturing periodically.
+	time.Sleep(10 * time.Second)
+	h.capturePaneNow("mid-generation", paneID)
+
+	// Wait for Claude to finish (prompt returns to idle).
+	waitForBool(120*time.Second, func() bool {
+		ingress := readIfExists(filepath.Join(traceDir, "ingress.jsonl"))
+		return strings.Contains(ingress, `"final":"completed"`) ||
+			strings.Contains(ingress, `"final":"idle"`)
+	})
+	h.capturePaneNow("final", paneID)
+
+	// Analyze the trace for false Working→Completed→Working cycles.
+	ingress := readIfExists(filepath.Join(traceDir, "ingress.jsonl"))
+	analysis := analyzeTransitionTrace(t, ingress)
+
+	t.Log("=== Observer Long Output Transition Analysis ===")
+	t.Logf("Activity transitions: %d", analysis.totalTransitions)
+	t.Logf("  working→completed cycles: %d", analysis.workingToCompletedCycles)
+	t.Logf("  completed→working cycles: %d", analysis.completedToWorkingCycles)
+	t.Log("")
+	t.Log("=== Transition Timeline ===")
+	for _, entry := range analysis.timeline {
+		t.Log(entry)
+	}
+	t.Log("")
+	t.Logf("trace dir: %s", traceDir)
+	t.Logf("pane capture dir: %s", filepath.Join(traceDir, "pane_captures"))
+
+	// The key assertion: during a single continuous generation, there should
+	// be no false Working→Completed→Working cycling from the observer.
+	if analysis.workingToCompletedCycles > 1 {
+		t.Errorf("REGRESSION: %d working→completed cycles during continuous generation (want ≤1, the final real completion)",
+			analysis.workingToCompletedCycles)
+	}
+}
+
 func startRecordingWatcher(t *testing.T, traceDir string) (*Watcher, func()) {
 	t.Helper()
 	rec, err := trace.NewJSONLRecorder(traceDir)

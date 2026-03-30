@@ -117,7 +117,7 @@ func (w *Watcher) recheckPane(paneID, source string) {
 
 	w.mu.Lock()
 	status.Activity = w.transitionAgent(paneID, agent.SourceObserver, prev, status)
-	if source == "settle" || status.Activity != agent.ActivityWorking {
+	if status.Activity != agent.ActivityWorking {
 		delete(w.workingUntil, paneID)
 	}
 	w.mu.Unlock()

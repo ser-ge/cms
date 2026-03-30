@@ -305,6 +305,41 @@ func TestTransitionAgentObserverCompletedAfterHoldExpires(t *testing.T) {
 	}
 }
 
+func TestTransitionAgentObserverHoldSurvivesSettleRecheck(t *testing.T) {
+	// Regression test: a settle recheck must NOT clear workingUntil when the
+	// state is held as Working. Previously, the settle source unconditionally
+	// deleted workingUntil, causing the next process poll to falsely promote
+	// to Completed.
+	w := New()
+	paneID := "%1"
+	w.lastOutput[paneID] = time.Now().Add(-200 * time.Millisecond)
+	w.workingUntil[paneID] = time.Now().Add(3 * time.Second)
+
+	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	raw := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityIdle}
+
+	// Simulate what recheckPane does: transitionAgent + conditional delete.
+	got := w.transitionAgent(paneID, agent.SourceObserver, prev, raw)
+	if got != agent.ActivityWorking {
+		t.Fatalf("transitionAgent = %v, want Working (within hold window)", got)
+	}
+	// The recheckPane code only deletes workingUntil when activity != Working.
+	if got != agent.ActivityWorking {
+		delete(w.workingUntil, paneID)
+	}
+	// workingUntil must still be present for the next process poll.
+	if _, ok := w.workingUntil[paneID]; !ok {
+		t.Fatal("workingUntil should be preserved after settle recheck that held Working")
+	}
+
+	// Subsequent process poll (2s later) should still see the hold.
+	prevAfterSettle := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
+	got2 := w.transitionAgent(paneID, agent.SourceObserver, prevAfterSettle, raw)
+	if got2 != agent.ActivityWorking {
+		t.Fatalf("subsequent transitionAgent = %v, want Working (hold still valid)", got2)
+	}
+}
+
 func TestTransitionAgentHookCompletedOnStop(t *testing.T) {
 	w := New()
 	prev := agent.AgentStatus{Running: true, Provider: agent.ProviderClaude, Activity: agent.ActivityWorking}
